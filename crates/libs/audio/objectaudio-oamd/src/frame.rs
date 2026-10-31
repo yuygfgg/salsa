@@ -1,0 +1,459 @@
+use crate::payload::ObjectAudioMetadataPayload;
+use objectaudio_ir::{ObjectEvent, ObjectState, SpatialPayload};
+
+use crate::bed::BedLayout;
+use objectaudio_ir::SpeakerPosition;
+
+use crate::OamdError;
+
+/// Bounds applied before the payload is expanded into IR objects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OamdLimits {
+    pub max_objects: usize,
+    pub max_blocks: usize,
+}
+
+impl Default for OamdLimits {
+    fn default() -> Self {
+        Self {
+            max_objects: crate::payload::MAX_OBJECT_COUNT,
+            max_blocks: crate::payload::MAX_OBJ_INFO_BLOCKS,
+        }
+    }
+}
+
+/// The program declaration carried by one OAMD payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OamdProgram {
+    pub dynamic_object_only: bool,
+    pub content_bed: bool,
+    pub content_isf: bool,
+    pub content_dynamic: bool,
+    pub num_bed_objects: usize,
+    pub num_isf_objects: usize,
+    pub num_dynamic_objects: usize,
+}
+
+/// One object slot from an OAMD object element.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OamdObject {
+    /// Position in the OAMD object list. Bed objects occupy the first slots.
+    pub slot: usize,
+    /// This slot is part of the bed or an ISF, not a dynamic object.
+    pub in_bed_or_isf: bool,
+    pub active: bool,
+    /// Object gain in dB, or `None` for the OAMD minus-infinity code.
+    pub gain_db: Option<f32>,
+    /// Linear gain derived from `gain_db`.
+    pub gain: f32,
+    pub priority: f32,
+    /// ADM normalized Cartesian position.
+    pub position: [f32; 3],
+    /// Object size in normalized units, when the payload specifies one.
+    pub size: Option<[f32; 3]>,
+    /// Distance in metres, or infinity for an object at infinity.
+    pub distance: Option<f32>,
+    pub snap: bool,
+}
+
+impl OamdObject {
+    pub fn to_state(&self) -> ObjectState {
+        ObjectState {
+            id: self.slot as u32,
+            position: self.position,
+            gain: self.gain,
+            enabled: self.active,
+            size: self
+                .size
+                .map(|size| size.into_iter().fold(0.0, f32::max))
+                .filter(|size| *size > 0.0),
+            spread: None,
+        }
+    }
+}
+
+/// A parsed OAMD payload in salsa's codec-independent terms.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OamdFrame {
+    pub version: u8,
+    /// Number of object slots in the payload, including bed objects.
+    pub object_count: usize,
+    pub program: OamdProgram,
+    pub bed: BedLayout,
+    /// All slots in the payload, including bed/ISF objects.
+    pub objects: Vec<OamdObject>,
+    /// State changes after the first object-info block, ordered by offset.
+    pub events: Vec<ObjectEvent>,
+    /// Offset of the first position block, in samples.
+    pub sample_offset: u32,
+    /// Ramp duration of the first position block, in samples.
+    pub ramp_samples: u32,
+}
+
+/// How the OAMD bed is treated when mapping to the object-only IR.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BedPolicy {
+    /// Do not append bed channels.
+    Ignore,
+    /// Append the non-LFE bed channels declared by this payload.
+    Expand,
+}
+
+/// A payload mapped onto the IR, including the offset accumulation rule.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OamdMapping {
+    /// Dynamic objects rebased to `1..=N`, followed by any appended bed objects.
+    pub objects: Vec<ObjectState>,
+    /// Events with rebased ids and `base_offset` already added.
+    pub events: Vec<ObjectEvent>,
+    /// Number of dynamic objects before bed expansion.
+    pub dynamic_count: usize,
+    /// `base_offset + OAMD sample_offset`.
+    pub snapshot_offset: u32,
+}
+
+/// Map the events of `frame` onto the IR timeline with a single base offset.
+///
+/// The rule is `base_offset + OAMD block offset`; callers must not add the base
+/// themselves.
+pub fn oamd_to_ir_events(frame: &OamdFrame, base_offset: u32) -> Vec<ObjectEvent> {
+    frame.map_to_ir(base_offset, BedPolicy::Ignore).events
+}
+
+impl OamdFrame {
+    pub fn from_payload(
+        payload: &ObjectAudioMetadataPayload,
+        limits: OamdLimits,
+    ) -> Result<Self, OamdError> {
+        if payload.object_count > limits.max_objects {
+            return Err(OamdError::TooManyObjects {
+                count: payload.object_count,
+                limit: limits.max_objects,
+            });
+        }
+
+        let object_element = payload.object_element.as_ref();
+        let object_element_count = payload
+            .oa_element_md
+            .iter()
+            .filter(|element| element.oa_element_id_idx == 1)
+            .count();
+        if object_element_count > 1 {
+            return Err(OamdError::MultipleObjectElements {
+                count: object_element_count,
+            });
+        }
+
+        let program = &payload.program_assignment;
+        if object_element.is_none() && payload.object_count > program.beds_or_isf_count() {
+            return Err(OamdError::MissingObjectElement {
+                object_count: payload.object_count,
+            });
+        }
+
+        let md_update = object_element.map(|element| &element.md_update_info);
+        if let Some(update) = md_update
+            && update.num_obj_info_blocks > limits.max_blocks
+        {
+            return Err(OamdError::TooManyBlocks {
+                count: update.num_obj_info_blocks,
+                limit: limits.max_blocks,
+            });
+        }
+
+        let content_bed = !program.bed_assignment.is_empty();
+        let content_isf = program.num_isf_objects > 0;
+        let content_dynamic = program.num_dynamic_objects > 0;
+        let bed_only = content_bed && !content_isf && !content_dynamic;
+        let lfe_only_bed = !program.bed_assignment.is_empty()
+            && program
+                .bed_assignment
+                .iter()
+                .all(|assignment| assignment.is_lfe_only());
+        let dynamic_object_only = program.num_isf_objects == 0
+            && program.num_dynamic_objects > 0
+            && (program.bed_assignment.is_empty() || lfe_only_bed);
+
+        let mut bed_mask = 0u32;
+        for assignment in &program.bed_assignment {
+            for (index, present) in assignment.0.iter().enumerate() {
+                if *present && let Some(channel) = SpeakerPosition::from_bed_index(index) {
+                    bed_mask |= channel.bed_bit();
+                }
+            }
+        }
+        let bed = BedLayout::from_mask(bed_mask, bed_only);
+
+        let positions = payload.get_damf_pos();
+        let object_data = object_element.map_or(&[][..], |element| &element.object_data[..]);
+        let mut objects = Vec::with_capacity(payload.object_count);
+        for slot in 0..payload.object_count {
+            let blocks = object_data.get(slot).map_or(&[][..], Vec::as_slice);
+            let first = blocks.first();
+            let in_bed_or_isf = first
+                .map(|block| block.b_object_in_bed_or_isf)
+                .unwrap_or(slot < program.beds_or_isf_count());
+            let position = positions
+                .get(slot)
+                .and_then(|positions| positions.first())
+                .map_or([0.0, 0.0, 0.0], |position| adm_to_f32(*position));
+            let object = match first {
+                Some(block) => object_at(slot, block, position, in_bed_or_isf),
+                None => OamdObject {
+                    slot,
+                    in_bed_or_isf,
+                    active: false,
+                    gain_db: None,
+                    gain: 0.0,
+                    priority: 0.0,
+                    position,
+                    size: None,
+                    distance: None,
+                    snap: false,
+                },
+            };
+            objects.push(object);
+        }
+
+        let mut events = Vec::new();
+        if let (Some(element), Some(update)) = (object_element, md_update) {
+            for (slot, blocks) in element.object_data.iter().enumerate() {
+                if objects
+                    .get(slot)
+                    .map(|object| object.in_bed_or_isf)
+                    .unwrap_or(true)
+                {
+                    continue;
+                }
+                let mut previous = objects.get(slot).map(OamdObject::to_state);
+                for (block_index, block) in blocks.iter().enumerate().skip(1) {
+                    let block_update = update.block_update_info.get(block_index);
+                    let offset = update.sample_offset as u32
+                        + block_update
+                            .map_or(0, |info| u32::from(info.block_offset_factor_bits) * 32);
+                    let ramp = block_update.map_or(0, |info| u32::from(info.ramp_duration));
+                    let position = positions
+                        .get(slot)
+                        .and_then(|positions| positions.get(block_index))
+                        .map_or_else(
+                            || adm_position(block.object_render_info.pos3d),
+                            |position| adm_to_f32(*position),
+                        );
+                    let object = object_at(slot, block, position, false);
+                    let state = object.to_state();
+                    if previous.as_ref() == Some(&state) {
+                        continue;
+                    }
+                    previous = Some(state.clone());
+                    events.push(ObjectEvent {
+                        offset,
+                        ramp_samples: ramp,
+                        object: slot as u32,
+                        state,
+                    });
+                }
+            }
+            events.sort_by_key(|event| event.offset);
+        }
+
+        let sample_offset = md_update.map_or(0, |update| {
+            update.sample_offset as u32
+                + update
+                    .block_update_info
+                    .first()
+                    .map_or(0, |info| u32::from(info.block_offset_factor_bits) * 32)
+        });
+        let ramp_samples = md_update
+            .and_then(|update| update.block_update_info.first())
+            .map_or(0, |info| u32::from(info.ramp_duration));
+
+        Ok(Self {
+            version: payload.oamd_version,
+            object_count: payload.object_count,
+            program: OamdProgram {
+                dynamic_object_only,
+                content_bed,
+                content_isf,
+                content_dynamic,
+                num_bed_objects: program.num_bed_objects,
+                num_isf_objects: program.num_isf_objects,
+                num_dynamic_objects: program.num_dynamic_objects,
+            },
+            bed,
+            objects,
+            events,
+            sample_offset,
+            ramp_samples,
+        })
+    }
+
+    /// States for the dynamic objects, excluding bed/ISF slots.
+    pub fn object_states(&self) -> Vec<ObjectState> {
+        self.dynamic_objects().map(OamdObject::to_state).collect()
+    }
+
+    /// Convert the payload into the object-only IR.
+    ///
+    /// Dynamic objects keep their OAMD order and are rebased to ids `1..=N`.
+    /// `BedPolicy::Expand` appends the non-LFE declared bed channels as
+    /// fixed-position objects; `Ignore` leaves the bed to the caller.
+    pub fn to_spatial_payload(&self, sample_rate: u32, bed: BedPolicy) -> SpatialPayload {
+        let mapping = self.map_to_ir(0, bed);
+        SpatialPayload::new(sample_rate, mapping.objects, mapping.events)
+    }
+
+    /// Map the payload onto the IR with an explicit base sample offset.
+    ///
+    /// `base_offset` is the container/EVO offset of this OAMD payload. It is
+    /// added to both the event offsets and the snapshot offset, so callers must
+    /// not add it again.
+    pub fn map_to_ir(&self, base_offset: u32, bed: BedPolicy) -> OamdMapping {
+        match bed {
+            BedPolicy::Ignore => self.map_to_ir_with_bed(base_offset, &[]),
+            BedPolicy::Expand => self.map_to_ir_with_bed(base_offset, &self.bed.channels),
+        }
+    }
+
+    /// [`Self::map_to_ir`] with an explicit bed-channel list.
+    ///
+    /// TrueHD uses this to append the presentation bed channels, which are not
+    /// necessarily the bed declared inside OAMD.
+    pub fn map_to_ir_with_bed(&self, base_offset: u32, bed: &[SpeakerPosition]) -> OamdMapping {
+        let dynamic: Vec<&OamdObject> = self.dynamic_objects().collect();
+        let mut objects = Vec::with_capacity(dynamic.len() + bed.len());
+        let mut slot_to_id = std::collections::HashMap::new();
+        for (index, object) in dynamic.iter().enumerate() {
+            let id = index as u32 + 1;
+            slot_to_id.insert(object.slot as u32, id);
+            let mut state = object.to_state();
+            state.id = id;
+            objects.push(state);
+        }
+        for channel in bed {
+            if channel.is_lfe() {
+                continue;
+            }
+            let id = objects.len() as u32 + 1;
+            objects.push(ObjectState::new(id, channel.adm_position()));
+        }
+
+        let mut events = Vec::new();
+        for event in &self.events {
+            let Some(id) = slot_to_id.get(&event.object) else {
+                continue;
+            };
+            let mut state = event.state.clone();
+            state.id = *id;
+            events.push(ObjectEvent {
+                offset: event.offset.saturating_add(base_offset),
+                ramp_samples: event.ramp_samples,
+                object: *id,
+                state,
+            });
+        }
+        events.sort_by_key(|event| event.offset);
+        OamdMapping {
+            objects,
+            events,
+            dynamic_count: dynamic.len(),
+            snapshot_offset: self.sample_offset.saturating_add(base_offset),
+        }
+    }
+
+    pub fn dynamic_objects(&self) -> impl Iterator<Item = &OamdObject> + '_ {
+        self.objects.iter().filter(|object| !object.in_bed_or_isf)
+    }
+}
+
+fn object_at(
+    slot: usize,
+    block: &crate::payload::ObjectInfoBlock,
+    position: [f32; 3],
+    in_bed_or_isf: bool,
+) -> OamdObject {
+    let (gain_db, gain) = gain_from_code(block.object_basic_info.object_gain);
+    OamdObject {
+        slot,
+        in_bed_or_isf,
+        active: !block.b_object_not_active,
+        gain_db,
+        gain,
+        priority: block.object_basic_info.object_priority as f32,
+        position,
+        size: object_size(block.object_render_info.object_size),
+        distance: block
+            .object_render_info
+            .distance_factor
+            .map(|value| value as f32),
+        snap: block.object_render_info.b_object_snap,
+    }
+}
+
+fn gain_from_code(code: i8) -> (Option<f32>, f32) {
+    if code == crate::payload::GAIN_MINUS_INFINITY {
+        (None, 0.0)
+    } else {
+        let db = f32::from(code);
+        (Some(db), 10.0f32.powf(db / 20.0))
+    }
+}
+
+fn object_size(size: [f64; 3]) -> Option<[f32; 3]> {
+    let size = size.map(|value| if value.is_finite() { value as f32 } else { 0.0 });
+    size.iter().any(|value| *value > 0.0).then_some(size)
+}
+
+fn adm_to_f32(position: [f64; 3]) -> [f32; 3] {
+    [position[0] as f32, position[1] as f32, position[2] as f32]
+}
+
+fn adm_position(position: [f64; 3]) -> [f32; 3] {
+    [
+        ((position[0].clamp(0.0, 1.0) - 0.5) * 2.0) as f32,
+        ((0.5 - position[1].clamp(0.0, 1.0)) * 2.0) as f32,
+        position[2].clamp(-1.0, 1.0) as f32,
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mapping_applies_the_base_offset_once() {
+        let mut frame = crate::parse(crate::EXAMPLE_DATA).unwrap();
+        frame.sample_offset = 7;
+        frame.events.push(ObjectEvent {
+            offset: 100,
+            ramp_samples: 0,
+            object: 1,
+            state: ObjectState::new(1, [0.0, 1.0, 0.0]),
+        });
+        let mapping = frame.map_to_ir(1_000, BedPolicy::Ignore);
+        assert_eq!(mapping.snapshot_offset, 1_007);
+        assert_eq!(mapping.events.last().unwrap().offset, 1_100);
+        assert_eq!(
+            oamd_to_ir_events(&frame, 1_000).last().unwrap().offset,
+            1_100
+        );
+    }
+
+    #[test]
+    fn gain_code_zero_is_unity() {
+        assert_eq!(gain_from_code(0), (Some(0.0), 1.0));
+    }
+
+    #[test]
+    fn minus_infinity_is_muted() {
+        assert_eq!(
+            gain_from_code(crate::payload::GAIN_MINUS_INFINITY),
+            (None, 0.0)
+        );
+    }
+
+    #[test]
+    fn adm_position_flips_the_y_axis() {
+        assert_eq!(adm_position([0.0, 0.0, 1.0]), [-1.0, 1.0, 1.0]);
+        assert_eq!(adm_position([1.0, 1.0, -1.0]), [1.0, -1.0, -1.0]);
+    }
+}

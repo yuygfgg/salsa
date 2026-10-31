@@ -1,0 +1,16 @@
+[package]
+name = "truehd-atmos"
+description = "TrueHD Atmos parser/decoder adapter for the salsa object-audio IR"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+objectaudio-ir.workspace = true
+anyhow.workspace = true
+objectaudio-oamd.workspace = true
+truehd.workspace = true
+thiserror.workspace = true
+

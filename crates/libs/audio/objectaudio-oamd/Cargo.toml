@@ -1,0 +1,18 @@
+[package]
+name = "objectaudio-oamd"
+description = "OAMD parser and writer for the salsa object-audio IR"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+objectaudio-ir.workspace = true
+anyhow.workspace = true
+bitstream-io.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

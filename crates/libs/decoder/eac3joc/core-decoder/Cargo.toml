@@ -1,0 +1,15 @@
+[package]
+name = "eac3joc-core-decoder"
+description = "libavcodec-backed E-AC-3 core PCM decoder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+ffmpeg-next.workspace = true
+
+[dev-dependencies]
+eac3joc.workspace = true

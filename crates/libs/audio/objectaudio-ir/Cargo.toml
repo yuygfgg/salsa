@@ -1,0 +1,16 @@
+[package]
+name = "objectaudio-ir"
+description = "Codec-independent object-audio intermediate representation for salsa"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+postcard.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

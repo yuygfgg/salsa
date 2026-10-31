@@ -1,0 +1,22 @@
+[package]
+name = "gst-eac3joc"
+description = "GStreamer E-AC-3 JOC parse and decode plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "gstsalsaeac3joc"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+objectaudio-ir.workspace = true
+objectaudio-meta.workspace = true
+objectaudio-decode.workspace = true
+eac3joc.workspace = true
+eac3joc-dsp.workspace = true
+gstreamer.workspace = true
+gstreamer-base.workspace = true
+gstreamer-audio.workspace = true

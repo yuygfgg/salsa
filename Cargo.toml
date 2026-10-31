@@ -1,0 +1,53 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/libs/audio/objectaudio-ir",
+    "crates/libs/audio/objectaudio-oamd",
+    "crates/libs/decoder/eac3joc/eac3joc",
+    "crates/libs/decoder/eac3joc/core-decoder",
+    "crates/libs/decoder/eac3joc/eac3joc-dsp",
+    "crates/libs/decoder/truehd/truehd-atmos",
+    "crates/libs/gst/objectaudio-meta",
+    "crates/libs/gst/objectaudio-decode",
+    "crates/libs/render/objectaudio-render",
+    "crates/libs/render/hrtf",
+    "crates/plugins/gst-eac3joc",
+    "crates/plugins/gst-truehd",
+    "crates/plugins/gst-objectaudio",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MPL-2.0"
+publish = false
+
+[workspace.dependencies]
+objectaudio-ir = { path = "crates/libs/audio/objectaudio-ir" }
+objectaudio-oamd = { path = "crates/libs/audio/objectaudio-oamd" }
+objectaudio-meta = { path = "crates/libs/gst/objectaudio-meta" }
+objectaudio-decode = { path = "crates/libs/gst/objectaudio-decode" }
+objectaudio-render = { path = "crates/libs/render/objectaudio-render" }
+objectaudio-hrtf = { path = "crates/libs/render/hrtf" }
+eac3joc = { path = "crates/libs/decoder/eac3joc/eac3joc" }
+eac3joc-core-decoder = { path = "crates/libs/decoder/eac3joc/core-decoder" }
+eac3joc-dsp = { path = "crates/libs/decoder/eac3joc/eac3joc-dsp" }
+truehd-atmos = { path = "crates/libs/decoder/truehd/truehd-atmos" }
+truehd = "0.7"
+anyhow = "1"
+libc = "0.2"
+thiserror = "2"
+proptest = "1"
+rustfft = "6"
+num-complex = "0.4"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+postcard = { version = "1", features = ["alloc"] }
+bitstream-io = "4"
+sha2 = "0.10"
+ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format"] }
+gstreamer = "0.24"
+gstreamer-base = "0.24"
+gstreamer-audio = { version = "0.24", features = ["v1_18"] }

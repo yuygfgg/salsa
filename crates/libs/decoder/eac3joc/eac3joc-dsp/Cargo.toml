@@ -1,0 +1,16 @@
+[package]
+name = "eac3joc-dsp"
+description = "JOC QMF analysis, object matrix and synthesis kernel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+objectaudio-ir.workspace = true
+objectaudio-oamd.workspace = true
+eac3joc.workspace = true
+eac3joc-core-decoder.workspace = true
+thiserror.workspace = true
+rustfft.workspace = true

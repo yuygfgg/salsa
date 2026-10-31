@@ -1,0 +1,15 @@
+[package]
+name = "objectaudio-decode"
+description = "Shared GStreamer glue for salsa object-audio decoders"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+objectaudio-ir.workspace = true
+objectaudio-meta.workspace = true
+gstreamer.workspace = true
+gstreamer-audio.workspace = true
+thiserror.workspace = true

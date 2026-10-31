@@ -1,0 +1,25 @@
+[package]
+name = "gst-objectaudio"
+description = "GStreamer object-audio renderer plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "gstsalsaobjectaudio"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+objectaudio-ir.workspace = true
+objectaudio-meta.workspace = true
+objectaudio-oamd.workspace = true
+objectaudio-render.workspace = true
+objectaudio-hrtf.workspace = true
+gstreamer.workspace = true
+gstreamer-base.workspace = true
+gstreamer-audio.workspace = true
+
+[dev-dependencies]
+gst-eac3joc = { path = "../gst-eac3joc" }

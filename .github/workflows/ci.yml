@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            gstreamer: apt
+          - os: macos-latest
+            gstreamer: brew
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GStreamer and FFmpeg (Ubuntu)
+        if: matrix.gstreamer == 'apt'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev             libavcodec-dev libavformat-dev libavutil-dev libswresample-dev
+
+      - name: Install GStreamer and FFmpeg (macOS)
+        if: matrix.gstreamer == 'brew'
+        run: brew install pkg-config gstreamer ffmpeg
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --all-targets
