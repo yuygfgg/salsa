@@ -4,6 +4,11 @@
 //! emits `samplePos` on the first object of a time group; later objects in the
 //! same group omit it and inherit the previous position. This is the same rule
 //! used by `atmos_cluster/damf/metadata.py` and is essential for correct timing.
+//!
+//! Some writers (e.g. Dolby Atmos Renderer 3.3) also emit a trailing keyframe
+//! for the last object of a group without repeating its `ID`. A missing `ID`
+//! therefore inherits the previous event's object ID, just as a missing
+//! `samplePos` inherits the previous position.
 
 use std::path::Path;
 
@@ -70,10 +75,13 @@ impl Metadata {
 
         let mut events = Vec::with_capacity(raw_events.len());
         let mut current_sample = 0u64;
+        let mut current_id = None;
         for raw in raw_events {
-            let id = get(raw, "ID")
-                .and_then(as_i64)
-                .ok_or(DamfError::MissingField("events[].ID"))?;
+            if let Some(id) = get(raw, "ID").and_then(as_i64) {
+                current_id = Some(id);
+            }
+            let id = current_id
+                .ok_or_else(|| DamfError::MissingField("events[].ID"))?;
             if let Some(sample) = get(raw, "samplePos").and_then(as_u64) {
                 current_sample = sample;
             }
@@ -160,6 +168,36 @@ events:
         assert_eq!(metadata.events[3].gain, Some(Gain::MinusInfinity));
         assert_eq!(metadata.events[3].active, Some(false));
         assert!((metadata.events[1].gain.unwrap().linear() - 0.501187).abs() < 1e-5);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn inherits_missing_object_id_from_previous_event() {
+        let path = unique_path("master.atmos.metadata");
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(
+            br#"sampleRate: 48000
+events:
+  - ID: 10
+    samplePos: 0
+    pos: [-1, 1, 0]
+  - ID: 65
+    samplePos: 1536
+    pos: [0.13, 1, 0]
+  - samplePos: 3072
+    pos: [0.14, 1, 0]
+  - ID: 58
+    samplePos: 4608
+    pos: [-0.75, 1, 0]
+"#,
+        )
+        .unwrap();
+        let metadata = Metadata::load(&path).unwrap();
+        assert_eq!(metadata.events.len(), 4);
+        assert_eq!(metadata.events[2].id, 65);
+        assert_eq!(metadata.events[2].sample_pos, 3072);
+        assert_eq!(metadata.events[2].position, Some([0.14, 1.0, 0.0]));
+        assert_eq!(metadata.events[3].id, 58);
         std::fs::remove_file(path).unwrap();
     }
 }

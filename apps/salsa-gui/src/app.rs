@@ -176,13 +176,7 @@ impl SalsaApp {
         self.switch = None;
         self.phase = Phase::Loading;
         self.open_path = Some(path.clone());
-
-        if let DeviceSelection::Named(name) = &self.settings.device
-            && !self.devices.iter().any(|info| &info.display_name == name)
-        {
-            self.settings.device = DeviceSelection::Auto;
-            self.dirty = true;
-        }
+        self.refresh_devices();
 
         let (effective_layout, warning) = if self.settings.mode == OutputMode::Speaker {
             resolve_layout(&self.settings.layout, &self.settings.device, &self.devices)
@@ -528,6 +522,20 @@ impl SalsaApp {
         }
     }
 
+    fn refresh_devices(&mut self) {
+        let devices = enumerate_devices();
+        if devices.is_empty() {
+            return;
+        }
+        self.devices = devices;
+        if let DeviceSelection::Named(name) = &self.settings.device
+            && !self.devices.iter().any(|info| &info.display_name == name)
+        {
+            self.settings.device = DeviceSelection::Auto;
+            self.dirty = true;
+        }
+    }
+
     fn request_output_change(&mut self) {
         let (effective_layout, warning) = if self.settings.mode == OutputMode::Speaker {
             resolve_layout(&self.settings.layout, &self.settings.device, &self.devices)
@@ -592,7 +600,12 @@ impl SalsaApp {
             }
             OutputAction::Device(device) => {
                 self.settings.device = device;
+                self.refresh_devices();
                 self.dirty = true;
+                self.request_output_change();
+            }
+            OutputAction::RefreshDevices => {
+                self.refresh_devices();
                 self.request_output_change();
             }
             OutputAction::Model(path) => {

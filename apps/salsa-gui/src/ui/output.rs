@@ -12,6 +12,7 @@ pub enum OutputAction {
     Mode(OutputMode),
     Layout(String),
     Device(DeviceSelection),
+    RefreshDevices,
     Model(Option<PathBuf>),
     Filterbank(u32),
     Profile(String),
@@ -102,7 +103,7 @@ fn draw_speaker(
             DeviceSelection::Auto => "Auto".to_string(),
             DeviceSelection::Named(name) => name.clone(),
         };
-        egui::ComboBox::from_id_salt("device-combo")
+        let popup = egui::ComboBox::from_id_salt("device-combo")
             .selected_text(selected)
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut device, DeviceSelection::Auto, "Auto");
@@ -121,6 +122,15 @@ fn draw_speaker(
                     ui.weak("No audio devices reported");
                 }
             });
+        let open = popup.inner.is_some();
+        let open_id = egui::Id::new("device-combo-open");
+        let was_open = ui
+            .ctx()
+            .data(|data| data.get_temp::<bool>(open_id).unwrap_or(false));
+        ui.ctx().data_mut(|data| data.insert_temp(open_id, open));
+        if open && !was_open && action.is_none() {
+            *action = Some(OutputAction::RefreshDevices);
+        }
         if device != settings.device {
             settings.device = device.clone();
             *action = Some(OutputAction::Device(device));

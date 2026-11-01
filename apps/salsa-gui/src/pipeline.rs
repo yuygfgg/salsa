@@ -202,18 +202,20 @@ pub fn enumerate_devices() -> Vec<DeviceInfo> {
 }
 
 fn max_channels_for_device(device: &gst::Device) -> Option<u32> {
+    // The device caps come from the device provider and describe this device's
+    // real channel limit. Do not intersect them with the sink element caps:
+    // `create_element()` returns an unbound element whose sink pad still exposes
+    // the generic template (`channels=[1,9]` for osxaudiosink), which would
+    // silently cap every multichannel device at 9.
     let device_max = device.caps().as_ref().and_then(max_channels_from_caps);
-    let element_max = device.create_element(None).ok().and_then(|element| {
+    if device_max.is_some() {
+        return device_max;
+    }
+    device.create_element(None).ok().and_then(|element| {
         let pad = element.static_pad("sink")?;
         let caps = pad.query_caps(None);
         max_channels_from_caps(&caps)
-    });
-    match (device_max, element_max) {
-        (Some(device), Some(element)) => Some(device.min(element)),
-        (Some(device), None) => Some(device),
-        (None, Some(element)) => Some(element),
-        (None, None) => None,
-    }
+    })
 }
 
 fn max_channels_from_caps(caps: &gst::Caps) -> Option<u32> {
@@ -568,6 +570,20 @@ mod tests {
         let (layout, warning) = resolve_layout_for_channels("nope", Some(12));
         assert_eq!(layout, "7.1.4");
         assert!(warning.unwrap().contains("Unknown layout"));
+    }
+
+    #[test]
+    fn reads_the_maximum_channel_count_from_caps() {
+        gst::init().unwrap();
+        let fixed = gst::Caps::builder("audio/x-raw")
+            .field("channels", 12i32)
+            .build();
+        assert_eq!(max_channels_from_caps(&fixed), Some(12));
+
+        let ranged = gst::Caps::builder("audio/x-raw")
+            .field("channels", gst::IntRange::new(1i32, 16i32))
+            .build();
+        assert_eq!(max_channels_from_caps(&ranged), Some(16));
     }
 
     #[test]
