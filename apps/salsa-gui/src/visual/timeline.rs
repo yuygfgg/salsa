@@ -49,6 +49,8 @@ pub struct ObjectVisual {
 pub struct VisualSnapshot {
     pub time: gst::ClockTime,
     pub objects: Vec<ObjectVisual>,
+    /// Normalized 0..1 level derived from decoded LFE PCM (-60 dBFS .. 0 dBFS).
+    pub lfe_level: f32,
     pub state: VisualState,
 }
 
@@ -70,6 +72,7 @@ pub(crate) enum TapEvent {
         pts_ns: u64,
         offset: usize,
         payload: Option<SpatialPayload>,
+        /// RMS levels in decoder channel order: LFE, then objects.
         levels: Vec<f32>,
         discont: bool,
     },
@@ -104,6 +107,7 @@ pub(crate) struct Timeline {
     channels: u32,
     object_ids: Vec<u32>,
     tracks: Vec<Vec<Keyframe>>,
+    // Smoothed RMS levels in decoder channel order: LFE, then objects.
     levels: Vec<f32>,
     level_time_ns: Option<u64>,
     last_pts_ns: Option<u64>,
@@ -274,17 +278,15 @@ impl Timeline {
         }
         self.object_ids = objects.iter().map(|object| object.id).collect();
         self.tracks = vec![Vec::new(); objects.len()];
-        self.levels = vec![0.0; objects.len()];
+        self.levels.clear();
         self.level_time_ns = None;
     }
 
     fn update_levels(&mut self, raw: &[f32], pts_ns: u64) {
-        let count = self.tracks.len().max(self.object_ids.len());
-        if count == 0 {
+        self.levels.resize(raw.len(), 0.0);
+        if raw.is_empty() {
+            self.level_time_ns = None;
             return;
-        }
-        if self.levels.len() != count {
-            self.levels.resize(count, 0.0);
         }
         let first = self.level_time_ns.is_none();
         let dt = self
@@ -294,20 +296,20 @@ impl Timeline {
         let reset = self
             .level_time_ns
             .is_some_and(|last| pts_ns.saturating_sub(last) > 500_000_000);
-        for index in 0..count {
-            let target = raw.get(index).copied().unwrap_or(0.0).max(0.0);
+        for (level, raw) in self.levels.iter_mut().zip(raw) {
+            let target = raw.max(0.0);
             if first || reset {
-                self.levels[index] = target;
+                *level = target;
                 continue;
             }
-            let previous = self.levels[index];
+            let previous = *level;
             let tau = if target > previous {
                 LEVEL_ATTACK_S
             } else {
                 LEVEL_RELEASE_S
             };
             let alpha = 1.0 - (-dt / tau).exp();
-            self.levels[index] = previous + alpha * (target - previous);
+            *level = previous + alpha * (target - previous);
         }
         self.level_time_ns = Some(pts_ns);
     }
@@ -390,15 +392,12 @@ impl Timeline {
     }
 
     pub(crate) fn snapshot_at(&self, time_ns: u64, trail_seconds: f32) -> Option<VisualSnapshot> {
-        if self.tracks.is_empty() {
-            return None;
-        }
-
         let first_ns = self
             .tracks
             .iter()
             .filter_map(|track| track.first().map(|keyframe| keyframe.time_ns))
-            .min()?;
+            .min()
+            .or(self.level_time_ns)?;
 
         let stale = self.state == VisualState::Stale
             || self.last_pts_ns.is_some_and(|last| {
@@ -413,7 +412,7 @@ impl Timeline {
             };
             let level = self
                 .levels
-                .get(index)
+                .get(index + 1)
                 .copied()
                 .map(normalized_level)
                 .unwrap_or(0.0);
@@ -445,6 +444,12 @@ impl Timeline {
         Some(VisualSnapshot {
             time: gst::ClockTime::from_nseconds(time_ns),
             objects,
+            lfe_level: self
+                .levels
+                .first()
+                .copied()
+                .map(normalized_level)
+                .unwrap_or(0.0),
             state,
         })
     }
@@ -552,7 +557,7 @@ mod tests {
     }
 
     fn buffer_event(pts_ns: u64, offset: usize, payload: SpatialPayload) -> TapEvent {
-        let levels = vec![0.5; payload.objects.len()];
+        let levels = vec![0.5; payload.objects.len() + 1];
         TapEvent::Buffer {
             epoch: 0,
             pts_ns,
@@ -660,6 +665,72 @@ mod tests {
     }
 
     #[test]
+    fn lfe_and_object_levels_are_independent() {
+        for levels in [vec![1.0, 0.0, 0.0], vec![0.0, 0.01, 0.1]] {
+            let mut timeline = Timeline::default();
+            timeline.handle(TapEvent::Buffer {
+                epoch: 0,
+                pts_ns: 0,
+                offset: 0,
+                payload: Some(payload(
+                    vec![object(1, [0.0; 3]), object(2, [0.0; 3])],
+                    vec![],
+                )),
+                levels: levels.clone(),
+                discont: false,
+            });
+            let snapshot = timeline.snapshot_at(0, 0.0).unwrap();
+            assert_eq!(snapshot.lfe_level, normalized_level(levels[0]));
+            assert_eq!(snapshot.objects[0].level, normalized_level(levels[1]));
+            assert_eq!(snapshot.objects[1].level, normalized_level(levels[2]));
+        }
+    }
+
+    #[test]
+    fn lfe_only_buffers_produce_a_snapshot() {
+        let mut timeline = Timeline::default();
+        timeline.handle(TapEvent::Caps {
+            epoch: 0,
+            channels: 1,
+            rate: 48_000,
+        });
+        timeline.handle(buffer_event(0, 0, payload(vec![], vec![])));
+        let snapshot = timeline.snapshot_at(0, 0.0).unwrap();
+        assert!(snapshot.objects.is_empty());
+        assert_eq!(snapshot.lfe_level, normalized_level(0.5));
+        assert_eq!(snapshot.state, VisualState::Live);
+    }
+
+    #[test]
+    fn lfe_level_smooths_attack_and_decays_to_silence() {
+        let mut timeline = Timeline::default();
+        let mut push = |pts_ns, lfe| {
+            timeline.handle(TapEvent::Buffer {
+                epoch: 0,
+                pts_ns,
+                offset: 0,
+                payload: Some(payload(vec![object(1, [0.0; 3])], vec![])),
+                levels: vec![lfe, 0.0],
+                discont: false,
+            });
+            timeline.snapshot_at(pts_ns, 0.0).unwrap()
+        };
+        assert_eq!(push(0, 0.0).lfe_level, 0.0);
+        let attack = push(40_000_000, 1.0).lfe_level;
+        assert!(attack > 0.0 && attack < 1.0);
+        let release = push(80_000_000, 0.0).lfe_level;
+        assert!(release > 0.0 && release < attack);
+        for frame in 3..=80 {
+            let snapshot = push(frame * 40_000_000, 0.0);
+            assert_eq!(snapshot.objects[0].level, 0.0);
+        }
+        assert_eq!(
+            timeline.snapshot_at(3_200_000_000, 0.0).unwrap().lfe_level,
+            0.0
+        );
+    }
+
+    #[test]
     fn flush_resets_the_timeline() {
         let mut timeline = Timeline::default();
         timeline.handle(TapEvent::Caps {
@@ -677,6 +748,15 @@ mod tests {
             stop: true,
         });
         assert!(timeline.snapshot_at(0, 1.0).is_none());
+        timeline.handle(TapEvent::Buffer {
+            epoch: 0,
+            pts_ns: 0,
+            offset: 0,
+            payload: Some(payload(vec![object(1, [0.0; 3])], vec![])),
+            levels: vec![0.0, 0.5],
+            discont: false,
+        });
+        assert_eq!(timeline.snapshot_at(0, 0.0).unwrap().lfe_level, 0.0);
     }
 
     #[test]
@@ -697,11 +777,12 @@ mod tests {
             pts_ns: 1_000_000_000,
             offset: 0,
             payload: None,
-            levels: vec![0.0],
+            levels: vec![0.0, 0.0],
             discont: false,
         });
         let snapshot = timeline.snapshot_at(1_000_000_000, 0.0).expect("snapshot");
         assert_eq!(snapshot.state, VisualState::Stale);
+        assert_eq!(snapshot.lfe_level, 0.0);
         assert_eq!(snapshot.objects[0].position, [0.0, 0.0, 0.0]);
     }
 
@@ -721,6 +802,7 @@ mod tests {
         timeline.handle(TapEvent::Eos { epoch: 0 });
         let snapshot = timeline.snapshot_at(10_000_000_000, 0.0).expect("snapshot");
         assert_eq!(snapshot.state, VisualState::Eos);
+        assert_eq!(snapshot.lfe_level, normalized_level(0.5));
     }
 
     #[test]
@@ -746,13 +828,14 @@ mod tests {
             pts_ns: 1_000_000_000,
             offset: 0,
             payload: Some(payload(vec![object(1, [1.0, 0.0, 0.0])], vec![])),
-            levels: vec![0.5],
+            levels: vec![0.0, 0.5],
             discont: true,
         });
         assert_eq!(timeline.tracks[0].len(), 1);
         let snapshot = timeline.snapshot_at(1_000_000_000, 0.0).expect("snapshot");
         assert_eq!(snapshot.objects[0].position, [1.0, 0.0, 0.0]);
         assert_eq!(snapshot.state, VisualState::Live);
+        assert_eq!(snapshot.lfe_level, 0.0);
     }
 
     #[test]
@@ -774,7 +857,7 @@ mod tests {
             pts_ns: 1_000_000_000,
             offset: 0,
             payload: Some(payload(vec![object(1, [1.0, 0.0, 0.0])], vec![])),
-            levels: vec![0.5],
+            levels: vec![0.5, 0.5],
             discont: false,
         });
         assert!(timeline.snapshot_at(1_000_000_000, 0.0).is_none());

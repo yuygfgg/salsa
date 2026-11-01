@@ -1189,11 +1189,11 @@ impl SalsaApp {
                         ui.end_row();
 
                         ui.monospace("LFE");
-                        ui.label("The LFE box is the subwoofer, not a 3D object.");
+                        ui.label("The LFE marker sits directly behind the listener. Its fill shows the decoded LFE level when routed. Hover for level and routing details. Its position is a display convention.");
                         ui.end_row();
 
-                        ui.monospace("head");
-                        ui.label("Head/ear icon is the binaural listening position.");
+                        ui.monospace("Listener");
+                        ui.label("The translucent 3D head faces +Y at the listening position. Headphones indicate Binaural mode.");
                         ui.end_row();
 
                         ui.monospace("grid");

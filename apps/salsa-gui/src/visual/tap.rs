@@ -122,21 +122,21 @@ fn int_field(structure: &gst::StructureRef, name: &str) -> Option<i32> {
 }
 
 fn levels_from_buffer(buffer: &gst::BufferRef, channels: usize) -> Vec<f32> {
-    if channels <= 1 {
+    if channels == 0 {
         return Vec::new();
     }
     let Ok(map) = buffer.map_readable() else {
-        return vec![0.0; channels - 1];
+        return vec![0.0; channels];
     };
     let data = map.as_slice();
     let frame_bytes = channels * 4;
     let frames = data.len() / frame_bytes;
     if frames == 0 {
-        return vec![0.0; channels - 1];
+        return vec![0.0; channels];
     }
     // Bound the work for very wide object streams. Levels are a visualization,
-    // not a measurement, so subsampling is acceptable and is applied only to
-    // the object channels.
+    // not a measurement, so subsampling is acceptable. Keep decoder channel
+    // order: LFE first, followed by the objects.
     let stride = if channels > 256 {
         16
     } else if channels > 64 {
@@ -144,11 +144,11 @@ fn levels_from_buffer(buffer: &gst::BufferRef, channels: usize) -> Vec<f32> {
     } else {
         1
     };
-    let mut sums = vec![0.0f64; channels - 1];
+    let mut sums = vec![0.0f64; channels];
     for frame in (0..frames).step_by(stride) {
         let base = frame * frame_bytes;
         for (channel, sum) in sums.iter_mut().enumerate() {
-            let offset = base + (channel + 1) * 4;
+            let offset = base + channel * 4;
             let sample = f32::from_le_bytes([
                 data[offset],
                 data[offset + 1],
@@ -319,8 +319,31 @@ mod tests {
             .build()
     }
 
-    fn frame_buffer(frames: usize) -> gst::Buffer {
-        gst::Buffer::from_slice(vec![0u8; frames * 3 * 4])
+    fn frame_buffer(frames: usize, channels: &[f32]) -> gst::Buffer {
+        let data: Vec<u8> = (0..frames)
+            .flat_map(|_| channels.iter().flat_map(|sample| sample.to_le_bytes()))
+            .collect();
+        gst::Buffer::from_slice(data)
+    }
+
+    #[test]
+    fn levels_keep_lfe_and_objects_in_decoder_channel_order() {
+        init();
+        for channels in [vec![0.5, 0.0, 0.0], vec![0.0, 0.25, -0.125], vec![0.5]] {
+            let buffer = frame_buffer(32, &channels);
+            let expected: Vec<_> = channels.iter().map(|level| level.abs()).collect();
+            assert_eq!(levels_from_buffer(&buffer, channels.len()), expected);
+        }
+    }
+
+    #[test]
+    fn missing_and_invalid_samples_do_not_produce_levels() {
+        init();
+        let empty = frame_buffer(0, &[0.0; 3]);
+        assert_eq!(levels_from_buffer(&empty, 3), vec![0.0; 3]);
+        assert!(levels_from_buffer(&empty, 0).is_empty());
+        let invalid = frame_buffer(32, &[f32::NAN, f32::INFINITY, f32::NEG_INFINITY]);
+        assert_eq!(levels_from_buffer(&invalid, 3), vec![0.0; 3]);
     }
 
     #[test]
@@ -357,7 +380,7 @@ mod tests {
             dropped: AtomicU64::new(0),
             segment_pending: AtomicBool::new(false),
         };
-        let mut buffer = frame_buffer(32);
+        let mut buffer = frame_buffer(32, &[0.5, 0.25, 0.125]);
         let payload = SpatialPayload::new(
             48_000,
             vec![
@@ -389,7 +412,7 @@ mod tests {
         };
         assert_eq!(pts_ns, 100_000_000);
         assert_eq!(payload.objects.len(), 2);
-        assert_eq!(levels.len(), 2);
+        assert_eq!(levels, vec![0.5, 0.25, 0.125]);
     }
 
     #[test]
@@ -416,7 +439,7 @@ mod tests {
             ],
             Vec::new(),
         );
-        let mut buffer = frame_buffer(32);
+        let mut buffer = frame_buffer(32, &[0.01, 0.0, 0.1]);
         objectaudio_meta::add_spatial(buffer.get_mut().unwrap(), &payload, 0, 12).unwrap();
         buffer
             .get_mut()
@@ -439,6 +462,9 @@ mod tests {
         let snapshot = snapshot.expect("snapshot");
         assert_eq!(snapshot.objects.len(), 2);
         assert!(snapshot.objects[1].position[2] > 0.4);
+        assert!((snapshot.lfe_level - 1.0 / 3.0).abs() < 1e-4);
+        assert_eq!(snapshot.objects[0].level, 0.0);
+        assert!((snapshot.objects[1].level - 2.0 / 3.0).abs() < 1e-4);
         let _ = pipeline.set_state(gst::State::Null);
     }
 }

@@ -1,11 +1,22 @@
-use std::cmp::Ordering;
+use std::sync::Arc;
 
 use crate::visual::{ObjectVisual, VisualSnapshot, VisualState};
 use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
-use objectaudio_ir::STANDARD_LAYOUTS;
+use objectaudio_ir::{STANDARD_LAYOUTS, StandardLayout};
 
 use crate::pipeline::OutputMode;
+
+mod listener;
+
+type DepthShape = (f32, egui::Shape);
+
+const STAGE_BACKGROUND: Color32 = Color32::from_rgb(15, 17, 21);
+const SPEAKER_COLOR: Color32 = Color32::from_rgb(220, 225, 235);
+const LISTENER_COLOR: Color32 = Color32::from_rgb(145, 215, 240);
+const LFE_COLOR: Color32 = Color32::from_rgb(240, 208, 168);
+// Display convention: LFE sits directly behind the listener on the rear wall.
+const LFE_POSITION: [f32; 3] = [0.0, -1.0, 0.0];
 
 #[derive(Debug)]
 pub struct StageState {
@@ -75,7 +86,7 @@ pub fn draw(
     stale_hint: bool,
 ) -> Option<StageAction> {
     let mut action = None;
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui.button("Top").clicked() {
             state.top_view();
         }
@@ -110,7 +121,7 @@ pub fn draw(
     }
     let (response, painter) = ui.allocate_painter(size, Sense::click_and_drag());
     let rect = response.rect;
-    painter.rect_filled(rect, 8.0, Color32::from_rgb(15, 17, 21));
+    painter.rect_filled(rect, 8.0, STAGE_BACKGROUND);
 
     if response.dragged_by(egui::PointerButton::Primary) {
         let delta = ui.input(|input| input.pointer.delta());
@@ -127,6 +138,12 @@ pub fn draw(
         state.perspective_view();
     }
 
+    // Keep HUD text outside the projected scene and its labels.
+    let compact = rect.width() < 420.0;
+    let scene_rect = Rect::from_min_max(
+        rect.min + Vec2::new(16.0, if compact { 52.0 } else { 32.0 }),
+        rect.max - Vec2::new(16.0, 38.0),
+    );
     let camera = Camera {
         yaw: state.yaw,
         pitch: state.pitch,
@@ -135,54 +152,84 @@ pub fn draw(
     let follow_offset = if let Some(id) = state.follow {
         snapshot
             .and_then(|snapshot| snapshot.objects.iter().find(|object| object.id == id))
-            .map(|object| rect.center() - project(camera, object.position, rect))
+            .map(|object| scene_rect.center() - project(camera, object.position, scene_rect))
             .unwrap_or(Vec2::ZERO)
     } else {
         Vec2::ZERO
     };
-    let project = |position: [f32; 3]| project(camera, position, rect) + follow_offset;
+    let project_point = |position: [f32; 3]| {
+        let (screen, depth) = project_depth(camera, position, scene_rect);
+        (screen + follow_offset, depth)
+    };
+    let project = |position: [f32; 3]| project_point(position).0;
 
-    draw_room(&painter, &project);
-
-    match mode {
-        OutputMode::Speaker => draw_speakers(&painter, &project, layout_name),
-        OutputMode::Binaural => draw_head(&painter, project([0.0, 0.0, 0.0])),
-    }
-
+    let scene_painter = painter.with_clip_rect(scene_rect);
+    draw_room(&scene_painter, &project);
+    let mut labels = StageLabels::new(scene_rect);
+    let mut scene = Vec::new();
+    let listener_bounds =
+        listener::add_to_scene(&mut scene, &project_point, *mode == OutputMode::Binaural);
+    labels.add(
+        listener_bounds.expand(3.0),
+        "Listener".to_owned(),
+        LabelKind::Listener,
+        Vec2::new(0.0, 1.0),
+    );
+    let mut hovered = None;
     if let Some(snapshot) = snapshot {
-        draw_objects(
+        hovered = add_objects(
             ui,
-            &painter,
-            rect,
+            &mut scene,
+            scene_rect,
             &response,
             snapshot,
             state,
-            camera,
-            &project,
+            &project_point,
             reduce_motion,
-        );
-        let (label, color) = match snapshot.state {
-            VisualState::Live => ("Live", Color32::from_rgb(120, 210, 150)),
-            VisualState::Stale => ("Stale metadata", Color32::from_rgb(235, 180, 110)),
-            VisualState::Seeking => ("Seeking", Color32::from_gray(170)),
-            VisualState::Eos => ("End of stream", Color32::from_gray(150)),
-        };
-        painter.text(
-            rect.right_top() + Vec2::new(-10.0, 8.0),
-            Align2::RIGHT_TOP,
-            label,
-            FontId::proportional(12.0),
-            color,
-        );
-    } else {
-        painter.text(
-            rect.center() + Vec2::new(0.0, 48.0),
-            Align2::CENTER_CENTER,
-            "Waiting for object metadata...",
-            FontId::proportional(15.0),
-            Color32::from_gray(150),
+            &mut labels,
         );
     }
+    scene.sort_by(|a, b| b.0.total_cmp(&a.0));
+    scene_painter.extend(scene.into_iter().map(|(_, shape)| shape));
+
+    // Speaker anchors remain reference outlines over the depth-sorted scene.
+    let layout = STANDARD_LAYOUTS
+        .iter()
+        .find(|layout| layout.name == layout_name);
+    if *mode == OutputMode::Speaker
+        && let Some(layout) = layout
+    {
+        draw_speakers(&scene_painter, &project, layout, &mut labels);
+    }
+    draw_lfe(
+        ui,
+        &scene_painter,
+        &project,
+        mode,
+        layout,
+        snapshot,
+        &mut labels,
+    );
+    labels.paint(&scene_painter);
+
+    let (status, color) = if stale_hint {
+        ("Re-syncing...", Color32::from_gray(170))
+    } else {
+        match snapshot.map(|snapshot| snapshot.state) {
+            Some(VisualState::Live) => ("Live", Color32::from_rgb(120, 210, 150)),
+            Some(VisualState::Stale) => ("Stale metadata", Color32::from_rgb(235, 180, 110)),
+            Some(VisualState::Seeking) => ("Seeking", Color32::from_gray(170)),
+            Some(VisualState::Eos) => ("End of stream", Color32::from_gray(150)),
+            None => ("Waiting for metadata...", Color32::from_gray(150)),
+        }
+    };
+    painter.text(
+        rect.right_top() + Vec2::new(-10.0, if compact { 28.0 } else { 8.0 }),
+        Align2::RIGHT_TOP,
+        status,
+        FontId::proportional(12.0),
+        color,
+    );
 
     painter.text(
         rect.left_top() + Vec2::new(10.0, 8.0),
@@ -192,17 +239,10 @@ pub fn draw(
         Color32::from_gray(160),
     );
 
-    if stale_hint {
-        painter.text(
-            rect.center() + Vec2::new(0.0, 26.0),
-            Align2::CENTER_CENTER,
-            "Re-syncing...",
-            FontId::proportional(13.0),
-            Color32::from_gray(150),
-        );
+    if let Some(hit) = hovered {
+        draw_object_tooltip(&painter, rect, hit.screen, hit.object);
     }
 
-    let _ = response;
     action
 }
 
@@ -233,201 +273,365 @@ fn draw_room(painter: &egui::Painter, project: &impl Fn([f32; 3]) -> Pos2) {
     for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
         painter.line_segment([project([x, y, 0.0]), project([x, y, 1.0])], height);
     }
-
-    let listener = project([0.0, 0.0, 0.0]);
-    painter.circle_filled(listener, 4.0, Color32::from_rgb(190, 195, 205));
-    painter.text(
-        listener + Vec2::new(8.0, 6.0),
-        Align2::LEFT_TOP,
-        "L",
-        FontId::monospace(10.0),
-        Color32::from_gray(170),
-    );
 }
 
-fn draw_speakers(painter: &egui::Painter, project: &impl Fn([f32; 3]) -> Pos2, layout_name: &str) {
-    let Some(layout) = STANDARD_LAYOUTS
-        .iter()
-        .find(|layout| layout.name == layout_name)
-    else {
-        return;
-    };
+fn draw_speakers(
+    painter: &egui::Painter,
+    project: &impl Fn([f32; 3]) -> Pos2,
+    layout: &StandardLayout,
+    labels: &mut StageLabels,
+) {
     for channel in layout.channels {
         if channel.is_lfe() {
             continue;
         }
-        draw_anchor(
-            painter,
-            project(channel.adm_position()),
-            channel.short_name(),
+        let position = project(channel.adm_position());
+        let marker = Rect::from_center_size(position, Vec2::splat(14.0));
+        for (width, color) in [(5.0_f32, STAGE_BACKGROUND), (2.0, SPEAKER_COLOR)] {
+            painter.rect_stroke(
+                marker,
+                2.0,
+                Stroke::new(width, color),
+                egui::StrokeKind::Middle,
+            );
+        }
+        labels.add(
+            marker.expand(3.0),
+            channel.short_name().to_owned(),
+            LabelKind::Speaker,
+            (position - project([0.0, 0.0, 0.0])).normalized(),
         );
     }
-    let lfe = project([0.0, 0.0, 0.0]) + Vec2::new(0.0, 22.0);
-    let box_rect = Rect::from_center_size(lfe, Vec2::new(26.0, 11.0));
-    painter.rect_filled(box_rect, 2.0, Color32::from_rgb(96, 74, 58));
-    painter.rect_stroke(
-        box_rect,
-        2.0,
-        Stroke::new(1.0_f32, Color32::from_rgb(160, 128, 96)),
-        egui::StrokeKind::Inside,
-    );
-    painter.text(
-        lfe,
-        Align2::CENTER_CENTER,
-        "LFE",
-        FontId::monospace(8.0),
-        Color32::from_rgb(220, 200, 180),
-    );
 }
 
-fn draw_anchor(painter: &egui::Painter, position: Pos2, name: &str) {
-    let rect = Rect::from_center_size(position, Vec2::splat(6.0));
-    painter.rect_filled(rect, 1.0, Color32::from_rgb(135, 140, 150));
-    painter.text(
-        position + Vec2::new(7.0, -5.0),
-        Align2::LEFT_BOTTOM,
-        name,
-        FontId::monospace(9.0),
-        Color32::from_rgb(145, 150, 160),
+fn draw_lfe(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    project: &impl Fn([f32; 3]) -> Pos2,
+    mode: &OutputMode,
+    layout: Option<&StandardLayout>,
+    snapshot: Option<&VisualSnapshot>,
+    labels: &mut StageLabels,
+) {
+    // The rear marker is a display convention, not an audio panning position.
+    let (text, detail, routed) = match mode {
+        OutputMode::Binaural => ("LFE", "Input LFE is rendered to headphones.", true),
+        OutputMode::Speaker
+            if layout
+                .is_some_and(|layout| layout.channels.iter().any(|channel| channel.is_lfe())) =>
+        {
+            (
+                "LFE",
+                "Input LFE is routed to the LFE output channel.",
+                true,
+            )
+        }
+        OutputMode::Speaker => (
+            "LFE (off)",
+            "This layout has no LFE output channel. The speaker renderer does not render input LFE.",
+            false,
+        ),
+    };
+    let position = project(LFE_POSITION);
+    let marker = Rect::from_center_size(position, Vec2::new(20.0, 12.0));
+    let color = if routed {
+        LFE_COLOR
+    } else {
+        Color32::from_gray(160)
+    };
+    let level = snapshot.map_or(0.0, |snapshot| snapshot.lfe_level);
+    if routed && level > 0.0 {
+        let mut fill = marker.shrink(3.0);
+        fill.max.x = fill.min.x + fill.width() * level;
+        let alpha = if snapshot.is_some_and(|snapshot| snapshot.state == VisualState::Live) {
+            255
+        } else {
+            90
+        };
+        painter.rect_filled(
+            fill,
+            1.0,
+            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha),
+        );
+    }
+    for (width, color) in [(5.0_f32, STAGE_BACKGROUND), (2.0, color)] {
+        painter.rect_stroke(
+            marker,
+            2.0,
+            Stroke::new(width, color),
+            egui::StrokeKind::Middle,
+        );
+    }
+    labels.add(
+        marker.expand(3.0),
+        text.to_owned(),
+        LabelKind::Lfe,
+        (position - project([0.0; 3])).normalized(),
     );
+    let hover = marker.expand(4.0).intersect(painter.clip_rect());
+    if hover.is_positive() {
+        ui.interact(hover, ui.id().with("lfe-route"), Sense::hover())
+            .on_hover_text(format!(
+                "{detail}\nDecoded LFE level: {:.0}%\nThe rear position is a display convention. LFE has no spatial metadata.",
+                level * 100.0
+            ));
+    }
 }
 
-fn draw_head(painter: &egui::Painter, position: Pos2) {
-    painter.circle_stroke(
-        position,
-        9.0,
-        Stroke::new(1.5_f32, Color32::from_rgb(170, 175, 190)),
-    );
-    painter.circle_filled(position, 3.0, Color32::from_rgb(170, 175, 190));
-    painter.circle_filled(
-        position + Vec2::new(-10.0, 0.0),
-        2.5,
-        Color32::from_rgb(150, 155, 170),
-    );
-    painter.circle_filled(
-        position + Vec2::new(10.0, 0.0),
-        2.5,
-        Color32::from_rgb(150, 155, 170),
-    );
+struct ObjectHit<'a> {
+    screen: Pos2,
+    depth: f32,
+    object: &'a ObjectVisual,
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_objects(
+fn add_objects<'a>(
     ui: &egui::Ui,
-    painter: &egui::Painter,
+    scene: &mut Vec<DepthShape>,
     rect: Rect,
     response: &egui::Response,
-    snapshot: &VisualSnapshot,
+    snapshot: &'a VisualSnapshot,
     state: &mut StageState,
-    camera: Camera,
-    project: &impl Fn([f32; 3]) -> Pos2,
+    project: &impl Fn([f32; 3]) -> (Pos2, f32),
     reduce_motion: bool,
-) {
-    let pointer = ui.input(|input| input.pointer.hover_pos());
-    let mut screens: Vec<(u32, Pos2, f32, &ObjectVisual)> = snapshot
-        .objects
-        .iter()
-        .map(|object| {
-            let depth = project_depth(camera, object.position, rect).1;
-            (object.id, project(object.position), depth, object)
-        })
-        .collect();
-    screens.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(Ordering::Equal));
-
+    labels: &mut StageLabels,
+) -> Option<ObjectHit<'a>> {
+    let pointer = ui
+        .input(|input| input.pointer.hover_pos())
+        .filter(|position| rect.contains(*position));
     let dimmed = snapshot.state != VisualState::Live;
-    let mut hovered: Option<(u32, Pos2, &ObjectVisual)> = None;
-    for (id, screen, _depth, object) in &screens {
+    let mut hovered: Option<ObjectHit<'a>> = None;
+    for object in &snapshot.objects {
+        let id = object.id;
+        let (screen, depth) = project(object.position);
         let base = height_color(object.position[2]);
         let object_alpha = if dimmed || !object.enabled { 90 } else { 255 };
         if !reduce_motion && object.trail.len() > 1 {
-            let points: Vec<Pos2> = object.trail.iter().map(|point| project(*point)).collect();
+            let points: Vec<_> = object.trail.iter().map(|point| project(*point)).collect();
             for (index, pair) in points.windows(2).enumerate() {
                 let alpha =
                     ((index + 1) as f32 / points.len() as f32 * 120.0 * f32::from(object_alpha)
                         / 255.0) as u8;
-                painter.line_segment(
-                    [pair[0], pair[1]],
-                    Stroke::new(
-                        1.4_f32,
-                        Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha),
+                scene.push((
+                    (pair[0].1 + pair[1].1) * 0.5,
+                    egui::Shape::line_segment(
+                        [pair[0].0, pair[1].0],
+                        Stroke::new(
+                            1.4_f32,
+                            Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha),
+                        ),
                     ),
-                );
+                ));
             }
         }
 
         let radius = 3.0 + object.level * 7.0;
+        let marker = Rect::from_center_size(screen, Vec2::splat(radius * 2.0 + 4.0));
         let color = Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), object_alpha);
-        painter.circle_filled(*screen, radius, color);
-        let selected = state.selected == Some(*id) || state.follow == Some(*id);
-        painter.circle_stroke(
-            *screen,
-            radius,
-            Stroke::new(
-                if selected { 2.0_f32 } else { 1.0_f32 },
-                if selected {
-                    Color32::from_rgb(240, 242, 248)
-                } else {
-                    Color32::from_black_alpha(170)
-                },
+        scene.push((depth, egui::Shape::circle_filled(screen, radius, color)));
+        let selected = state.selected == Some(id) || state.follow == Some(id);
+        scene.push((
+            depth,
+            egui::Shape::circle_stroke(
+                screen,
+                radius,
+                Stroke::new(
+                    if selected { 2.0_f32 } else { 1.0_f32 },
+                    if selected {
+                        Color32::from_rgb(240, 242, 248)
+                    } else {
+                        Color32::from_black_alpha(170)
+                    },
+                ),
             ),
-        );
+        ));
 
         if snapshot.objects.len() <= 16 || selected {
-            painter.text(
-                *screen + Vec2::new(radius + 3.0, -radius),
-                Align2::LEFT_BOTTOM,
+            labels.add(
+                marker,
                 format!("ID{id}"),
-                FontId::monospace(9.0),
-                Color32::from_gray(205),
+                if selected {
+                    LabelKind::SelectedObject
+                } else {
+                    LabelKind::Object
+                },
+                Vec2::new(1.0, -1.0),
             );
+        } else {
+            labels.reserve(marker);
         }
 
         if let Some(pointer) = pointer
-            && pointer.distance(*screen) <= (radius + 7.0).max(13.0)
+            && pointer.distance(screen) <= (radius + 7.0).max(13.0)
+            && hovered.as_ref().is_none_or(|hit| depth <= hit.depth)
         {
-            hovered = Some((*id, *screen, object));
+            hovered = Some(ObjectHit {
+                screen,
+                depth,
+                object,
+            });
         }
-    }
-
-    if let Some((id, screen, object)) = hovered {
-        let gain_db = if object.gain > 1e-6 {
-            20.0 * object.gain.log10()
-        } else {
-            -120.0
-        };
-        let text = format!(
-            "ID {id}   x {:+.2}  y {:+.2}  z {:+.2}\n\
-             gain {gain_db:+.1} dB   level {:.0}%{}",
-            object.position[0],
-            object.position[1],
-            object.position[2],
-            object.level * 100.0,
-            if object.enabled { "" } else { "   disabled" },
-        );
-        let galley = painter.layout_no_wrap(
-            text,
-            FontId::monospace(10.0),
-            Color32::from_rgb(235, 238, 245),
-        );
-        let size = galley.size() + Vec2::new(10.0, 6.0);
-        let mut position = screen + Vec2::new(12.0, -12.0);
-        if position.x + size.x > rect.right() {
-            position.x = rect.right() - size.x - 4.0;
-        }
-        if position.y < rect.top() {
-            position.y = rect.top() + 4.0;
-        }
-        let tip = Rect::from_min_size(position, size);
-        painter.rect_filled(tip, 4.0, Color32::from_rgba_unmultiplied(20, 22, 27, 235));
-        painter.galley(
-            tip.min + Vec2::new(5.0, 3.0),
-            galley,
-            Color32::from_rgb(235, 238, 245),
-        );
     }
 
     if response.clicked() {
-        state.selected = hovered.map(|(id, _, _)| id);
+        state.selected = hovered.as_ref().map(|hit| hit.object.id);
+    }
+    hovered
+}
+
+fn draw_object_tooltip(painter: &egui::Painter, rect: Rect, screen: Pos2, object: &ObjectVisual) {
+    let gain_db = if object.gain > 1e-6 {
+        20.0 * object.gain.log10()
+    } else {
+        -120.0
+    };
+    let text = format!(
+        "ID {}   x {:+.2}  y {:+.2}  z {:+.2}\n\
+             gain {gain_db:+.1} dB   level {:.0}%{}",
+        object.id,
+        object.position[0],
+        object.position[1],
+        object.position[2],
+        object.level * 100.0,
+        if object.enabled { "" } else { "   disabled" },
+    );
+    let galley = painter.layout(
+        text,
+        FontId::monospace(11.0),
+        Color32::from_rgb(235, 238, 245),
+        (rect.width() - 20.0).max(1.0),
+    );
+    let size = galley.size() + Vec2::new(10.0, 6.0);
+    let position = (screen + Vec2::new(24.0, -24.0)).clamp(
+        rect.min + Vec2::splat(4.0),
+        (rect.max - size - Vec2::splat(4.0)).max(rect.min + Vec2::splat(4.0)),
+    );
+    let tip = Rect::from_min_size(position, size);
+    painter.rect_filled(tip, 4.0, Color32::from_rgb(20, 22, 27));
+    painter.galley(tip.min + Vec2::new(5.0, 3.0), galley, Color32::WHITE);
+}
+
+/// Reference labels get space before optional object IDs.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum LabelKind {
+    Listener,
+    Lfe,
+    Speaker,
+    SelectedObject,
+    Object,
+}
+
+struct StageLabel {
+    anchor: Rect,
+    text: String,
+    kind: LabelKind,
+    direction: Vec2,
+}
+
+struct StageLabels {
+    bounds: Rect,
+    occupied: Vec<Rect>,
+    pending: Vec<StageLabel>,
+}
+
+impl StageLabels {
+    fn new(bounds: Rect) -> Self {
+        Self {
+            bounds,
+            occupied: Vec::new(),
+            pending: Vec::new(),
+        }
+    }
+
+    fn reserve(&mut self, rect: Rect) {
+        if self.bounds.intersects(rect) {
+            self.occupied.push(rect);
+        }
+    }
+
+    fn add(&mut self, anchor: Rect, text: String, kind: LabelKind, direction: Vec2) {
+        self.reserve(anchor);
+        if self.bounds.contains(anchor.center()) {
+            self.pending.push(StageLabel {
+                anchor,
+                text,
+                kind,
+                direction,
+            });
+        }
+    }
+
+    fn place(&self, anchor: Pos2, size: Vec2, preferred: Vec2) -> Option<Rect> {
+        if size.x > self.bounds.width() || size.y > self.bounds.height() {
+            return None;
+        }
+        let directions = [
+            preferred,
+            Vec2::new(1.0, -1.0),
+            Vec2::new(-1.0, -1.0),
+            Vec2::new(1.0, 1.0),
+            Vec2::new(-1.0, 1.0),
+            Vec2::new(0.0, -1.0),
+            Vec2::new(0.0, 1.0),
+            Vec2::new(-1.0, 0.0),
+            Vec2::new(1.0, 0.0),
+        ];
+        for ring in 0..12 {
+            let clearance = 14.0 + ring as f32 * 12.0;
+            for direction in directions {
+                let center = anchor
+                    + Vec2::new(
+                        direction.x * (size.x * 0.5 + clearance),
+                        direction.y * (size.y * 0.5 + clearance),
+                    );
+                let min = (center - size * 0.5).clamp(self.bounds.min, self.bounds.max - size);
+                let rect = Rect::from_min_size(min, size);
+                if self
+                    .occupied
+                    .iter()
+                    .all(|other| !other.intersects(rect.expand(3.0)))
+                {
+                    return Some(rect);
+                }
+            }
+        }
+        None
+    }
+
+    fn paint(mut self, painter: &egui::Painter) {
+        self.pending.sort_by_key(|label| label.kind);
+        let mut placed: Vec<(Rect, Arc<egui::Galley>)> = Vec::new();
+        for label in std::mem::take(&mut self.pending) {
+            let color = match label.kind {
+                LabelKind::Listener => LISTENER_COLOR,
+                LabelKind::Lfe => LFE_COLOR,
+                LabelKind::Speaker => SPEAKER_COLOR,
+                LabelKind::SelectedObject | LabelKind::Object => Color32::from_gray(205),
+            };
+            let font = FontId::monospace(match label.kind {
+                LabelKind::Listener | LabelKind::Lfe | LabelKind::Speaker => 12.0,
+                LabelKind::SelectedObject | LabelKind::Object => 10.0,
+            });
+            let galley = painter.layout_no_wrap(label.text, font, color);
+            let size = galley.size() + Vec2::new(10.0, 6.0);
+            if let Some(rect) = self.place(label.anchor.center(), size, label.direction) {
+                self.reserve(rect);
+                let end = rect.clamp(label.anchor.center());
+                let start = label
+                    .anchor
+                    .intersects_ray_from_center((end - label.anchor.center()).normalized());
+                painter.line_segment(
+                    [start, end],
+                    Stroke::new(1.0_f32, color.gamma_multiply(0.55)),
+                );
+                placed.push((rect, galley));
+            }
+        }
+        // Paint all label backgrounds last so leader lines cannot cross text.
+        for (rect, galley) in placed {
+            painter.rect_filled(rect, 3.0, Color32::from_rgb(25, 29, 36));
+            painter.galley(rect.min + Vec2::new(5.0, 3.0), galley, Color32::WHITE);
+        }
     }
 }
 
@@ -450,7 +654,7 @@ fn project_depth(camera: Camera, position: [f32; 3], rect: Rect) -> (Pos2, f32) 
     let y2 = y1 * pitch_cos - position[2] * pitch_sin;
     let z2 = y1 * pitch_sin + position[2] * pitch_cos;
     let depth = (camera.distance + y2).max(0.6);
-    let scale = rect.height() * 0.7 / depth;
+    let scale = rect.width().min(rect.height()) * 0.7 / depth;
     let screen = rect.center() + Vec2::new(x1 * scale, -z2 * scale);
     (screen, depth)
 }
