@@ -216,9 +216,9 @@ impl BaseParseImpl for Eac3JocParse {
                         0,
                     );
                 }
-                object
-                    .finish_frame(frame, size as u32)
-                    .map_err(|_| gst::FlowError::Error)?;
+                // Propagate FLUSHING so a seek racing with the downstream
+                // decoder stops the parser task instead of posting an error.
+                object.finish_frame(frame, size as u32)?;
                 Ok((gst::FlowSuccess::Ok, 0))
             }
         }

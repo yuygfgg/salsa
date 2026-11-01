@@ -69,7 +69,7 @@ All Salsa elements exchange a unified raw object stream:
 
 ### Parsers (`salsaeac3jocparse`, `salsatruehdparse`)
 
-Both parsers are forward-only (no seeking) and take no properties:
+Both parsers support flushing seeks (forward and backward) when the upstream source is seekable, and take no properties. TrueHD seeks land on the next major sync, so the granularity is bounded by the major-sync interval (≤32 access units for FBB, ≤128 for FBA):
 
 - **`salsaeac3jocparse`**: E-AC-3 JOC syncframe framing.
   - Sink caps: `audio/x-eac3` only, with no `framed` requirement. AC-3 is not supported.
@@ -83,7 +83,7 @@ Both parsers are forward-only (no seeking) and take no properties:
 
 ### Decoders (`salsaeac3jocdec`, `salsatruehdatmosdec`)
 
-Both decoders are forward-only (no seeking) and take no properties:
+Both decoders handle flushing seeks and reset their codec/DSP state on `FLUSH_STOP` (and on `DISCONT` for non-flushing seeks). They take no properties:
 
 - **`salsaeac3jocdec`**: Uses `libavcodec` for the E-AC-3 core and the JOC kernel for object reconstruction.
   - Sink caps: `audio/x-eac3, framed=(boolean)true, alignment=(string)frame, rate=(int)[1,655350]` only. Plain AC-3 cannot be linked.
@@ -107,9 +107,16 @@ Sample-accurate equal-power panning to standard speaker layouts (`2.0`, `3.1`, `
 | `layout`          | `5.1`   | Target speaker layout name, or `auto` to infer from downstream caps (set before `PAUSED`).           |
 | `metadata-offset` | `0`     | Extra sample offset applied to spatial snapshots/events (`0–65535`, clamped to buffer length).        |
 | `limiter-enable`  | `false` | Normalize buffers exceeding 0 dBFS by `1/peak` (safety limiter, not Dolby DRC).                      |
-| `discard-latency` | `false` | No-op property kept for Dolby `oar` CLI compatibility; the renderer has no latency.                  |
+| `discard-latency` | `false` | No-op property kept for Dolby `oar` CLI compatibility; output remains sample-aligned.               |
 
 The E-AC-3 decoder already folds the 1473-sample codec delay into its metadata offsets, so the renderer default stays at zero. A buffer without metadata keeps the previous panning state.
+
+Input buffers can contain any number of complete PCM frames, including a partial
+block after an accurate seek. The element queues PCM and spatial events together
+and renders complete 32-sample blocks. It retains at most 31 samples between
+buffers and reports this buffering latency. Output timestamps and sample offsets
+stay on the input timeline. EOS drains the final partial block without adding
+samples. `FLUSH_STOP` and `DISCONT` discard queued PCM and metadata.
 
 ### `salsahrtfrender` (Binaural Renderer)
 
@@ -169,6 +176,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ```sh
 SALSA_TEST_EC3=/path/to/stream.ec3 cargo test -p gst-eac3joc --test pipeline
+SALSA_TEST_EC3=/path/to/stream.ec3 SALSA_TEST_TRUEHD=/path/to/master.mlp \
+  cargo test -p gst-objectaudio --test pipeline
 SALSA_TEST_EC3=/path/to/stream.ec3 SALSA_REFERENCE_F32=/path/to/ref.f32le \
   cargo test -p eac3joc-dsp --test decode
 SALSA_TEST_EC3=/path/to/stream.ec3 SALSA_ROSELLA_MODEL=/path/to/model.personalized_headphone \

@@ -78,7 +78,14 @@ pub fn push_pcm<D: IsA<gst_audio::AudioDecoder>>(
     decoder
         .finish_frame(Some(buffer), frames)
         .inspect_err(|error| {
-            gst::error!(gst::CAT_RUST, "finish_frame failed: {error:?}");
+            // A flush can race with an in-flight frame; the caller drops the
+            // frame and lets FLUSH_STOP reset the decoder. Do not report it
+            // as a decode error.
+            if error == &gst::FlowError::Flushing {
+                gst::debug!(gst::CAT_RUST, "finish_frame stopped by a flush");
+            } else {
+                gst::error!(gst::CAT_RUST, "finish_frame failed: {error:?}");
+            }
         })
 }
 

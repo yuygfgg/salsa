@@ -8,6 +8,8 @@ use gstreamer as gst;
 use gstreamer_audio as gst_audio;
 use gstreamer_base as gst_base;
 
+use gst_base::prelude::*;
+use gst_base::subclass::base_transform::GenerateOutputSuccess;
 use gst_base::subclass::prelude::*;
 
 use objectaudio_render::{
@@ -31,6 +33,7 @@ struct State {
     metadata_offset: u32,
     renderer: Option<SpeakerRenderer>,
     runtime: RuntimeState,
+    pending: PendingAudio,
     in_bpf: usize,
     out_bpf: usize,
     rate: u32,
@@ -65,6 +68,7 @@ impl Default for State {
             metadata_offset: DEFAULT_METADATA_OFFSET,
             renderer: None,
             runtime: RuntimeState::default(),
+            pending: PendingAudio::default(),
             in_bpf: 0,
             out_bpf: 0,
             rate: 48_000,
@@ -255,7 +259,7 @@ impl ObjectImpl for Oar {
                     .build(),
                 glib::ParamSpecBoolean::builder("discard-latency")
                     .nick("Discard latency")
-                    .blurb("Kept for Dolby oar compatibility; the speaker renderer has no latency")
+                    .blurb("Kept for Dolby oar compatibility; output remains sample-aligned")
                     .default_value(false)
                     .readwrite()
                     .build(),
@@ -372,6 +376,7 @@ impl BaseTransformImpl for Oar {
         let mut state = self.state.lock().unwrap();
         state.renderer = None;
         state.runtime = RuntimeState::default();
+        state.pending = PendingAudio::default();
         state.in_bpf = 0;
         state.out_bpf = 0;
         state.in_channels = 0;
@@ -383,6 +388,7 @@ impl BaseTransformImpl for Oar {
         let mut state = self.state.lock().unwrap();
         state.renderer = None;
         state.runtime = RuntimeState::default();
+        state.pending = PendingAudio::default();
         Ok(())
     }
 
@@ -454,6 +460,7 @@ impl BaseTransformImpl for Oar {
         let mut state = self.state.lock().unwrap();
         state.renderer = Some(SpeakerRenderer::new(layout, object_count));
         state.runtime.configure(object_count);
+        state.pending = PendingAudio::default();
         state.in_bpf = in_info.bpf() as usize;
         state.out_bpf = out_info.bpf() as usize;
         state.rate = in_info.rate();
@@ -468,83 +475,153 @@ impl BaseTransformImpl for Oar {
         Ok(())
     }
 
-    fn transform_size(
-        &self,
-        direction: gst::PadDirection,
-        caps: &gst::Caps,
-        size: usize,
-        othercaps: &gst::Caps,
-    ) -> Option<usize> {
-        let state = self.state.lock().unwrap();
-        let in_bpf = if state.in_bpf != 0 {
-            state.in_bpf
-        } else {
-            gst_audio::AudioInfo::from_caps(caps).ok()?.bpf() as usize
+    fn generate_output(&self) -> Result<GenerateOutputSuccess, gst::FlowError> {
+        let Some(inbuf) = self.take_queued_buffer() else {
+            return Ok(GenerateOutputSuccess::NoOutput);
         };
-        let out_bpf = if state.out_bpf != 0 {
-            state.out_bpf
-        } else {
-            gst_audio::AudioInfo::from_caps(othercaps).ok()?.bpf() as usize
-        };
-        if in_bpf == 0 || out_bpf == 0 {
-            return None;
-        }
-        if direction == gst::PadDirection::Sink {
-            Some(size / in_bpf * out_bpf)
-        } else {
-            Some(size / out_bpf * in_bpf)
-        }
+        let mut state = self.state.lock().unwrap();
+        state.queue(&inbuf)?;
+        Ok(match state.render_pending(false)? {
+            Some(buffer) => GenerateOutputSuccess::Buffer(buffer),
+            None => GenerateOutputSuccess::NoOutput,
+        })
     }
 
-    fn unit_size(&self, caps: &gst::Caps) -> Option<usize> {
-        gst_audio::AudioInfo::from_caps(caps)
-            .ok()
-            .map(|info| info.bpf() as usize)
+    fn query(&self, direction: gst::PadDirection, query: &mut gst::QueryRef) -> bool {
+        let handled = BaseTransformImplExt::parent_query(self, direction, query);
+        if handled
+            && direction == gst::PadDirection::Src
+            && let gst::QueryViewMut::Latency(latency) = query.view_mut()
+        {
+            let (live, min, max) = latency.result();
+            let rate = self.state.lock().unwrap().rate;
+            let extra = sample_time((BLOCK_SAMPLES - 1) as u64, rate);
+            latency.set(live, min + extra, max.map(|value| value + extra));
+        }
+        handled
     }
 
-    fn transform(
-        &self,
-        inbuf: &gst::Buffer,
-        outbuf: &mut gst::BufferRef,
-    ) -> Result<gst::FlowSuccess, gst::FlowError> {
-        let (in_bpf, in_channels, out_bpf, out_channels, rate, metadata_offset, limiter) = {
-            let state = self.state.lock().unwrap();
-            if state.renderer.is_none() || state.in_bpf == 0 || state.in_channels == 0 {
-                return Err(gst::FlowError::NotNegotiated);
+    fn sink_event(&self, event: gst::Event) -> bool {
+        match event.view() {
+            gst::EventView::FlushStop(_) => self.state.lock().unwrap().reset_stream(),
+            gst::EventView::Eos(_) | gst::EventView::Segment(_) | gst::EventView::Caps(_) => {
+                // Complete the old timeline before forwarding a serialized boundary.
+                // A flushing seek has already discarded its pending audio.
+                let tail = self.state.lock().unwrap().render_pending(true);
+                match tail {
+                    Ok(Some(buffer)) => {
+                        if self.obj().src_pad().push(buffer).is_err() {
+                            return false;
+                        }
+                    }
+                    Ok(None) => (),
+                    Err(error) => {
+                        gst::element_error!(
+                            self.obj(),
+                            gst::StreamError::Failed,
+                            ("Cannot drain the speaker renderer: {error}")
+                        );
+                        return false;
+                    }
+                }
+                if matches!(event.view(), gst::EventView::Segment(_)) {
+                    self.state.lock().unwrap().reset_stream();
+                }
             }
-            (
-                state.in_bpf,
-                state.in_channels,
-                state.out_bpf,
-                state.out_channels,
-                state.rate,
-                state.metadata_offset,
-                state.limiter_enable,
-            )
-        };
-
-        let inmap = inbuf.map_readable().map_err(|_| gst::FlowError::Error)?;
-        let samples = inmap.size() / in_bpf;
-        if samples == 0 {
-            return Ok(gst::FlowSuccess::Ok);
+            _ => (),
         }
-        if !samples.is_multiple_of(BLOCK_SAMPLES) {
+        self.parent_sink_event(event)
+    }
+}
+
+/// PCM and spatial events share one sample origin until the next complete block.
+#[derive(Debug, Default)]
+struct PendingAudio {
+    pcm: Vec<f32>,
+    events: Vec<BufferMetadata>,
+    pts: Option<gst::ClockTime>,
+    offset: Option<u64>,
+    emitted: u64,
+    discont: bool,
+}
+
+impl State {
+    fn reset_stream(&mut self) {
+        self.pending = PendingAudio::default();
+        self.runtime.reset();
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.reset();
+        }
+    }
+
+    fn queue(&mut self, buffer: &gst::BufferRef) -> Result<(), gst::FlowError> {
+        if self.renderer.is_none() || self.in_bpf == 0 {
+            return Err(gst::FlowError::NotNegotiated);
+        }
+        if buffer.flags().contains(gst::BufferFlags::DISCONT) {
+            self.reset_stream();
+            self.pending.discont = true;
+        }
+        let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+        if !map.size().is_multiple_of(self.in_bpf) {
             gst::error!(
                 gst::CAT_RUST,
-                "salsaoar: input has {samples} samples, not a multiple of {BLOCK_SAMPLES}"
+                "salsaoar: input contains an incomplete PCM frame"
             );
             return Err(gst::FlowError::Error);
         }
-
-        let mut input = Vec::with_capacity(samples * in_channels);
-        let (chunks, _) = inmap.as_slice().as_chunks::<4>();
-        for chunk in chunks {
-            input.push(f32::from_le_bytes(*chunk));
+        let buffered = self.pending.pcm.len() / self.in_channels;
+        if buffered == 0 {
+            self.pending.pts = buffer.pts();
+            self.pending.offset = (buffer.offset() != u64::MAX).then_some(buffer.offset());
+            self.pending.emitted = 0;
         }
-        drop(inmap);
+        let events = self.runtime.metadata_for_buffer(
+            buffer,
+            map.size() / self.in_bpf,
+            self.metadata_offset,
+        );
+        self.pending
+            .events
+            .extend(events.into_iter().map(|mut event| {
+                event.offset += buffered as u32;
+                event
+            }));
+        self.pending.pcm.extend(
+            map.as_slice()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|bytes| f32::from_le_bytes(*bytes)),
+        );
+        Ok(())
+    }
 
-        let events = self.metadata_for_buffer(inbuf, samples, metadata_offset);
-        let metadata: Vec<SpeakerMetadata<'_>> = events
+    fn render_pending(&mut self, drain: bool) -> Result<Option<gst::Buffer>, gst::FlowError> {
+        if self.pending.pcm.is_empty() {
+            return Ok(None);
+        }
+        let available = self.pending.pcm.len() / self.in_channels;
+        let samples = if drain {
+            available
+        } else {
+            available / BLOCK_SAMPLES * BLOCK_SAMPLES
+        };
+        if samples == 0 {
+            return Ok(None);
+        }
+        let render_samples = samples.next_multiple_of(BLOCK_SAMPLES);
+        if drain {
+            // Pad only the renderer's final block. Padding is never emitted.
+            self.pending
+                .pcm
+                .resize(render_samples * self.in_channels, 0.0);
+        }
+        let event_count = self
+            .pending
+            .events
+            .partition_point(|event| event.offset as usize <= samples);
+        let metadata: Vec<_> = self.pending.events[..event_count]
             .iter()
             .map(|event| SpeakerMetadata {
                 offset: event.offset,
@@ -555,22 +632,22 @@ impl BaseTransformImpl for Oar {
                 object_gains: Some(&event.gains),
             })
             .collect();
-        let mut rendered = vec![0.0f64; samples * out_channels];
-        {
-            let mut state = self.state.lock().unwrap();
-            let renderer = state
-                .renderer
-                .as_mut()
-                .ok_or(gst::FlowError::NotNegotiated)?;
-            renderer
-                .process(&input, samples, &metadata, &mut rendered)
-                .map_err(|error| {
-                    gst::error!(gst::CAT_RUST, "salsaoar: render failed: {error}");
-                    gst::FlowError::Error
-                })?;
-        }
-
-        if limiter {
+        let mut rendered = vec![0.0; render_samples * self.out_channels];
+        self.renderer
+            .as_mut()
+            .ok_or(gst::FlowError::NotNegotiated)?
+            .process(
+                &self.pending.pcm[..render_samples * self.in_channels],
+                render_samples,
+                &metadata,
+                &mut rendered,
+            )
+            .map_err(|error| {
+                gst::error!(gst::CAT_RUST, "salsaoar: render failed: {error}");
+                gst::FlowError::Error
+            })?;
+        rendered.truncate(samples * self.out_channels);
+        if self.limiter_enable {
             let peak = rendered
                 .iter()
                 .fold(0.0f64, |peak, value| peak.max(value.abs()));
@@ -581,52 +658,59 @@ impl BaseTransformImpl for Oar {
                 }
             }
         }
-
-        let out_size = samples * out_bpf;
-        if outbuf.size() != out_size {
-            outbuf.set_size(out_size);
-        }
-        let mut outmap = outbuf.map_writable().map_err(|_| gst::FlowError::Error)?;
-        for (index, value) in rendered.iter().enumerate() {
-            let bytes = (*value as f32).to_le_bytes();
-            let start = index * 4;
-            outmap[start..start + 4].copy_from_slice(&bytes);
-        }
-        drop(outmap);
-
-        let duration = gst::ClockTime::from_nseconds(
-            (samples as u64).saturating_mul(1_000_000_000) / u64::from(rate.max(1)),
-        );
-        outbuf.set_pts(inbuf.pts());
-        outbuf.set_duration(duration);
-        let offset = inbuf.offset();
-        outbuf.set_offset(offset);
-        outbuf.set_offset_end(offset.saturating_add(samples as u64));
-        Ok(gst::FlowSuccess::Ok)
-    }
-
-    fn sink_event(&self, event: gst::Event) -> bool {
-        if event.type_() == gst::EventType::FlushStop
-            && let Ok(mut state) = self.state.lock()
+        let mut output =
+            gst::Buffer::with_size(samples * self.out_bpf).map_err(|_| gst::FlowError::Error)?;
+        let outbuf = output.get_mut().unwrap();
         {
-            state.runtime.reset();
-            if let Some(renderer) = state.renderer.as_mut() {
-                renderer.reset();
+            let mut map = outbuf.map_writable().map_err(|_| gst::FlowError::Error)?;
+            for (bytes, value) in map
+                .as_mut_slice()
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(rendered)
+            {
+                *bytes = (value as f32).to_le_bytes();
             }
         }
-        self.parent_sink_event(event)
+        let start = sample_time(self.pending.emitted, self.rate);
+        let end = sample_time(self.pending.emitted + samples as u64, self.rate);
+        outbuf.set_pts(self.pending.pts.map(|pts| pts + start));
+        outbuf.set_duration(end - start);
+        if let Some(offset) = self.pending.offset {
+            outbuf.set_offset(offset + self.pending.emitted);
+            outbuf.set_offset_end(offset + self.pending.emitted + samples as u64);
+        }
+        if std::mem::take(&mut self.pending.discont) {
+            outbuf.set_flags(gst::BufferFlags::DISCONT);
+        }
+        self.pending.emitted += samples as u64;
+        self.pending.pcm.drain(..samples * self.in_channels);
+        self.pending.events.drain(..event_count);
+        for event in &mut self.pending.events {
+            event.offset -= samples as u32;
+        }
+        if drain {
+            self.pending.pcm.clear();
+        }
+        Ok(Some(output))
     }
 }
 
+fn sample_time(samples: u64, rate: u32) -> gst::ClockTime {
+    gst::ClockTime::from_nseconds((u128::from(samples) * 1_000_000_000 / u128::from(rate)) as u64)
+}
+
+#[derive(Debug)]
 struct BufferMetadata {
     offset: u32,
     ramp_samples: u32,
     positions_q15: Vec<[u16; 3]>,
     gains: Vec<f64>,
 }
-impl Oar {
+impl RuntimeState {
     fn metadata_for_buffer(
-        &self,
+        &mut self,
         buffer: &gst::BufferRef,
         samples: usize,
         metadata_offset: u32,
@@ -635,8 +719,7 @@ impl Oar {
             return Vec::new();
         };
 
-        let mut state = self.state.lock().unwrap();
-        let object_count = state.runtime.positions_q15.len();
+        let object_count = self.positions_q15.len();
         let index_for_id = |id: u32| {
             snapshot
                 .payload
@@ -652,8 +735,8 @@ impl Oar {
             .take(object_count)
             .enumerate()
         {
-            state.runtime.positions_q15[index] = objectaudio_ir::adm_to_q15(object.position);
-            state.runtime.gains[index] = if object.enabled {
+            self.positions_q15[index] = objectaudio_ir::adm_to_q15(object.position);
+            self.gains[index] = if object.enabled {
                 f64::from(object.gain)
             } else {
                 0.0
@@ -669,8 +752,8 @@ impl Oar {
                 .events
                 .first()
                 .map_or(0, |event| event.ramp_samples),
-            positions_q15: state.runtime.positions_q15.clone(),
-            gains: state.runtime.gains.clone(),
+            positions_q15: self.positions_q15.clone(),
+            gains: self.gains.clone(),
         }];
 
         for event in &snapshot.payload.events {
@@ -678,8 +761,8 @@ impl Oar {
             else {
                 continue;
             };
-            state.runtime.positions_q15[index] = objectaudio_ir::adm_to_q15(event.state.position);
-            state.runtime.gains[index] = if event.state.enabled {
+            self.positions_q15[index] = objectaudio_ir::adm_to_q15(event.state.position);
+            self.gains[index] = if event.state.enabled {
                 f64::from(event.state.gain)
             } else {
                 0.0
@@ -687,8 +770,8 @@ impl Oar {
             output.push(BufferMetadata {
                 offset: clamp_offset(event.offset as usize),
                 ramp_samples: event.ramp_samples,
-                positions_q15: state.runtime.positions_q15.clone(),
-                gains: state.runtime.gains.clone(),
+                positions_q15: self.positions_q15.clone(),
+                gains: self.gains.clone(),
             });
         }
         output.sort_by_key(|event| event.offset);

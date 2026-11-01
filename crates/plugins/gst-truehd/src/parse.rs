@@ -33,6 +33,8 @@ struct Pending {
 struct State {
     extractor: Extractor,
     parser: AccessUnitParser,
+    /// Stream byte offset that `pushed_until` and `base_consumed` are relative to.
+    stream_offset: u64,
     pushed_until: u64,
     base_consumed: u64,
     pending: Option<Pending>,
@@ -47,6 +49,7 @@ impl Default for State {
         Self {
             extractor: Extractor::default(),
             parser: AccessUnitParser::default(),
+            stream_offset: 0,
             pushed_until: 0,
             base_consumed: 0,
             pending: None,
@@ -55,6 +58,23 @@ impl Default for State {
             samples: DEFAULT_SAMPLES,
             atmos: false,
         }
+    }
+}
+
+impl State {
+    /// Discard all transport state and re-anchor to `offset`.
+    ///
+    /// `offset` is the absolute stream position of the first byte BaseParse
+    /// will hand to the next `handle_frame` call. Keeping the counters
+    /// relative to it lets the same code work across backward and forward
+    /// seeks without tracking absolute extractor offsets.
+    fn reset_transport(&mut self, offset: u64) {
+        self.extractor = Extractor::default();
+        self.parser = AccessUnitParser::default();
+        self.stream_offset = offset;
+        self.pushed_until = 0;
+        self.base_consumed = 0;
+        self.pending = None;
     }
 }
 
@@ -200,7 +220,16 @@ impl BaseParseImpl for TrueHdParse {
                 return Ok((gst::FlowSuccess::Ok, 0));
             };
             let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+            // A DISCONT buffer (flushing or non-flushing seek) and a BaseParse
+            // stream offset that does not match the extractor's anchor both
+            // mean the old framing state is invalid: drop it and resynchronise
+            // on the next major sync.
+            let discont = buffer.flags().contains(gst::BufferFlags::DISCONT);
             let mut state = self.state.lock().unwrap();
+            let expected = state.stream_offset.saturating_add(state.base_consumed);
+            if discont || frame.offset() != expected {
+                state.reset_transport(frame.offset());
+            }
             let start = state.base_consumed;
             let end = start.saturating_add(map.len() as u64);
             let push_from = state.pushed_until.max(start);
@@ -240,9 +269,7 @@ impl BaseParseImpl for TrueHdParse {
             self.set_frame_rate(pending.info);
             let borrowed = self.obj();
             let object: &super::TrueHdParse = borrowed.as_ref();
-            object
-                .finish_frame(frame, size)
-                .map_err(|_| gst::FlowError::Error)?;
+            object.finish_frame(frame, size)?;
             return Ok((gst::FlowSuccess::Ok, 0));
         }
 
@@ -280,9 +307,7 @@ impl BaseParseImpl for TrueHdParse {
                     self.set_frame_rate(pending.info);
                     let borrowed = self.obj();
                     let object: &super::TrueHdParse = borrowed.as_ref();
-                    object
-                        .finish_frame(frame, size)
-                        .map_err(|_| gst::FlowError::Error)?;
+                    object.finish_frame(frame, size)?;
                     return Ok((gst::FlowSuccess::Ok, 0));
                 }
                 Some(Err(ExtractError::InsufficientData)) | None => {

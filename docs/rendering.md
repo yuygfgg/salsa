@@ -52,9 +52,9 @@ bed-position injection.
 | Property | Default | Meaning |
 |---|---|---|
 | `layout` | `5.1` | Target layout. A recognized downstream `channel-mask` wins, so a 5.1 mask with `layout=7.1.4` renders 5.1. Set it before the pipeline reaches PAUSED; the renderer is built in `set_caps`. |
-| `metadata-offset` | `1473` | Sample offset inside each buffer where the OAMD snapshot is applied. Clamped to the buffer length. |
+| `metadata-offset` | `0` | Extra sample offset for spatial snapshots and events. Clamped to the input buffer length. |
 | `limiter-enable` | `false` | Scale a buffer by `1/peak` when its peak exceeds 0 dBFS. This is a safety normalizer, not Dolby DRC. |
-| `discard-latency` | `false` | Compatibility property. The renderer is sample-aligned, so latency is zero and the property has no effect. |
+| `discard-latency` | `false` | Compatibility property with no effect. Output remains sample-aligned. |
 
 Caps:
 
@@ -65,6 +65,18 @@ Caps:
   with its GStreamer channel mask.
 
 A buffer without metadata keeps the previous panning state.
+
+The element accepts arbitrary PCM frame counts. It queues PCM and metadata on
+the same timeline, then passes complete 32-sample blocks to `SpeakerRenderer`.
+Up to 31 samples remain queued between input buffers. The element reports this
+buffering latency through the `LATENCY` query. Output PTS, duration and sample
+offsets describe the emitted PCM, including samples retained from earlier
+buffers.
+
+EOS, a new segment, or new caps drain the queued partial block first. Only the
+internal renderer input is zero-padded; output contains the original sample
+count. `FLUSH_STOP` and `DISCONT` discard the queue and reset panning and gain
+ramps, so a seek cannot reuse PCM or metadata from the previous timeline.
 
 ## Binaural renderer
 
@@ -130,3 +142,9 @@ uses `gst_meta_get_info` and the C layout instead.
 
 OAMD slots map directly to object channels. Bed-only streams use the target
 layout's anchor for the first bed channels.
+
+Both renderers reset their streaming state on `FLUSH_STOP` and on an input
+buffer carrying `GST_BUFFER_FLAG_DISCONT` (non-flushing seek). The speaker
+renderer is sample-aligned and restarts immediately; the binaural renderer
+restarts from clean filter/room state and its filterbank latency/transient at
+the seek point is accepted.

@@ -118,6 +118,14 @@ impl CoreDecoder {
         self.receive_frames()
     }
 
+    /// Drop libavcodec's buffered state and leave draining mode.
+    ///
+    /// Called after a flush/seek so the next packet starts a fresh decoder
+    /// timeline instead of being joined to the frame before the seek.
+    pub fn reset(&mut self) {
+        self.inner.flush();
+    }
+
     fn receive_frames(&mut self) -> Result<CorePcm, CoreDecoderError> {
         let mut pcm = CorePcm::default();
         loop {

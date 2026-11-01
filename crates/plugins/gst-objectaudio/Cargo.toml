@@ -23,3 +23,4 @@ gstreamer-audio.workspace = true
 
 [dev-dependencies]
 gst-eac3joc = { path = "../gst-eac3joc" }
+gst-truehd = { path = "../gst-truehd" }

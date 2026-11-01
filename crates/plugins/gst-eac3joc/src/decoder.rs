@@ -89,8 +89,22 @@ impl Eac3JocDec {
                 gst::FlowError::Error
             })?
         };
+        self.push_frames(&frames)
+    }
+
+    /// Push decoded frames, treating a flush race as a normal stop.
+    ///
+    /// `finish_frame` returns `Flushing` when a seek starts while a frame is
+    /// in flight. Propagating it makes BaseParse treat the downstream stop as
+    /// a fatal stream error, so drop the frame instead; `FLUSH_STOP` will
+    /// reset the decoder.
+    fn push_frames(&self, frames: &[Eac3JocFrame]) -> Result<(), gst::FlowError> {
         for frame in frames {
-            self.decode_and_push(&frame)?;
+            match self.decode_and_push(frame) {
+                Ok(()) => {}
+                Err(gst::FlowError::Flushing) => break,
+                Err(error) => return Err(error),
+            }
         }
         Ok(())
     }
@@ -271,9 +285,7 @@ impl AudioDecoderImpl for Eac3JocDec {
                 gst::FlowError::Error
             })?
         };
-        for frame in frames {
-            self.decode_and_push(&frame)?;
-        }
+        self.push_frames(&frames)?;
         Ok(gst::FlowSuccess::Ok)
     }
 

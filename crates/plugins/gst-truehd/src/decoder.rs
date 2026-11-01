@@ -261,6 +261,23 @@ impl TrueHdAtmosDec {
         self.flush_ready()
     }
 
+    /// Push decoded access units, treating a flush race as a normal stop.
+    ///
+    /// `finish_frame` returns `Flushing` when a seek starts while a buffer is
+    /// in flight. Propagating it makes BaseParse treat the downstream stop as
+    /// a fatal stream error, so drop the remaining units instead; `FLUSH_STOP`
+    /// will reset the worker.
+    fn push_decoded(&self, decoded: Vec<Decoded>) -> Result<(), gst::FlowError> {
+        for decoded in decoded {
+            match self.accumulate(decoded.spatial, decoded.snapshot) {
+                Ok(()) => {}
+                Err(gst::FlowError::Flushing) => break,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
     fn flush_ready(&self) -> Result<(), gst::FlowError> {
         let needed = {
             let state = self.state.lock().unwrap();
@@ -348,7 +365,10 @@ impl TrueHdAtmosDec {
             (take, channels)
         };
         if channels > 0 && take > 0 {
-            self.flush_samples(take)?;
+            match self.flush_samples(take) {
+                Ok(()) | Err(gst::FlowError::Flushing) => {}
+                Err(error) => return Err(error),
+            }
         }
         Ok(())
     }
@@ -493,9 +513,7 @@ impl AudioDecoderImpl for TrueHdAtmosDec {
                 gst::FlowError::Error
             })?
         };
-        for decoded in decoded {
-            self.accumulate(decoded.spatial, decoded.snapshot)?;
-        }
+        self.push_decoded(decoded)?;
         Ok(gst::FlowSuccess::Ok)
     }
 

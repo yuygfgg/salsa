@@ -1,16 +1,17 @@
-//! Opt-in end-to-end `salsaeac3jocdec ! salsaoar` check.
+//! Opt-in end-to-end decoder and speaker-renderer checks.
 //!
-//! Set `SALSA_TEST_EC3` to a JOC stream. The test is skipped otherwise, so the
-//! default matrix stays hermetic.
+//! Set `SALSA_TEST_EC3` or `SALSA_TEST_TRUEHD` to a real stream. Tests without
+//! a sample path are skipped, so the default matrix stays hermetic.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
 
 use gst::PadProbeReturn;
 use gst::prelude::*;
 use gstreamer as gst;
 use gstsalsaeac3joc::{Eac3JocDec, Eac3JocParse};
 use gstsalsaobjectaudio::Oar;
+use gstsalsatruehd::{TrueHdAtmosDec, TrueHdParse};
 
 fn init() {
     let _ = gst::init();
@@ -27,6 +28,134 @@ fn init() {
         Eac3JocDec::static_type(),
     );
     let _ = gst::Element::register(None, "salsaoar", gst::Rank::PRIMARY, Oar::static_type());
+    let _ = gst::Element::register(
+        None,
+        "salsatruehdparse",
+        gst::Rank::PRIMARY,
+        TrueHdParse::static_type(),
+    );
+    let _ = gst::Element::register(
+        None,
+        "salsatruehdatmosdec",
+        gst::Rank::PRIMARY,
+        TrueHdAtmosDec::static_type(),
+    );
+}
+
+struct PlayingPipeline(gst::Pipeline);
+
+impl Drop for PlayingPipeline {
+    fn drop(&mut self) {
+        let _ = self.0.set_state(gst::State::Null);
+    }
+}
+
+fn seek_through_renderer(variable: &str, decoder: &str, targets_ms: &[u64]) {
+    let Some(path) = std::env::var_os(variable) else {
+        eprintln!("{variable} is unset; skipping the real-stream renderer seek test");
+        return;
+    };
+    init();
+    let guard = PlayingPipeline(
+        gst::parse::launch(&format!(
+            "filesrc location=\"{}\" blocksize=1048576 ! {decoder} \
+             ! salsaoar layout=7.1.4 ! fakesink name=sink sync=false",
+            path.to_string_lossy()
+        ))
+        .expect("parse pipeline")
+        .downcast::<gst::Pipeline>()
+        .expect("pipeline"),
+    );
+    let pipeline = &guard.0;
+    let (sender, receiver) = mpsc::channel();
+    pipeline
+        .by_name("sink")
+        .unwrap()
+        .static_pad("sink")
+        .unwrap()
+        .add_probe(gst::PadProbeType::BUFFER, move |_, info| {
+            if let Some(buffer) = info.buffer() {
+                let _ = sender.send(buffer.to_owned());
+            }
+            PadProbeReturn::Ok
+        });
+    let bus = pipeline.bus().unwrap();
+
+    for &target_ms in targets_ms {
+        pipeline.set_state(gst::State::Paused).expect("paused");
+        let (result, _, _) = pipeline.state(gst::ClockTime::from_seconds(30));
+        assert!(result.is_ok(), "pipeline did not preroll: {result:?}");
+        while receiver.try_recv().is_ok() {}
+
+        let start = gst::ClockTime::from_mseconds(target_ms);
+        pipeline
+            .seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, start)
+            .expect("accurate flushing seek");
+        pipeline.set_state(gst::State::Playing).expect("playing");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut buffers = Vec::new();
+        while buffers.len() < 16 && std::time::Instant::now() < deadline {
+            if let Some(message) =
+                bus.pop_filtered(&[gst::MessageType::Error, gst::MessageType::Eos])
+            {
+                panic!("renderer stopped after seek: {message:?}");
+            }
+            if let Ok(buffer) = receiver.recv_timeout(std::time::Duration::from_millis(50)) {
+                buffers.push(buffer);
+            }
+        }
+        assert_eq!(
+            buffers.len(),
+            16,
+            "seek must resume sustained rendered output"
+        );
+        assert!(buffers[0].flags().contains(gst::BufferFlags::DISCONT));
+        let mut samples = 0;
+        for buffer in buffers.iter() {
+            assert_eq!(buffer.size() % (12 * 4), 0);
+            let pts = buffer.pts().expect("rendered PTS");
+            let expected = start + gst::ClockTime::from_nseconds(samples * 1_000_000_000 / 48_000);
+            assert!(pts.nseconds().abs_diff(expected.nseconds()) <= 1);
+            let frames = (buffer.size() / (12 * 4)) as u64;
+            assert_eq!(frames % 32, 0, "complete renderer blocks before EOS");
+            let duration = gst::ClockTime::from_nseconds(frames * 1_000_000_000 / 48_000);
+            assert!(
+                buffer
+                    .duration()
+                    .unwrap()
+                    .nseconds()
+                    .abs_diff(duration.nseconds())
+                    <= 1
+            );
+            samples += frames;
+            let map = buffer.map_readable().unwrap();
+            assert!(
+                map.as_slice()
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .all(|bytes| { f32::from_le_bytes(*bytes).is_finite() })
+            );
+        }
+    }
+}
+
+#[test]
+fn truehd_flushing_seek_reaches_the_speaker_renderer() {
+    seek_through_renderer(
+        "SALSA_TEST_TRUEHD",
+        "salsatruehdparse ! salsatruehdatmosdec",
+        &[2_000, 1_001],
+    );
+}
+
+#[test]
+fn eac3_flushing_seek_reaches_the_speaker_renderer() {
+    seek_through_renderer(
+        "SALSA_TEST_EC3",
+        "salsaeac3jocparse ! salsaeac3jocdec",
+        &[2_001, 1_001],
+    );
 }
 
 #[test]

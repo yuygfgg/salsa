@@ -75,11 +75,15 @@ impl Eac3JocDecoder {
         })
     }
 
+    /// Drop the transport/decode state after a flush or seek.
+    ///
+    /// The stream configuration (`last_bed_plan`, `last_config`,
+    /// `last_object_count`) is deliberately kept: the first frame after a
+    /// seek may not repeat the JOC payload, and losing the configuration
+    /// would change the negotiated channel count or bed mapping mid-stream.
     pub fn reset(&mut self) {
+        self.core.reset();
         self.kernel.reset();
-        self.last_bed_plan = None;
-        self.last_config = 3;
-        self.last_object_count = MAX_OBJECTS;
     }
 
     fn decode_core(&mut self, frame: &Eac3JocFrame) -> Result<CorePcm, DspError> {

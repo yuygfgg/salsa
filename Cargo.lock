@@ -535,6 +535,7 @@ name = "gst-objectaudio"
 version = "0.1.0"
 dependencies = [
  "gst-eac3joc",
+ "gst-truehd",
  "gstreamer",
  "gstreamer-audio",
  "gstreamer-base",

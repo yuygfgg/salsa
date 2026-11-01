@@ -533,6 +533,13 @@ impl BaseTransformImpl for HrtfRender {
         inbuf: &gst::Buffer,
         outbuf: &mut gst::BufferRef,
     ) -> Result<gst::FlowSuccess, gst::FlowError> {
+        // Non-flushing seeks mark the first buffer after the jump as DISCONT.
+        // Discard the pre-seek filter/room/timeline state; transient
+        // convergence at the seek point is accepted.
+        if inbuf.flags().contains(gst::BufferFlags::DISCONT) {
+            let mut state = self.state.lock().unwrap();
+            state.reset_stream();
+        }
         let (in_bpf, out_bpf) = {
             let state = self.state.lock().unwrap();
             if state.renderer.is_none() || state.in_bpf == 0 {

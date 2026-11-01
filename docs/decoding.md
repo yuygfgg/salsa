@@ -44,7 +44,11 @@ bytes.
   stream's objects).
 
 The kernel state is heap-allocated so the streaming path fits GStreamer's
-task-thread stack. Seek is not supported; the decoder is a forward-only stream.
+task-thread stack. A flushing seek resets the libavcodec core, the JOC kernel
+and the parser, while keeping the negotiated JOC configuration so a frame
+without an ID14 payload can still be mapped to the existing bed. The codec
+delay (1473 samples) is not removed on seek; the first frames after a seek can
+therefore carry the usual decoder latency/transient.
 
 ## `salsaeac3jocdec`
 
@@ -89,7 +93,15 @@ and rejects unframed streams. The element accumulates 40-sample access units
 into the renderer's 32-sample grid and emits a buffer either at a 1216-sample
 boundary or immediately after an OAMD update. It attaches the
 `SpatialSnapshot` with events shifted to the output buffer timeline, so each
-buffer carries at most one snapshot at its exact offset. Seek is not supported.
+buffer carries at most one snapshot at its exact offset.
+
+Both elements handle flushing seeks. `salsatruehdparse` detects a discontinuity
+from the BaseParse stream offset, drops the extractor/access-unit parser state
+and resynchronises on the next major sync. The decoder worker resets on
+`FLUSH_STOP`/`DISCONT`; because a TrueHD major sync is only guaranteed every 32
+(FBB) or 128 (FBA) access units, seek precision is bounded by that interval.
+The first buffers after a seek may not carry OAMD, in which case the renderers
+keep their default state until the next snapshot arrives.
 
 ## Dynamic object count
 

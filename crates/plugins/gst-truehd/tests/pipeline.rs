@@ -4,7 +4,8 @@
 //! the variable is unset so the default `cargo test` stays hermetic.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::mpsc;
 
 use gst::PadProbeReturn;
 use gst::prelude::*;
@@ -247,5 +248,108 @@ fn binaural_renderer_consumes_the_truehd_ir() {
         bad.load(Ordering::Relaxed),
         0,
         "bad layout or non-finite PCM"
+    );
+}
+
+fn collect_pts(
+    rx: &mpsc::Receiver<(u32, Option<gst::ClockTime>)>,
+    generation: u32,
+    count: usize,
+) -> Vec<Option<gst::ClockTime>> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut out = Vec::new();
+    while out.len() < count {
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            break;
+        }
+        match rx.recv_timeout(deadline - now) {
+            Ok((seen, pts)) => {
+                if seen == generation {
+                    out.push(pts);
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    out
+}
+
+#[test]
+fn flushing_seek_restarts_the_stream() {
+    let Some(path) = sample_path() else {
+        eprintln!("SALSA_TEST_TRUEHD is unset; skipping the TrueHD seek test");
+        return;
+    };
+    init();
+    let pipeline = gst::parse::launch(&format!(
+        "filesrc location=\"{path}\" blocksize=1048576 ! salsatruehdparse \
+         ! salsatruehdatmosdec ! fakesink name=sink sync=false"
+    ))
+    .expect("parse pipeline")
+    .downcast::<gst::Pipeline>()
+    .expect("pipeline");
+
+    let sink = pipeline.by_name("sink").expect("sink");
+    let (pts_tx, pts_rx) = mpsc::channel();
+    let generation = Arc::new(AtomicU32::new(0));
+    let probe_generation = generation.clone();
+    sink.static_pad("sink").expect("sink pad").add_probe(
+        gst::PadProbeType::BUFFER,
+        move |_, info| {
+            if let Some(buffer) = info.buffer() {
+                let _ = pts_tx.send((probe_generation.load(Ordering::Relaxed), buffer.pts()));
+            }
+            PadProbeReturn::Ok
+        },
+    );
+
+    pipeline.set_state(gst::State::Paused).expect("paused");
+    let (result, _, _) = pipeline.state(gst::ClockTime::from_seconds(30));
+    assert!(result.is_ok(), "pipeline did not preroll: {result:?}");
+
+    let forward = gst::ClockTime::from_seconds(2);
+    generation.store(1, Ordering::Relaxed);
+    pipeline
+        .seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, forward)
+        .expect("forward seek");
+    pipeline.set_state(gst::State::Playing).expect("playing");
+
+    let forward_pts = collect_pts(&pts_rx, 1, 16);
+    assert!(
+        !forward_pts.is_empty(),
+        "no buffers were produced after the forward seek"
+    );
+    assert!(
+        forward_pts
+            .iter()
+            .any(|pts| pts.is_some_and(|pts| pts >= forward)),
+        "PTS did not advance past {forward}: {forward_pts:?}"
+    );
+
+    let backward = gst::ClockTime::from_seconds(1);
+    generation.store(2, Ordering::Relaxed);
+    pipeline
+        .seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, backward)
+        .expect("backward seek");
+
+    let backward_pts = collect_pts(&pts_rx, 2, 16);
+    pipeline.set_state(gst::State::Null).expect("null");
+
+    assert!(
+        !backward_pts.is_empty(),
+        "no buffers were produced after the backward seek"
+    );
+    assert!(
+        backward_pts
+            .iter()
+            .any(|pts| pts.is_some_and(|pts| pts < forward)),
+        "backward seek did not move PTS before {forward}: {backward_pts:?}"
+    );
+    assert!(
+        backward_pts
+            .iter()
+            .any(|pts| pts.is_some_and(|pts| pts >= backward)),
+        "PTS did not reach {backward}: {backward_pts:?}"
     );
 }
