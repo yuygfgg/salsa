@@ -16,8 +16,6 @@ use objectaudio_ir::{ObjectState, SpatialPayload};
 pub const HISTORY_SECONDS: u64 = 12;
 /// Hard cap on keyframes retained per object.
 pub const MAX_KEYFRAMES_PER_OBJECT: usize = 256;
-/// Objects above this count get no motion trails.
-pub const MAX_TRAIL_OBJECTS: usize = 64;
 /// Maximum trail points stored per object.
 pub const MAX_TRAIL_POINTS: usize = 24;
 /// Default trail length in seconds.
@@ -564,7 +562,7 @@ impl Timeline {
         } else {
             0
         };
-        let trails_enabled = trail_ns > 0 && self.tracks.len() <= MAX_TRAIL_OBJECTS;
+        let trails_enabled = trail_ns > 0;
         if trails_enabled {
             self.commit_trails(time_ns, trail_ns);
         }
@@ -1091,5 +1089,31 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn trails_are_drawn_for_any_object_count() {
+        let mut timeline = Timeline::default();
+        let count = 96u32;
+        timeline.handle(TapEvent::Caps {
+            epoch: 0,
+            channels: count + 1,
+            rate: 48_000,
+        });
+        let objects_at = |x: f32| {
+            (1..=count)
+                .map(|id| object(id, [x, 0.0, 0.0]))
+                .collect::<Vec<_>>()
+        };
+        timeline.handle(buffer_event(0, 0, payload(objects_at(0.0), vec![])));
+        timeline.handle(buffer_event(
+            1_000_000_000,
+            0,
+            payload(objects_at(1.0), vec![]),
+        ));
+
+        let snapshot = timeline.snapshot_at(1_000_000_000, 1.0).expect("snapshot");
+        assert_eq!(snapshot.objects.len() as u32, count);
+        assert!(snapshot.objects.iter().all(|object| object.trail.len() > 1));
     }
 }

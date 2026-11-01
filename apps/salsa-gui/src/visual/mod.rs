@@ -9,8 +9,8 @@ mod timeline;
 
 pub use tap::{TapError, VisualTap};
 pub use timeline::{
-    DEFAULT_TRAIL_SECONDS, HISTORY_SECONDS, MAX_KEYFRAMES_PER_OBJECT, MAX_TRAIL_OBJECTS,
-    MAX_TRAIL_POINTS, ObjectVisual, STALE_AFTER_NS, VisualSnapshot, VisualState,
+    DEFAULT_TRAIL_SECONDS, HISTORY_SECONDS, MAX_KEYFRAMES_PER_OBJECT, MAX_TRAIL_POINTS,
+    ObjectVisual, STALE_AFTER_NS, VisualSnapshot, VisualState,
 };
 
 use gstreamer as gst;
