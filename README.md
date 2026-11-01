@@ -84,8 +84,8 @@ Features:
   `Shift+←`/`→`, Home/End);
 - 3D object stage with height color, level-sized objects, motion trails,
   speaker anchors, an LFE icon and a binaural head icon;
-- a Settings switch that shows or hides every 3D label and hover detail
-  (object IDs, speaker names, LFE and listener);
+- a Settings switch that shows or hides the static 3D labels (object IDs,
+  speaker names, LFE and listener); hovering an object still shows its detail;
 - device/layout fallback warning with a one-click switch to Binaural;
 - recent files, persisted output/model/volume/window settings, diagnostics;
 

@@ -730,3 +730,55 @@ fn labels_are_not_limited_to_sixteen_objects() {
         "expected an object label above ID16, got {ids:?}"
     );
 }
+
+#[test]
+fn hover_detail_still_shows_when_labels_are_hidden() {
+    let ctx = egui::Context::default();
+    theme::configure(&ctx);
+    let snapshot = snapshot();
+    let mut state = stage::StageState::default();
+    let mut draw_frame = |events| {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(700.0, 500.0))),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    stage::draw(
+                        ui,
+                        Some(&snapshot),
+                        "7.1.4",
+                        &OutputMode::Binaural,
+                        &mut state,
+                        true,
+                        false,
+                        false,
+                        false,
+                    );
+                });
+            },
+        )
+    };
+    let _ = draw_frame(vec![]);
+    let shapes: Vec<_> = draw_frame(vec![])
+        .shapes
+        .into_iter()
+        .flat_map(|shape| flatten(shape.shape))
+        .collect();
+    let position = object_nearest_listener(&shapes).center;
+    let _ = draw_frame(vec![egui::Event::PointerMoved(position)]);
+    let output = draw_frame(vec![egui::Event::PointerMoved(position)]);
+    let shapes: Vec<_> = output
+        .shapes
+        .into_iter()
+        .flat_map(|shape| flatten(shape.shape))
+        .collect();
+    assert!(
+        texts(&shapes)
+            .iter()
+            .any(|text| text.galley.job.text.contains("gain")),
+        "hover detail must not depend on the static labels"
+    );
+}

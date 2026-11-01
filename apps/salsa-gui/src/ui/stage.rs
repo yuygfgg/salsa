@@ -250,7 +250,9 @@ pub fn draw(
         Color32::from_gray(160),
     );
 
-    if labels_enabled && let Some(hit) = hovered {
+    // Hover detail is independent of the static labels: turning labels off
+    // must not make an object unreadable.
+    if let Some(hit) = hovered {
         draw_object_tooltip(&painter, rect, hit.screen, hit.object);
     }
 
@@ -386,15 +388,14 @@ fn draw_lfe(
             (position - project([0.0; 3])).normalized(),
         );
     }
-    if labels_enabled {
-        let hover = marker.expand(4.0).intersect(painter.clip_rect());
-        if hover.is_positive() {
-            ui.interact(hover, ui.id().with("lfe-route"), Sense::hover())
-                .on_hover_text(format!(
-                    "{detail}\nDecoded LFE level: {:.0}%\nThe rear position is a display convention. LFE has no spatial metadata.",
-                    level * 100.0
-                ));
-        }
+    // Hover details stay available even when the static labels are off.
+    let hover = marker.expand(4.0).intersect(painter.clip_rect());
+    if hover.is_positive() {
+        ui.interact(hover, ui.id().with("lfe-route"), Sense::hover())
+            .on_hover_text(format!(
+                "{detail}\nDecoded LFE level: {:.0}%\nThe rear position is a display convention. LFE has no spatial metadata.",
+                level * 100.0
+            ));
     }
 }
 
@@ -428,18 +429,26 @@ fn add_objects<'a>(
         let base = height_color(object.position[2]);
         let object_alpha = if dimmed || !object.enabled { 90 } else { 255 };
         if !reduce_motion && object.trail.len() > 1 {
-            let points: Vec<_> = object.trail.iter().map(|point| project(*point)).collect();
+            // Each segment keeps the height colour of its older endpoint, so a
+            // moving object's current height cannot repaint already drawn
+            // history.
+            let points: Vec<_> = object
+                .trail
+                .iter()
+                .map(|point| (project(*point), height_color(point[2])))
+                .collect();
             for (index, pair) in points.windows(2).enumerate() {
                 let alpha =
                     ((index + 1) as f32 / points.len() as f32 * 120.0 * f32::from(object_alpha)
                         / 255.0) as u8;
+                let color = pair[0].1;
                 scene.push((
-                    (pair[0].1 + pair[1].1) * 0.5,
+                    (pair[0].0.1 + pair[1].0.1) * 0.5,
                     egui::Shape::line_segment(
-                        [pair[0].0, pair[1].0],
+                        [pair[0].0.0, pair[1].0.0],
                         Stroke::new(
                             1.4_f32,
-                            Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha),
+                            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha),
                         ),
                     ),
                 ));

@@ -4,6 +4,10 @@
 //! samples this timeline at the pipeline position so motion stays aligned with
 //! the audible stream even when the display refresh rate differs from the
 //! decoder rate.
+//!
+//! Motion trails are committed to an append-only history as the playhead
+//! advances. They are never rebuilt from the keyframes afterwards: a point the
+//! object has already passed must keep the position it had at that instant.
 
 use gstreamer as gst;
 use objectaudio_ir::{ObjectState, SpatialPayload};
@@ -60,6 +64,13 @@ pub(crate) struct Keyframe {
     pub state: ObjectState,
 }
 
+/// One committed point of an object's motion history.
+#[derive(Debug, Clone, Copy)]
+struct TrailPoint {
+    time_ns: u64,
+    position: [f32; 3],
+}
+
 #[derive(Debug)]
 pub(crate) enum TapEvent {
     Caps {
@@ -107,6 +118,12 @@ pub(crate) struct Timeline {
     channels: u32,
     object_ids: Vec<u32>,
     tracks: Vec<Vec<Keyframe>>,
+    /// Append-only trail history per object, oldest first.
+    trails: Vec<Vec<TrailPoint>>,
+    /// Grid spacing currently used by `trails`; zero until the first trail.
+    trail_step_ns: u64,
+    /// Next grid instant to commit to `trails`.
+    trail_next_ns: Option<u64>,
     // Smoothed RMS levels in decoder channel order: LFE, then objects.
     levels: Vec<f32>,
     level_time_ns: Option<u64>,
@@ -125,6 +142,9 @@ impl Default for Timeline {
             channels: 0,
             object_ids: Vec::new(),
             tracks: Vec::new(),
+            trails: Vec::new(),
+            trail_step_ns: 0,
+            trail_next_ns: None,
             levels: Vec::new(),
             level_time_ns: None,
             last_pts_ns: None,
@@ -141,12 +161,19 @@ impl Timeline {
         self.epoch = epoch;
         self.object_ids.clear();
         self.tracks.clear();
+        self.clear_trails();
         self.levels.clear();
         self.level_time_ns = None;
         self.last_pts_ns = None;
         self.last_meta_ns = None;
         self.state = VisualState::Seeking;
         self.frozen = false;
+    }
+
+    fn clear_trails(&mut self) {
+        self.trails.clear();
+        self.trail_step_ns = 0;
+        self.trail_next_ns = None;
     }
 
     pub(crate) fn mark_stale(&mut self) {
@@ -201,6 +228,7 @@ impl Timeline {
             if objects != self.tracks.len() {
                 self.object_ids.clear();
                 self.tracks.clear();
+                self.clear_trails();
                 self.levels.clear();
                 self.level_time_ns = None;
                 self.state = VisualState::Seeking;
@@ -211,6 +239,7 @@ impl Timeline {
     fn clear_timeline(&mut self) {
         self.object_ids.clear();
         self.tracks.clear();
+        self.clear_trails();
         self.levels.clear();
         self.level_time_ns = None;
         self.last_pts_ns = None;
@@ -278,6 +307,7 @@ impl Timeline {
         }
         self.object_ids = objects.iter().map(|object| object.id).collect();
         self.tracks = vec![Vec::new(); objects.len()];
+        self.clear_trails();
         self.levels.clear();
         self.level_time_ns = None;
     }
@@ -391,7 +421,132 @@ impl Timeline {
         sample_track(track, time_ns)
     }
 
-    pub(crate) fn snapshot_at(&self, time_ns: u64, trail_seconds: f32) -> Option<VisualSnapshot> {
+    /// Append fixed-grid trajectory samples up to `time_ns`.
+    ///
+    /// Samples are stored once and never recomputed. Sampling on an absolute
+    /// grid means the same instant always maps to the same vertex, so moving
+    /// the playhead only slides the window; it cannot re-pick or re-shape the
+    /// part of the trail the object has already travelled.
+    fn commit_trails(&mut self, time_ns: u64, trail_ns: u64) {
+        let step_ns = trail_step_ns(trail_ns);
+        if self.trail_step_ns != step_ns {
+            self.trails.clear();
+            self.trail_next_ns = None;
+            self.trail_step_ns = step_ns;
+        }
+        if self.trails.len() != self.tracks.len() {
+            self.trails = vec![Vec::new(); self.tracks.len()];
+            self.trail_next_ns = None;
+        }
+
+        let newest = (time_ns / step_ns) * step_ns;
+        let oldest = time_ns.saturating_sub(trail_ns);
+        let Some(first) = self.trail_next_ns else {
+            // First snapshot: backfill the visible window from the timeline.
+            self.backfill_trails(newest, oldest, step_ns);
+            return;
+        };
+        if newest < first {
+            // The playhead moved back a little (position query jitter). Keep
+            // the committed history; only hide the points that are ahead.
+            self.trim_trails(oldest);
+            return;
+        }
+        let start = if newest.saturating_sub(first) > trail_ns {
+            // A jump larger than the history window: rebuild it instead of
+            // walking every intervening grid step.
+            for trail in &mut self.trails {
+                trail.clear();
+            }
+            (oldest / step_ns) * step_ns
+        } else {
+            first
+        };
+
+        let mut times = Vec::new();
+        let mut time = start;
+        while time <= newest {
+            times.push(time);
+            match time.checked_add(step_ns) {
+                Some(next) => time = next,
+                None => break,
+            }
+        }
+        if !times.is_empty() {
+            self.push_trail_times(&times);
+            self.trail_next_ns = newest.checked_add(step_ns);
+        }
+        self.trim_trails(oldest);
+    }
+
+    fn backfill_trails(&mut self, newest: u64, oldest: u64, step_ns: u64) {
+        let start = (oldest / step_ns) * step_ns;
+        let mut times = Vec::with_capacity(MAX_TRAIL_POINTS + 1);
+        let mut time = start;
+        while time <= newest {
+            times.push(time);
+            match time.checked_add(step_ns) {
+                Some(next) => time = next,
+                None => break,
+            }
+        }
+        self.push_trail_times(&times);
+        self.trail_next_ns = newest.checked_add(step_ns);
+        self.trim_trails(oldest);
+    }
+
+    fn push_trail_times(&mut self, times: &[u64]) {
+        let tracks = &self.tracks;
+        let trails = &mut self.trails;
+        for &time_ns in times {
+            for (track, trail) in tracks.iter().zip(trails.iter_mut()) {
+                if let Some(state) = sample_track(track, time_ns) {
+                    trail.push(TrailPoint {
+                        time_ns,
+                        position: state.position,
+                    });
+                }
+            }
+        }
+    }
+
+    fn trim_trails(&mut self, oldest: u64) {
+        for trail in &mut self.trails {
+            let drop = trail.partition_point(|point| point.time_ns < oldest);
+            if drop > 0 {
+                trail.drain(0..drop);
+            }
+            let max = MAX_TRAIL_POINTS + 1;
+            if trail.len() > max {
+                let remove = trail.len() - max;
+                trail.drain(0..remove);
+            }
+        }
+    }
+
+    fn trail_for(&self, index: usize, time_ns: u64, trail_ns: u64) -> Vec<[f32; 3]> {
+        let mut points = Vec::new();
+        if let Some(trail) = self.trails.get(index) {
+            let oldest = time_ns.saturating_sub(trail_ns);
+            let start = trail.partition_point(|point| point.time_ns < oldest);
+            let end = trail.partition_point(|point| point.time_ns <= time_ns);
+            points.extend(trail[start..end].iter().map(|point| point.position));
+        }
+        // Connect the committed history to the current interpolated position.
+        // This is the only vertex that moves between frames.
+        if let Some(state) = sample_track(&self.tracks[index], time_ns)
+            && points.last().is_none_or(|last| *last != state.position)
+        {
+            points.push(state.position);
+        }
+        points
+    }
+
+    pub(crate) fn snapshot_at(
+        &mut self,
+        time_ns: u64,
+        trail_seconds: f32,
+    ) -> Option<VisualSnapshot> {
         let first_ns = self
             .tracks
             .iter()
@@ -404,7 +559,16 @@ impl Timeline {
                 time_ns.saturating_sub(last) > STALE_AFTER_NS && self.state != VisualState::Eos
             });
 
-        let trail_ns = (trail_seconds.max(0.0) * 1e9) as u64;
+        let trail_ns = if trail_seconds.is_finite() {
+            (trail_seconds.max(0.0) * 1e9) as u64
+        } else {
+            0
+        };
+        let trails_enabled = trail_ns > 0 && self.tracks.len() <= MAX_TRAIL_OBJECTS;
+        if trails_enabled {
+            self.commit_trails(time_ns, trail_ns);
+        }
+
         let mut objects = Vec::with_capacity(self.tracks.len());
         for (index, track) in self.tracks.iter().enumerate() {
             let Some(state) = sample_track(track, time_ns) else {
@@ -416,10 +580,10 @@ impl Timeline {
                 .copied()
                 .map(normalized_level)
                 .unwrap_or(0.0);
-            let trail = if trail_ns == 0 || self.tracks.len() > MAX_TRAIL_OBJECTS {
-                Vec::new()
+            let trail = if trails_enabled {
+                self.trail_for(index, time_ns, trail_ns)
             } else {
-                build_trail(track, time_ns, trail_ns)
+                Vec::new()
             };
             objects.push(ObjectVisual {
                 id: state.id,
@@ -517,30 +681,9 @@ fn lerp_state(a: &ObjectState, b: &ObjectState, amount: f32) -> ObjectState {
     }
 }
 
-fn build_trail(track: &[Keyframe], time_ns: u64, trail_ns: u64) -> Vec<[f32; 3]> {
-    let end = track.partition_point(|keyframe| keyframe.time_ns <= time_ns);
-    if end == 0 {
-        return Vec::new();
-    }
-    let start_time = time_ns.saturating_sub(trail_ns);
-    let start = track.partition_point(|keyframe| keyframe.time_ns < start_time);
-    if start >= end {
-        return Vec::new();
-    }
-    let count = end - start;
-    let stride = count.div_ceil(MAX_TRAIL_POINTS).max(1);
-    let mut trail = Vec::with_capacity(count / stride + 1);
-    let mut index = start;
-    while index < end {
-        trail.push(track[index].state.position);
-        index += stride;
-    }
-    if let Some(state) = sample_track(track, time_ns)
-        && trail.last().is_none_or(|last| *last != state.position)
-    {
-        trail.push(state.position);
-    }
-    trail
+fn trail_step_ns(trail_ns: u64) -> u64 {
+    let intervals = (MAX_TRAIL_POINTS.saturating_sub(1)).max(1) as u64;
+    (trail_ns / intervals).max(1)
 }
 
 #[cfg(test)]
@@ -861,5 +1004,92 @@ mod tests {
             discont: false,
         });
         assert!(timeline.snapshot_at(1_000_000_000, 0.0).is_none());
+    }
+
+    #[test]
+    fn committed_trail_history_is_not_rewritten_by_late_metadata() {
+        let mut timeline = Timeline::default();
+        timeline.handle(TapEvent::Caps {
+            epoch: 0,
+            channels: 2,
+            rate: 48_000,
+        });
+        // Sparse keyframes stay linear in time, so a trail vertex's x is the
+        // instant it was sampled.
+        for (sample, x) in [(0u64, 0.0f32), (1_000_000_000, 1.0), (2_000_000_000, 2.0)] {
+            timeline.handle(buffer_event(
+                sample,
+                0,
+                payload(vec![object(1, [x, 0.0, 0.0])], vec![]),
+            ));
+        }
+
+        let first = timeline
+            .snapshot_at(1_000_000_000, 1.0)
+            .expect("snapshot")
+            .objects[0]
+            .trail
+            .clone();
+        assert!(first.len() > 2);
+        assert!(first.iter().any(|point| point[0] < 0.5));
+
+        // A late keyframe rewrites the interpolation around 0.4 s. The trail
+        // has already been travelled, so its committed vertices must not move.
+        timeline.insert_keyframe(0, 490_000_000, object(1, [5.0, 0.0, 0.0]));
+        let resampled = sample_track(&timeline.tracks[0], 400_000_000)
+            .expect("resampled state")
+            .position;
+        assert!(
+            (resampled[0] - 0.4).abs() > 1.0,
+            "the test must actually change the timeline"
+        );
+
+        let again = timeline
+            .snapshot_at(1_000_000_000, 1.0)
+            .expect("snapshot")
+            .objects[0]
+            .trail
+            .clone();
+        assert_eq!(first, again);
+    }
+
+    #[test]
+    fn advancing_the_playhead_keeps_shared_trail_vertices_fixed() {
+        let mut timeline = Timeline::default();
+        timeline.handle(TapEvent::Caps {
+            epoch: 0,
+            channels: 2,
+            rate: 48_000,
+        });
+        for step in 0..=300u64 {
+            timeline.handle(buffer_event(
+                step * 10_000_000,
+                0,
+                payload(vec![object(1, [step as f32 * 0.01, 0.0, 0.0])], vec![]),
+            ));
+        }
+
+        let first = timeline
+            .snapshot_at(1_000_000_000, 0.5)
+            .expect("snapshot")
+            .objects[0]
+            .trail
+            .clone();
+        let second = timeline
+            .snapshot_at(1_300_000_000, 0.5)
+            .expect("snapshot")
+            .objects[0]
+            .trail
+            .clone();
+        // The old window [0.5, 1.0] and the new window [0.8, 1.3] share
+        // [0.8, 1.0]. Those vertices must be bit-identical, not resampled.
+        for point in &first {
+            if (0.8..=1.0).contains(&point[0]) {
+                assert!(
+                    second.iter().any(|other| other == point),
+                    "historical trail vertex {point:?} moved"
+                );
+            }
+        }
     }
 }
