@@ -12,7 +12,7 @@ use objectaudio_ir::{ObjectState, SpatialPayload};
 pub const HISTORY_SECONDS: u64 = 12;
 /// Hard cap on keyframes retained per object.
 pub const MAX_KEYFRAMES_PER_OBJECT: usize = 256;
-/// Objects above this count get no trails (labels only on hover).
+/// Objects above this count get no motion trails.
 pub const MAX_TRAIL_OBJECTS: usize = 64;
 /// Maximum trail points stored per object.
 pub const MAX_TRAIL_POINTS: usize = 24;

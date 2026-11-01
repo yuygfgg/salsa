@@ -82,6 +82,7 @@ pub fn draw(
     mode: &OutputMode,
     state: &mut StageState,
     visual_enabled: bool,
+    labels_enabled: bool,
     reduce_motion: bool,
     stale_hint: bool,
 ) -> Option<StageAction> {
@@ -169,12 +170,14 @@ pub fn draw(
     let mut scene = Vec::new();
     let listener_bounds =
         listener::add_to_scene(&mut scene, &project_point, *mode == OutputMode::Binaural);
-    labels.add(
-        listener_bounds.expand(3.0),
-        "Listener".to_owned(),
-        LabelKind::Listener,
-        Vec2::new(0.0, 1.0),
-    );
+    if labels_enabled {
+        labels.add(
+            listener_bounds.expand(3.0),
+            "Listener".to_owned(),
+            LabelKind::Listener,
+            Vec2::new(0.0, 1.0),
+        );
+    }
     let mut hovered = None;
     if let Some(snapshot) = snapshot {
         hovered = add_objects(
@@ -186,6 +189,7 @@ pub fn draw(
             state,
             &project_point,
             reduce_motion,
+            labels_enabled,
             &mut labels,
         );
     }
@@ -199,7 +203,13 @@ pub fn draw(
     if *mode == OutputMode::Speaker
         && let Some(layout) = layout
     {
-        draw_speakers(&scene_painter, &project, layout, &mut labels);
+        draw_speakers(
+            &scene_painter,
+            &project,
+            layout,
+            labels_enabled,
+            &mut labels,
+        );
     }
     draw_lfe(
         ui,
@@ -208,6 +218,7 @@ pub fn draw(
         mode,
         layout,
         snapshot,
+        labels_enabled,
         &mut labels,
     );
     labels.paint(&scene_painter);
@@ -239,7 +250,7 @@ pub fn draw(
         Color32::from_gray(160),
     );
 
-    if let Some(hit) = hovered {
+    if labels_enabled && let Some(hit) = hovered {
         draw_object_tooltip(&painter, rect, hit.screen, hit.object);
     }
 
@@ -279,6 +290,7 @@ fn draw_speakers(
     painter: &egui::Painter,
     project: &impl Fn([f32; 3]) -> Pos2,
     layout: &StandardLayout,
+    labels_enabled: bool,
     labels: &mut StageLabels,
 ) {
     for channel in layout.channels {
@@ -295,15 +307,18 @@ fn draw_speakers(
                 egui::StrokeKind::Middle,
             );
         }
-        labels.add(
-            marker.expand(3.0),
-            channel.short_name().to_owned(),
-            LabelKind::Speaker,
-            (position - project([0.0, 0.0, 0.0])).normalized(),
-        );
+        if labels_enabled {
+            labels.add(
+                marker.expand(3.0),
+                channel.short_name().to_owned(),
+                LabelKind::Speaker,
+                (position - project([0.0, 0.0, 0.0])).normalized(),
+            );
+        }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_lfe(
     ui: &egui::Ui,
     painter: &egui::Painter,
@@ -311,6 +326,7 @@ fn draw_lfe(
     mode: &OutputMode,
     layout: Option<&StandardLayout>,
     snapshot: Option<&VisualSnapshot>,
+    labels_enabled: bool,
     labels: &mut StageLabels,
 ) {
     // The rear marker is a display convention, not an audio panning position.
@@ -362,19 +378,23 @@ fn draw_lfe(
             egui::StrokeKind::Middle,
         );
     }
-    labels.add(
-        marker.expand(3.0),
-        text.to_owned(),
-        LabelKind::Lfe,
-        (position - project([0.0; 3])).normalized(),
-    );
-    let hover = marker.expand(4.0).intersect(painter.clip_rect());
-    if hover.is_positive() {
-        ui.interact(hover, ui.id().with("lfe-route"), Sense::hover())
-            .on_hover_text(format!(
-                "{detail}\nDecoded LFE level: {:.0}%\nThe rear position is a display convention. LFE has no spatial metadata.",
-                level * 100.0
-            ));
+    if labels_enabled {
+        labels.add(
+            marker.expand(3.0),
+            text.to_owned(),
+            LabelKind::Lfe,
+            (position - project([0.0; 3])).normalized(),
+        );
+    }
+    if labels_enabled {
+        let hover = marker.expand(4.0).intersect(painter.clip_rect());
+        if hover.is_positive() {
+            ui.interact(hover, ui.id().with("lfe-route"), Sense::hover())
+                .on_hover_text(format!(
+                    "{detail}\nDecoded LFE level: {:.0}%\nThe rear position is a display convention. LFE has no spatial metadata.",
+                    level * 100.0
+                ));
+        }
     }
 }
 
@@ -394,6 +414,7 @@ fn add_objects<'a>(
     state: &mut StageState,
     project: &impl Fn([f32; 3]) -> (Pos2, f32),
     reduce_motion: bool,
+    labels_enabled: bool,
     labels: &mut StageLabels,
 ) -> Option<ObjectHit<'a>> {
     let pointer = ui
@@ -446,7 +467,7 @@ fn add_objects<'a>(
             ),
         ));
 
-        if snapshot.objects.len() <= 16 || selected {
+        if labels_enabled {
             labels.add(
                 marker,
                 format!("ID{id}"),
@@ -457,8 +478,6 @@ fn add_objects<'a>(
                 },
                 Vec2::new(1.0, -1.0),
             );
-        } else {
-            labels.reserve(marker);
         }
 
         if let Some(pointer) = pointer

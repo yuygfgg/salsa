@@ -4,7 +4,8 @@
 //! headless sink override:
 //!
 //! ```sh
-//! SALSA_TEST_EC3=stream.ec3 SALSA_SINK_OVERRIDE=fakesink cargo test
+//! SALSA_TEST_EC3=stream.ec3 SALSA_TEST_DAMF=master.atmos \
+//!   SALSA_SINK_OVERRIDE=fakesink cargo test
 //! ```
 
 use std::path::PathBuf;
@@ -83,6 +84,11 @@ fn ec3_playback_reaches_the_visual_tap() {
 #[test]
 fn truehd_playback_reaches_the_visual_tap() {
     run("SALSA_TEST_TRUEHD");
+}
+
+#[test]
+fn damf_playback_reaches_the_visual_tap() {
+    run("SALSA_TEST_DAMF");
 }
 
 #[test]

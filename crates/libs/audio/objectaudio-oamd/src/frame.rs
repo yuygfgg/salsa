@@ -110,6 +110,8 @@ pub struct OamdMapping {
     pub dynamic_count: usize,
     /// `base_offset + OAMD sample_offset`.
     pub snapshot_offset: u32,
+    /// Ramp duration of the first object-info block, in samples.
+    pub snapshot_ramp_samples: u32,
 }
 
 /// Map the events of `frame` onto the IR timeline with a single base offset.
@@ -300,6 +302,7 @@ impl OamdFrame {
     pub fn to_spatial_payload(&self, sample_rate: u32, bed: BedPolicy) -> SpatialPayload {
         let mapping = self.map_to_ir(0, bed);
         SpatialPayload::new(sample_rate, mapping.objects, mapping.events)
+            .with_snapshot_ramp(mapping.snapshot_ramp_samples)
     }
 
     /// Map the payload onto the IR with an explicit base sample offset.
@@ -357,6 +360,7 @@ impl OamdFrame {
             events,
             dynamic_count: dynamic.len(),
             snapshot_offset: self.sample_offset.saturating_add(base_offset),
+            snapshot_ramp_samples: self.ramp_samples,
         }
     }
 
@@ -431,6 +435,7 @@ mod tests {
         });
         let mapping = frame.map_to_ir(1_000, BedPolicy::Ignore);
         assert_eq!(mapping.snapshot_offset, 1_007);
+        assert_eq!(mapping.snapshot_ramp_samples, frame.ramp_samples);
         assert_eq!(mapping.events.last().unwrap().offset, 1_100);
         assert_eq!(
             oamd_to_ir_events(&frame, 1_000).last().unwrap().offset,

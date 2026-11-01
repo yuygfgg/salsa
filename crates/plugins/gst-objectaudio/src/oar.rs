@@ -745,13 +745,16 @@ impl RuntimeState {
 
         let clamp_offset =
             |offset: usize| (meta_offset(offset, metadata_offset)).min(samples) as u32;
-        let mut output = vec![BufferMetadata {
-            offset: clamp_offset(snapshot.offset),
-            ramp_samples: snapshot
+        let snapshot_ramp = snapshot.payload.snapshot_ramp_samples.unwrap_or_else(|| {
+            snapshot
                 .payload
                 .events
                 .first()
-                .map_or(0, |event| event.ramp_samples),
+                .map_or(0, |event| event.ramp_samples)
+        });
+        let mut output = vec![BufferMetadata {
+            offset: clamp_offset(snapshot.offset),
+            ramp_samples: snapshot_ramp,
             positions_q15: self.positions_q15.clone(),
             gains: self.gains.clone(),
         }];

@@ -30,6 +30,8 @@ pub struct Settings {
     pub volume: f32,
     #[serde(default = "default_true")]
     pub visual_enabled: bool,
+    #[serde(default = "default_true")]
+    pub labels_enabled: bool,
     #[serde(default)]
     pub reduce_motion: bool,
     #[serde(default)]
@@ -61,6 +63,7 @@ impl Default for Settings {
             device: DeviceSelection::Auto,
             volume: default_volume(),
             visual_enabled: true,
+            labels_enabled: true,
             reduce_motion: false,
             recent: Vec::new(),
             window_size: None,

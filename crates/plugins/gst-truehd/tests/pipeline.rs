@@ -126,6 +126,7 @@ fn object_meta_reaches_the_sink() {
     init();
     let buffers = Arc::new(AtomicUsize::new(0));
     let metas = Arc::new(AtomicUsize::new(0));
+    let ramps = Arc::new(AtomicUsize::new(0));
     let bad = Arc::new(AtomicUsize::new(0));
     let pipeline = decode_prefix(
         "! capsfilter caps=\"audio/x-raw(memory:SystemMemory, meta:ObjectAudioMeta), \
@@ -134,17 +135,20 @@ fn object_meta_reaches_the_sink() {
         2,
     );
     let sink = pipeline.by_name("sink").expect("sink");
-    let counters = (buffers.clone(), metas.clone(), bad.clone());
+    let counters = (buffers.clone(), metas.clone(), ramps.clone(), bad.clone());
     sink.static_pad("sink").expect("sink pad").add_probe(
         gst::PadProbeType::BUFFER,
         move |_, info| {
             if let Some(buffer) = info.buffer() {
                 counters.0.fetch_add(1, Ordering::Relaxed);
-                if objectaudio_meta::get(buffer).is_some() {
+                if let Some(snapshot) = objectaudio_meta::get_spatial(buffer) {
                     counters.1.fetch_add(1, Ordering::Relaxed);
+                    if snapshot.payload.snapshot_ramp_samples.is_some() {
+                        counters.2.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
                 if buffer.size() % (4 * 16 * 32) != 0 {
-                    counters.2.fetch_add(1, Ordering::Relaxed);
+                    counters.3.fetch_add(1, Ordering::Relaxed);
                 }
             }
             PadProbeReturn::Ok
@@ -153,6 +157,10 @@ fn object_meta_reaches_the_sink() {
     let _ = run(pipeline);
     assert!(buffers.load(Ordering::Relaxed) > 0, "no decoded buffers");
     assert!(metas.load(Ordering::Relaxed) > 0, "no OAMD metadata");
+    assert!(
+        ramps.load(Ordering::Relaxed) > 0,
+        "OAMD snapshot ramp was not carried into SpatialPayload"
+    );
     assert_eq!(
         bad.load(Ordering::Relaxed),
         0,

@@ -214,12 +214,10 @@ impl SpatialDecoder for Eac3JocDecoder {
             self.last_sample_rate = sample_rate;
         }
 
-        Ok(SpatialFrame::new(
-            sample_rate,
-            FRAME_SAMPLES,
-            objects,
-            events,
-            pcm,
-        )?)
+        let mut spatial = SpatialFrame::new(sample_rate, FRAME_SAMPLES, objects, events, pcm)?;
+        if let Some(oamd) = frame.oamd.as_ref() {
+            spatial = spatial.with_snapshot_ramp(oamd.ramp_samples);
+        }
+        Ok(spatial)
     }
 }

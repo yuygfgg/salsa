@@ -136,6 +136,7 @@ impl Eac3JocDec {
         let attach_meta = self.state.lock().unwrap().attach_meta;
         let meta = if attach_meta && let Some(oamd) = &frame.oamd {
             let mut payload = spatial.to_payload();
+            payload.snapshot_ramp_samples = Some(oamd.ramp_samples);
             let delay = EAC3_DECODER_DELAY as u32;
             for event in &mut payload.events {
                 event.offset = event.offset.saturating_add(delay);

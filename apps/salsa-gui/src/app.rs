@@ -142,7 +142,10 @@ impl SalsaApp {
     fn show_open_dialog(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
             .set_title("Open an Atmos stream")
-            .add_filter("Atmos streams", &["ec3", "eac3", "mlp", "thd", "truehd"])
+            .add_filter(
+                "Atmos streams",
+                &["ec3", "eac3", "mlp", "thd", "truehd", "atmos", "damf"],
+            )
             .pick_file()
         {
             self.open_path(path);
@@ -784,6 +787,7 @@ impl SalsaApp {
 
     fn plugins_ok(&self) -> bool {
         [
+            "salsadamfsrc",
             "salsaeac3jocparse",
             "salsaeac3jocdec",
             "salsatruehdparse",
@@ -826,6 +830,7 @@ impl SalsaApp {
              GStreamer: {}\n\
              GST_PLUGIN_PATH: {}\n\
              GST_REGISTRY_FORK: {}\n\
+             salsadamfsrc: {}\n\
              salsaeac3jocparse: {}\n\
              salsaeac3jocdec: {}\n\
              salsatruehdparse: {}\n\
@@ -841,6 +846,7 @@ impl SalsaApp {
             gst::version_string(),
             std::env::var("GST_PLUGIN_PATH").unwrap_or_else(|_| "<unset>".to_string()),
             std::env::var("GST_REGISTRY_FORK").unwrap_or_else(|_| "<unset>".to_string()),
+            plugin("salsadamfsrc"),
             plugin("salsaeac3jocparse"),
             plugin("salsaeac3jocdec"),
             plugin("salsatruehdparse"),
@@ -1026,6 +1032,7 @@ impl SalsaApp {
                     &self.settings.mode,
                     &mut self.stage,
                     self.settings.visual_enabled,
+                    self.settings.labels_enabled,
                     self.settings.reduce_motion,
                     stale,
                 );
@@ -1208,6 +1215,7 @@ impl SalsaApp {
         let mut open = self.show_settings;
         let mut reduce_motion = self.settings.reduce_motion;
         let mut visual = self.settings.visual_enabled;
+        let mut labels = self.settings.labels_enabled;
         let diagnostics = self.diagnostics();
         egui::Window::new("Settings")
             .open(&mut open)
@@ -1215,6 +1223,10 @@ impl SalsaApp {
             .default_width(430.0)
             .show(ctx, |ui| {
                 ui.checkbox(&mut visual, "Show the 3D object stage");
+                ui.checkbox(
+                    &mut labels,
+                    "Show all labels (objects, speakers, LFE, listener)",
+                );
                 ui.checkbox(&mut reduce_motion, "Reduce motion (no trails)");
                 ui.add_space(6.0);
                 if ui.button("Copy diagnostics").clicked() {
@@ -1251,6 +1263,10 @@ impl SalsaApp {
         }
         if visual != self.settings.visual_enabled {
             self.set_visual(visual);
+        }
+        if labels != self.settings.labels_enabled {
+            self.settings.labels_enabled = labels;
+            self.dirty = true;
         }
     }
 }

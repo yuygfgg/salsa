@@ -2,7 +2,10 @@ use std::path::{Path, PathBuf};
 
 use salsa_gui::{app, settings};
 
-const PLUGIN_LIBRARIES: [&str; 6] = [
+const PLUGIN_LIBRARIES: [&str; 9] = [
+    "libgstsalsadamf.dylib",
+    "libgstsalsadamf.so",
+    "libgstsalsadamf.dll",
     "libgstsalsaeac3joc.dylib",
     "libgstsalsaeac3joc.so",
     "libgstsalsaeac3joc.dll",

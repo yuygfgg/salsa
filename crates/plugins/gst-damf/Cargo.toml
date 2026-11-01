@@ -1,0 +1,23 @@
+[package]
+name = "gst-damf"
+description = "GStreamer DAMF (Dolby Atmos Master Format) source"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "gstsalsadamf"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+objectaudio-damf.workspace = true
+objectaudio-ir.workspace = true
+objectaudio-meta.workspace = true
+gstreamer.workspace = true
+gstreamer-base.workspace = true
+gstreamer-audio.workspace = true
+
+[dev-dependencies]
+gst-objectaudio = { path = "../gst-objectaudio" }

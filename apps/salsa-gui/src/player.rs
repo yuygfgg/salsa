@@ -31,7 +31,7 @@ pub enum PlayerError {
 pub struct Player {
     pipeline: gst::Pipeline,
     bus: gst::Bus,
-    parser: gst::Element,
+    parser: Option<gst::Element>,
     decoder: gst::Element,
     volume: gst::Element,
     codec: Codec,
@@ -65,7 +65,7 @@ impl Player {
         }
         wait_for_preroll(&pipeline, &bus, cancel)?;
 
-        if require_object_audio && !has_object_audio(&parser) {
+        if require_object_audio && !has_object_audio(codec, parser.as_ref()) {
             let _ = pipeline.set_state(gst::State::Null);
             return Err(PlayerError::NoObjectAudio);
         }
@@ -99,10 +99,11 @@ impl Player {
         &self.decoder
     }
 
-    /// Whether the parser has seen JOC/OAMD metadata. `atmos` is set by both
-    /// `salsaeac3jocparse` and `salsatruehdparse`.
+    /// Whether the stream carries object audio. DAMF is object audio by
+    /// definition; codec streams set the parser's `atmos` cap when JOC/OAMD is
+    /// present.
     pub fn object_audio(&self) -> bool {
-        has_object_audio(&self.parser)
+        has_object_audio(self.codec, self.parser.as_ref())
     }
 
     pub fn codec(&self) -> Codec {
@@ -162,9 +163,12 @@ impl Drop for Player {
     }
 }
 
-fn has_object_audio(parser: &gst::Element) -> bool {
+fn has_object_audio(codec: Codec, parser: Option<&gst::Element>) -> bool {
+    if codec == Codec::Damf {
+        return true;
+    }
     parser
-        .static_pad("src")
+        .and_then(|parser| parser.static_pad("src"))
         .and_then(|pad| pad.current_caps())
         .and_then(|caps| {
             caps.structure(0)

@@ -189,7 +189,10 @@ impl SpatialDecoder for TrueHdDecoder {
 
         let pcm = PcmBuffer::from_planar(planes)?;
         let sample_rate = decoded.sampling_frequency;
-        let spatial = SpatialFrame::new(sample_rate, frames, objects, events, pcm)?;
+        let mut spatial = SpatialFrame::new(sample_rate, frames, objects, events, pcm)?;
+        if saw_oamd && let Some(oamd) = &self.oamd {
+            spatial = spatial.with_snapshot_ramp(oamd.ramp_samples);
+        }
         let payload = spatial.to_payload();
         self.snapshot = Some(SpatialSnapshot {
             payload,

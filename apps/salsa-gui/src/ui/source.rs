@@ -71,8 +71,8 @@ pub fn draw_empty(
         ui.add_space(18.0);
         ui.vertical_centered(|ui| {
             ui.label(RichText::new("Open object audio").size(20.0).strong());
-            ui.label("Drop an E-AC-3 JOC or TrueHD Atmos stream, or choose a file.");
-            ui.weak("Supported containers: .ec3  .eac3  .mlp  .thd");
+            ui.label("Drop an E-AC-3 JOC, TrueHD Atmos or DAMF master, or choose a file.");
+            ui.weak("Supported inputs: .ec3  .eac3  .mlp  .thd  .atmos");
             ui.add_space(8.0);
             if ui.button("Choose File…").clicked() {
                 action = Some(EmptyAction::OpenDialog);

@@ -9,6 +9,7 @@ E-AC-3 JOC / TrueHD
         │
         ▼
   transport + parse          eac3joc, truehd-atmos
+  DAMF manifest + CAF        objectaudio-damf
         │
         ▼
   SpatialFrame (IR)          objectaudio-ir
@@ -27,12 +28,14 @@ E-AC-3 JOC / TrueHD
 | `eac3joc-core-decoder` | E-AC-3 core PCM through libavcodec with DRC disabled | no |
 | `eac3joc-dsp` | QMF analysis, object matrix, synthesis and LFE handling | no |
 | `truehd-atmos` | TrueHD Atmos parse/decode adapter producing the same IR | no |
+| `objectaudio-damf` | DAMF `.atmos`/CAF/metadata reader; bed expansion and keyframe-to-IR mapping | no |
 | `objectaudio-meta` | `ObjectAudioMeta` GstMeta (`SpatialPayload`), caps feature, C ABI and Dolby compatibility | yes |
 | `objectaudio-render` | speaker layout tables, speaker anchors and the object-to-speaker renderer | no |
 | `objectaudio-hrtf` | personalized-headphone model, filterbanks, room model, binaural renderer | no |
 | `gst-eac3joc` | `salsaeac3jocparse`, `salsaeac3jocdec` | yes |
 | `gst-truehd` | `salsatruehdparse`, `salsatruehdatmosdec` | yes |
 | `gst-objectaudio` | `salsaoar`, `salsahrtfrender`, `salsaobjectaudioadapt` | yes |
+| `gst-damf` | `salsadamfsrc` | yes |
 
 ## Intermediate representation
 
@@ -53,7 +56,9 @@ event offsets. The frame itself always describes a contiguous block of audio.
 
 - `version` (currently 1), `sample_rate`;
 - `objects`: the state at the payload's sample offset;
-- `events`: changes whose offsets are relative to the buffer start.
+- `events`: changes whose offsets are relative to the buffer start;
+- `snapshot_ramp_samples`: optional ramp for the snapshot transition, used by
+  OAMD's first object-info block.
 
 Serialization is `postcard`; unknown versions are rejected. PCM stays in the
 GStreamer buffer.
@@ -85,6 +90,7 @@ No library above `objectaudio-oamd` imports the upstream `oamd` crate directly.
 
 | Element | Base class | Purpose |
 |---|---|---|
+| `salsadamfsrc` | `GstBaseSrc` | read a DAMF presentation and emit `LFE + N` object PCM |
 | `salsaeac3jocparse` | `GstBaseParse` | frame E-AC-3 JOC and expose stream caps |
 | `salsaeac3jocdec` | `GstAudioDecoder` | decode E-AC-3 JOC to `LFE + N` object PCM |
 | `salsatruehdparse` | `GstBaseParse` | frame TrueHD access units and expose rate/Atmos caps |

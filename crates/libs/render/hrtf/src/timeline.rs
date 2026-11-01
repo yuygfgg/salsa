@@ -188,9 +188,15 @@ impl OamdPositionTimeline {
             self.initialized = true;
         } else {
             let ramp = frame
-                .events
-                .first()
-                .map_or(0, |event| i64::from(event.ramp_samples));
+                .snapshot_ramp_samples
+                .map(i64::from)
+                .or_else(|| {
+                    frame
+                        .events
+                        .first()
+                        .map(|event| i64::from(event.ramp_samples))
+                })
+                .unwrap_or(0);
             let transition_start = align_metadata_sample(coded_event + object_delay_samples);
             for index in 0..self.object_count {
                 if self.has_previous[index] && self.previous_targets[index] == targets[index] {
@@ -283,6 +289,39 @@ mod tests {
     fn tracks_are_dynamic() {
         let timeline = OamdPositionTimeline::new(128);
         assert_eq!(timeline.object_count(), 128);
+    }
+
+    #[test]
+    fn snapshot_ramp_samples_drives_the_transition() {
+        let mut timeline = OamdPositionTimeline::new(1);
+        timeline
+            .submit_update(
+                &SpatialPayload::new(
+                    48_000,
+                    vec![objectaudio_ir::ObjectState::new(1, [-1.0, 0.0, 0.0])],
+                    Vec::new(),
+                ),
+                0,
+                0,
+                0,
+            )
+            .unwrap();
+        timeline
+            .submit_update(
+                &SpatialPayload::new(
+                    48_000,
+                    vec![objectaudio_ir::ObjectState::new(1, [1.0, 0.0, 0.0])],
+                    Vec::new(),
+                )
+                .with_snapshot_ramp(64),
+                0,
+                0,
+                0,
+            )
+            .unwrap();
+        assert_eq!(timeline.positions_at(0).unwrap()[0][0], -1.0);
+        assert!((timeline.positions_at(32).unwrap()[0][0]).abs() < 1e-6);
+        assert_eq!(timeline.positions_at(64).unwrap()[0][0], 1.0);
     }
 
     #[test]

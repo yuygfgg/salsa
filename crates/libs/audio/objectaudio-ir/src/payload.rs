@@ -15,12 +15,19 @@ pub fn payload_version() -> u16 {
 /// The payload is metadata only: PCM stays in the GStreamer buffer. `objects`
 /// is the snapshot at the payload's sample offset; `events` carry state changes
 /// whose offsets are relative to the start of the buffer.
+///
+/// `snapshot_ramp_samples` is the ramp applied when the renderer moves from
+/// the previous state to `objects`. OAMD carries this on its first object-info
+/// block; when it is `None` renderers fall back to the first event's ramp (or
+/// zero) for compatibility with hand-built payloads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpatialPayload {
     pub version: u16,
     pub sample_rate: u32,
     pub objects: Vec<ObjectState>,
     pub events: Vec<ObjectEvent>,
+    #[serde(default)]
+    pub snapshot_ramp_samples: Option<u32>,
 }
 
 impl SpatialPayload {
@@ -32,7 +39,15 @@ impl SpatialPayload {
             sample_rate,
             objects,
             events,
+            snapshot_ramp_samples: None,
         }
+    }
+
+    /// Set the ramp used for the snapshot state. `Some(0)` explicitly means
+    /// an immediate snapshot, overriding the event fallback in renderers.
+    pub fn with_snapshot_ramp(mut self, ramp_samples: u32) -> Self {
+        self.snapshot_ramp_samples = Some(ramp_samples);
+        self
     }
 
     /// Validate the payload before it reaches a renderer.
@@ -95,7 +110,7 @@ mod tests {
 
     #[test]
     fn roundtrips() {
-        let source = payload(15, 3);
+        let source = payload(15, 3).with_snapshot_ramp(1536);
         let bytes = source.encode().unwrap();
         assert_eq!(SpatialPayload::decode(&bytes).unwrap(), source);
     }

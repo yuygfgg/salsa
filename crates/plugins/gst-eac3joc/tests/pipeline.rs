@@ -29,21 +29,25 @@ fn init() {
     );
 }
 
-fn run_pipeline(description: &str) -> (Arc<AtomicUsize>, Arc<AtomicUsize>) {
+fn run_pipeline(description: &str) -> (Arc<AtomicUsize>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
     let metas = Arc::new(AtomicUsize::new(0));
     let buffers = Arc::new(AtomicUsize::new(0));
+    let ramps = Arc::new(AtomicUsize::new(0));
     let pipeline = gst::parse::launch(description)
         .expect("parse pipeline")
         .downcast::<gst::Pipeline>()
         .expect("pipeline");
     let sink = pipeline.by_name("sink").expect("sink");
-    let counters = (metas.clone(), buffers.clone());
+    let counters = (metas.clone(), buffers.clone(), ramps.clone());
     let pad = sink.static_pad("sink").expect("sink pad");
     pad.add_probe(gst::PadProbeType::BUFFER, move |_, info| {
         if let Some(buffer) = info.buffer() {
             counters.1.fetch_add(1, Ordering::Relaxed);
-            if objectaudio_meta::get(buffer).is_some() {
+            if let Some(snapshot) = objectaudio_meta::get_spatial(buffer) {
                 counters.0.fetch_add(1, Ordering::Relaxed);
+                if snapshot.payload.snapshot_ramp_samples.is_some() {
+                    counters.2.fetch_add(1, Ordering::Relaxed);
+                }
             }
         }
         PadProbeReturn::Ok
@@ -64,7 +68,7 @@ fn run_pipeline(description: &str) -> (Arc<AtomicUsize>, Arc<AtomicUsize>) {
         _ => unreachable!(),
     }
     pipeline.set_state(gst::State::Null).expect("null");
-    (metas, buffers)
+    (metas, buffers, ramps)
 }
 
 #[test]
@@ -81,12 +85,16 @@ fn object_meta_reaches_the_sink() {
          channels=(int)[1,16], rate=(int)48000\" ! fakesink name=sink sync=false",
         path.to_string_lossy()
     );
-    let (metas, buffers) = run_pipeline(&pipeline);
+    let (metas, buffers, ramps) = run_pipeline(&pipeline);
     assert!(buffers.load(Ordering::Relaxed) > 0, "no decoded buffers");
     assert_eq!(
         metas.load(Ordering::Relaxed),
         buffers.load(Ordering::Relaxed),
         "every buffer must carry ObjectAudioMeta"
+    );
+    assert!(
+        ramps.load(Ordering::Relaxed) > 0,
+        "OAMD snapshot ramp was not carried into SpatialPayload"
     );
 }
 
@@ -102,7 +110,7 @@ fn wav_fallback_negotiates_plain_raw() {
          fakesink name=sink sync=false",
         path.to_string_lossy()
     );
-    let (metas, buffers) = run_pipeline(&pipeline);
+    let (metas, buffers, _) = run_pipeline(&pipeline);
     assert!(buffers.load(Ordering::Relaxed) > 0, "no decoded buffers");
     assert_eq!(
         metas.load(Ordering::Relaxed),

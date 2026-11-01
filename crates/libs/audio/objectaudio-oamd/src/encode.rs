@@ -112,7 +112,13 @@ struct BlockTable {
 
 fn block_table(payload: &SpatialPayload) -> BlockTable {
     let mut by_block: BTreeMap<u32, u16> = BTreeMap::new();
-    by_block.insert(0, 0);
+    by_block.insert(
+        0,
+        payload
+            .snapshot_ramp_samples
+            .unwrap_or(0)
+            .min(u32::from(u16::MAX)) as u16,
+    );
     let half_block = METADATA_BLOCK_SAMPLES as u32 / 2;
     let block_samples = METADATA_BLOCK_SAMPLES as u32;
     for event in &payload.events {

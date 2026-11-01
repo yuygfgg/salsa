@@ -11,6 +11,7 @@ pub struct SpatialFrame {
     pub frames: usize,
     pub objects: Vec<ObjectState>,
     pub events: Vec<ObjectEvent>,
+    pub snapshot_ramp_samples: Option<u32>,
     pub pcm: PcmBuffer,
 }
 
@@ -27,6 +28,7 @@ impl SpatialFrame {
             frames,
             objects,
             events,
+            snapshot_ramp_samples: None,
             pcm,
         };
         frame.validate()?;
@@ -77,9 +79,20 @@ impl SpatialFrame {
         Ok(())
     }
 
+    /// Set the ramp used when a renderer moves to this frame's object state.
+    pub fn with_snapshot_ramp(mut self, ramp_samples: u32) -> Self {
+        self.snapshot_ramp_samples = Some(ramp_samples);
+        self
+    }
+
     /// Metadata-only snapshot for `ObjectAudioMeta`.
     pub fn to_payload(&self) -> SpatialPayload {
-        SpatialPayload::new(self.sample_rate, self.objects.clone(), self.events.clone())
+        let payload =
+            SpatialPayload::new(self.sample_rate, self.objects.clone(), self.events.clone());
+        match self.snapshot_ramp_samples {
+            Some(ramp) => payload.with_snapshot_ramp(ramp),
+            None => payload,
+        }
     }
 }
 
@@ -93,6 +106,7 @@ mod tests {
             frames: 0,
             objects,
             events,
+            snapshot_ramp_samples: None,
             pcm: PcmBuffer::silent(channels, 0),
         }
     }
@@ -154,6 +168,21 @@ mod tests {
             frame.validate(),
             Err(IrError::UnknownEventObject { object: 2 })
         );
+    }
+
+    #[test]
+    fn snapshot_ramp_reaches_the_payload() {
+        let frame = SpatialFrame::new(
+            48_000,
+            4,
+            vec![ObjectState::new(1, [0.0, 1.0, 0.0])],
+            Vec::new(),
+            PcmBuffer::silent(2, 4),
+        )
+        .unwrap()
+        .with_snapshot_ramp(1536);
+        assert_eq!(frame.snapshot_ramp_samples, Some(1536));
+        assert_eq!(frame.to_payload().snapshot_ramp_samples, Some(1536));
     }
 
     #[test]

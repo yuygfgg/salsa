@@ -65,6 +65,8 @@ mod tests {
         assert_eq!(first.gain, 1.0);
         assert!(first.enabled);
         assert!(frame.events.is_empty());
+        let payload = frame.to_spatial_payload(48_000, BedPolicy::Expand);
+        assert_eq!(payload.snapshot_ramp_samples, Some(frame.ramp_samples));
     }
 
     #[test]
@@ -121,6 +123,8 @@ mod tests {
         assert_eq!(round.version, SpatialPayload::VERSION);
         assert_eq!(round.sample_rate, 48_000);
         assert_eq!(round.objects.len(), source.objects.len());
+        assert_eq!(round.snapshot_ramp_samples, source.snapshot_ramp_samples);
+        assert_eq!(Some(reparsed.ramp_samples), source.snapshot_ramp_samples);
         for (a, b) in source.objects.iter().zip(&round.objects) {
             assert_eq!(a.id, b.id);
             for axis in 0..3 {

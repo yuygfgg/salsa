@@ -1,0 +1,13 @@
+[package]
+name = "objectaudio-damf"
+description = "Dolby Atmos Master Format (DAMF) reader for the salsa object-audio IR"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+objectaudio-ir.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true

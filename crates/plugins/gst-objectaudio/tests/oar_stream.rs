@@ -131,7 +131,20 @@ fn add_metadata(
     state: ObjectState,
     events: Vec<ObjectEvent>,
 ) {
-    let payload = SpatialPayload::new(RATE, vec![state], events);
+    add_metadata_with_ramp(buffer, offset, state, events, None);
+}
+
+fn add_metadata_with_ramp(
+    buffer: &mut gst::Buffer,
+    offset: usize,
+    state: ObjectState,
+    events: Vec<ObjectEvent>,
+    snapshot_ramp: Option<u32>,
+) {
+    let mut payload = SpatialPayload::new(RATE, vec![state], events);
+    if let Some(ramp) = snapshot_ramp {
+        payload = payload.with_snapshot_ramp(ramp);
+    }
     objectaudio_meta::add_spatial(
         buffer.get_mut().unwrap(),
         &payload,
@@ -196,6 +209,47 @@ fn assert_timeline(buffers: &[gst::Buffer], start: u64, total: usize) {
         assert!(objectaudio_meta::get_spatial(buffer).is_none());
     }
     assert_eq!(samples, total);
+}
+
+#[test]
+fn snapshot_ramp_controls_the_initial_transition() {
+    let harness = Harness::new();
+    let mut buffer = input(0, 64, 0.5);
+    add_metadata_with_ramp(
+        &mut buffer,
+        0,
+        object([-1.0, 1.0, 0.0], 1.0),
+        Vec::new(),
+        Some(64),
+    );
+    harness.push(buffer);
+    let buffers = harness.finish();
+    let samples = pcm(&buffers);
+    let left = |frame: usize| samples[frame * OUTPUT_CHANNELS];
+    assert!(
+        left(0).abs() < left(63).abs() * 0.1,
+        "left gain should ramp from zero: first={} last={}",
+        left(0),
+        left(63)
+    );
+    assert!(left(63).abs() > 0.1, "left target was not reached");
+
+    let harness = Harness::new();
+    let mut buffer = input(0, 64, 0.5);
+    add_metadata_with_ramp(
+        &mut buffer,
+        0,
+        object([-1.0, 1.0, 0.0], 1.0),
+        Vec::new(),
+        None,
+    );
+    harness.push(buffer);
+    let buffers = harness.finish();
+    let samples = pcm(&buffers);
+    assert!(
+        samples[0].abs() > 0.1,
+        "without a snapshot ramp the first sample should already be panned"
+    );
 }
 
 #[test]

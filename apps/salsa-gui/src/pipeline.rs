@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 pub enum Codec {
     Eac3,
     TrueHd,
+    Damf,
 }
 
 impl Codec {
@@ -22,6 +23,7 @@ impl Codec {
         match self {
             Self::Eac3 => "E-AC-3 JOC",
             Self::TrueHd => "TrueHD Atmos",
+            Self::Damf => "DAMF Master",
         }
     }
 
@@ -29,6 +31,7 @@ impl Codec {
         match self {
             Self::Eac3 => "EC3",
             Self::TrueHd => "TrueHD",
+            Self::Damf => "DAMF",
         }
     }
 }
@@ -149,6 +152,7 @@ pub fn detect_codec(path: &Path) -> Result<Codec, PipelineError> {
     match extension.as_deref() {
         Some("ec3" | "eac3") => Ok(Codec::Eac3),
         Some("mlp" | "thd" | "truehd") => Ok(Codec::TrueHd),
+        Some("atmos" | "damf") => Ok(Codec::Damf),
         _ => Err(PipelineError::UnsupportedCodec(path.to_path_buf())),
     }
 }
@@ -302,7 +306,9 @@ pub fn resolve_layout_for_channels(
 
 pub struct PipelineParts {
     pub pipeline: gst::Pipeline,
-    pub parser: gst::Element,
+    /// Parser element for codec streams; `None` for a DAMF source.
+    pub parser: Option<gst::Element>,
+    /// Element carrying the object-audio src pad. For DAMF this is the source.
     pub decoder: gst::Element,
     pub volume: gst::Element,
     pub codec: Codec,
@@ -325,16 +331,31 @@ pub fn build_pipeline(
     let codec = detect_codec(path)?;
     let pipeline = gst::Pipeline::new();
 
-    let filesrc = element("filesrc")?;
-    filesrc.set_property("location", path.to_string_lossy().to_string());
-    filesrc.set_property("blocksize", 1_048_576u32);
-
-    let (parser_name, decoder_name) = match codec {
-        Codec::Eac3 => ("salsaeac3jocparse", "salsaeac3jocdec"),
-        Codec::TrueHd => ("salsatruehdparse", "salsatruehdatmosdec"),
+    let mut chain = Vec::new();
+    let (parser, decoder) = match codec {
+        Codec::Damf => {
+            let source = element("salsadamfsrc")?;
+            source.set_property("location", path.to_string_lossy().to_string());
+            chain.push(source.clone());
+            (None, source)
+        }
+        Codec::Eac3 | Codec::TrueHd => {
+            let filesrc = element("filesrc")?;
+            filesrc.set_property("location", path.to_string_lossy().to_string());
+            filesrc.set_property("blocksize", 1_048_576u32);
+            let (parser_name, decoder_name) = match codec {
+                Codec::Eac3 => ("salsaeac3jocparse", "salsaeac3jocdec"),
+                Codec::TrueHd => ("salsatruehdparse", "salsatruehdatmosdec"),
+                Codec::Damf => unreachable!(),
+            };
+            let parser = element(parser_name)?;
+            let decoder = element(decoder_name)?;
+            chain.push(filesrc);
+            chain.push(parser.clone());
+            chain.push(decoder.clone());
+            (Some(parser), decoder)
+        }
     };
-    let parser = element(parser_name)?;
-    let decoder = element(decoder_name)?;
 
     let renderer = match config.mode {
         OutputMode::Speaker => {
@@ -403,33 +424,19 @@ pub fn build_pipeline(
         }
     };
 
-    pipeline
-        .add_many([
-            &filesrc,
-            &parser,
-            &decoder,
-            &renderer,
-            &convert,
-            &resample,
-            &capsfilter,
-            &volume,
-            &sink,
-        ])
-        .map_err(|error| PipelineError::Build(error.to_string()))?;
-    gst::Element::link_many([
-        &filesrc,
-        &parser,
-        &decoder,
-        &renderer,
-        &convert,
-        &resample,
-        &capsfilter,
-        &volume,
-        &sink,
-    ])
-    .map_err(|error| PipelineError::Build(error.to_string()))?;
+    chain.push(renderer);
+    chain.push(convert);
+    chain.push(resample);
+    chain.push(capsfilter);
+    chain.push(volume.clone());
+    chain.push(sink);
 
-    let _ = sink;
+    pipeline
+        .add_many(chain.iter())
+        .map_err(|error| PipelineError::Build(error.to_string()))?;
+    gst::Element::link_many(chain.iter())
+        .map_err(|error| PipelineError::Build(error.to_string()))?;
+
     Ok(PipelineParts {
         pipeline,
         parser,
@@ -448,24 +455,40 @@ pub fn scan_duration(
     cancel: &Arc<AtomicBool>,
 ) -> Option<gst::ClockTime> {
     let pipeline = gst::Pipeline::new();
-    let filesrc = element("filesrc").ok()?;
-    filesrc.set_property("location", path.to_string_lossy().to_string());
-    filesrc.set_property("blocksize", 8_388_608u32);
-    let parser_name = match codec {
-        Codec::Eac3 => "salsaeac3jocparse",
-        Codec::TrueHd => "salsatruehdparse",
+    let (filesrc, feeder) = match codec {
+        Codec::Damf => {
+            let source = element("salsadamfsrc").ok()?;
+            source.set_property("location", path.to_string_lossy().to_string());
+            (None, source)
+        }
+        Codec::Eac3 | Codec::TrueHd => {
+            let filesrc = element("filesrc").ok()?;
+            filesrc.set_property("location", path.to_string_lossy().to_string());
+            filesrc.set_property("blocksize", 8_388_608u32);
+            let parser_name = match codec {
+                Codec::Eac3 => "salsaeac3jocparse",
+                Codec::TrueHd => "salsatruehdparse",
+                Codec::Damf => unreachable!(),
+            };
+            let parser = element(parser_name).ok()?;
+            pipeline.add_many([&filesrc, &parser]).ok()?;
+            gst::Element::link_many([&filesrc, &parser]).ok()?;
+            (Some(filesrc), parser)
+        }
     };
-    let parser = element(parser_name).ok()?;
     let sink = element("fakesink").ok()?;
     sink.set_property("sync", false);
-    pipeline.add_many([&filesrc, &parser, &sink]).ok()?;
-    gst::Element::link_many([&filesrc, &parser, &sink]).ok()?;
+    pipeline.add(&sink).ok()?;
+    if filesrc.is_none() {
+        pipeline.add(&feeder).ok()?;
+    }
+    gst::Element::link_many([&feeder, &sink]).ok()?;
 
     let total_ns = Arc::new(AtomicU64::new(0));
     let last_end_ns = Arc::new(AtomicU64::new(0));
     let total = total_ns.clone();
     let last_end = last_end_ns.clone();
-    let pad = parser.static_pad("src")?;
+    let pad = feeder.static_pad("src")?;
     let probe_id = pad.add_probe(gst::PadProbeType::BUFFER, move |_, info| {
         if let Some(buffer) = info.buffer() {
             let duration = buffer.duration().map(|value| value.nseconds()).unwrap_or(0);
@@ -552,11 +575,15 @@ mod tests {
         let directory = std::env::temp_dir();
         let ec3 = directory.join("salsa-gui-detect.ec3");
         let mlp = directory.join("salsa-gui-detect.mlp");
+        let atmos = directory.join("salsa-gui-detect.atmos");
         std::fs::write(&ec3, [0x0B, 0x77, 0, 0]).unwrap();
         std::fs::write(&mlp, [0, 0, 0xF8, 0x72, 0x6F, 0xBA]).unwrap();
+        std::fs::write(&atmos, b"version: 0.5.1\npresentations: []\n").unwrap();
         assert_eq!(detect_codec(&ec3).unwrap(), Codec::Eac3);
         assert_eq!(detect_codec(&mlp).unwrap(), Codec::TrueHd);
+        assert_eq!(detect_codec(&atmos).unwrap(), Codec::Damf);
         let _ = std::fs::remove_file(ec3);
         let _ = std::fs::remove_file(mlp);
+        let _ = std::fs::remove_file(atmos);
     }
 }

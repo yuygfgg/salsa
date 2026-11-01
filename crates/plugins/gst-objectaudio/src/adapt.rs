@@ -494,7 +494,8 @@ impl BaseTransformImpl for ObjectAudioAdapt {
                     let mapping =
                         frame.map_to_ir(offset as u32, objectaudio_oamd::BedPolicy::Expand);
                     let payload =
-                        objectaudio_ir::SpatialPayload::new(rate, mapping.objects, mapping.events);
+                        objectaudio_ir::SpatialPayload::new(rate, mapping.objects, mapping.events)
+                            .with_snapshot_ramp(mapping.snapshot_ramp_samples);
                     objectaudio_meta::add_spatial(
                         buffer,
                         &payload,

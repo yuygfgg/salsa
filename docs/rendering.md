@@ -38,7 +38,9 @@ produces interleaved `f64` `[samples][layout channels]`:
 
 `bed_channel_q15` and `layout_bed_anchor` describe output speakers only; they
 are not an input bed path. Non-LFE beds are expanded by the decoder/source into
-fixed-position objects before reaching the renderer.
+fixed-position objects before reaching the renderer. This includes
+`salsadamfsrc`, which expands every non-LFE `bedInstances` channel before it
+emits the IR.
 
 ## Binaural renderer
 

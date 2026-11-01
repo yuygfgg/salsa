@@ -9,11 +9,13 @@ members = [
     "crates/libs/decoder/truehd/truehd-atmos",
     "crates/libs/gst/objectaudio-meta",
     "crates/libs/gst/objectaudio-decode",
+    "crates/libs/io/objectaudio-damf",
     "crates/libs/render/objectaudio-render",
     "crates/libs/render/hrtf",
     "crates/plugins/gst-eac3joc",
     "crates/plugins/gst-truehd",
     "crates/plugins/gst-objectaudio",
+    "crates/plugins/gst-damf",
 ]
 
 [workspace.package]
@@ -28,6 +30,7 @@ objectaudio-ir = { path = "crates/libs/audio/objectaudio-ir" }
 objectaudio-oamd = { path = "crates/libs/audio/objectaudio-oamd" }
 objectaudio-meta = { path = "crates/libs/gst/objectaudio-meta" }
 objectaudio-decode = { path = "crates/libs/gst/objectaudio-decode" }
+objectaudio-damf = { path = "crates/libs/io/objectaudio-damf" }
 objectaudio-render = { path = "crates/libs/render/objectaudio-render" }
 objectaudio-hrtf = { path = "crates/libs/render/hrtf" }
 eac3joc = { path = "crates/libs/decoder/eac3joc/eac3joc" }
@@ -44,6 +47,7 @@ num-complex = "0.4"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 postcard = { version = "1", features = ["alloc"] }
 bitstream-io = "4"
 sha2 = "0.10"

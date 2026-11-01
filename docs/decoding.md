@@ -103,6 +103,16 @@ and resynchronises on the next major sync. The decoder worker resets on
 The first buffers after a seek may not carry OAMD, in which case the renderers
 keep their default state until the next snapshot arrives.
 
+## OAMD ramp duration
+
+`objectaudio-oamd` parses the `ramp_duration` of every object-info block. The
+first block is the payload snapshot; later blocks become `ObjectEvent`s with
+`ramp_samples`. `OamdMapping.snapshot_ramp_samples` carries the first block's
+ramp, and the E-AC-3 and TrueHD decoders copy it into
+`SpatialPayload.snapshot_ramp_samples`. `salsaoar` and `salsahrtfrender` use
+that field for the snapshot transition, falling back to the first event's ramp
+(or zero) only for hand-built payloads that do not set it.
+
 ## Dynamic object count
 
 Object counts come from the negotiated caps or the decoded stream; no fixed

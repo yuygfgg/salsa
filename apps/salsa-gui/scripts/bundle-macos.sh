@@ -17,7 +17,7 @@ VERSION="0.1.0"
 
 echo "==> Building GStreamer plugins (release)"
 cargo build --release --manifest-path "$ROOT/Cargo.toml" \
-  -p gst-eac3joc -p gst-objectaudio -p gst-truehd
+  -p gst-damf -p gst-eac3joc -p gst-objectaudio -p gst-truehd
 
 echo "==> Building Salsa Studio (release)"
 cargo build --release --manifest-path "$ROOT/apps/salsa-gui/Cargo.toml"
@@ -30,6 +30,7 @@ cp "$ROOT/apps/salsa-gui/bundle/Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 for library in \
+  libgstsalsadamf.dylib \
   libgstsalsaeac3joc.dylib \
   libgstsalsatruehd.dylib \
   libgstsalsaobjectaudio.dylib

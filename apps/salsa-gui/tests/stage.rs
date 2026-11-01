@@ -48,6 +48,17 @@ fn render_snapshot(
     size: Vec2,
     snapshot: &VisualSnapshot,
 ) -> Vec<Shape> {
+    render_snapshot_with_labels(mode, layout, state, size, snapshot, true)
+}
+
+fn render_snapshot_with_labels(
+    mode: OutputMode,
+    layout: &str,
+    state: &mut stage::StageState,
+    size: Vec2,
+    snapshot: &VisualSnapshot,
+    labels_enabled: bool,
+) -> Vec<Shape> {
     let ctx = egui::Context::default();
     theme::configure(&ctx);
     let mut shapes = Vec::new();
@@ -60,7 +71,17 @@ fn render_snapshot(
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    stage::draw(ui, Some(snapshot), layout, &mode, state, true, false, false);
+                    stage::draw(
+                        ui,
+                        Some(snapshot),
+                        layout,
+                        &mode,
+                        state,
+                        true,
+                        labels_enabled,
+                        false,
+                        false,
+                    );
                 });
             },
         );
@@ -563,6 +584,7 @@ fn object_at_listener_position_can_still_be_selected() {
                         &OutputMode::Binaural,
                         &mut state,
                         true,
+                        true,
                         false,
                         false,
                     );
@@ -607,5 +629,104 @@ fn object_at_listener_position_can_still_be_selected() {
             .text
             .starts_with("ID 1 "),
         "Draw the tooltip above reference labels"
+    );
+}
+
+fn many_objects() -> VisualSnapshot {
+    let mut snapshot = snapshot();
+    snapshot.objects = (0..17)
+        .map(|index| {
+            let column = (index % 6) as f32;
+            let row = (index / 6) as f32;
+            ObjectVisual {
+                id: index as u32 + 1,
+                position: [
+                    -1.0 + column * 0.4,
+                    1.0 - row * 0.8,
+                    (index % 3) as f32 * 0.4,
+                ],
+                gain: 1.0,
+                enabled: true,
+                level: 0.8,
+                trail: vec![],
+            }
+        })
+        .collect();
+    snapshot
+}
+
+#[test]
+fn labels_toggle_controls_every_stage_label() {
+    let snapshot = many_objects();
+    let mut state = stage::StageState::default();
+    let size = Vec2::new(1100.0, 800.0);
+    let with_labels = render_snapshot_with_labels(
+        OutputMode::Speaker,
+        "9.1.6",
+        &mut state,
+        size,
+        &snapshot,
+        true,
+    );
+    let labels: Vec<_> = texts(&with_labels)
+        .iter()
+        .map(|text| text.galley.job.text.as_str())
+        .collect();
+    assert!(labels.contains(&"Listener"));
+    assert!(labels.iter().any(|label| label.starts_with("LFE")));
+    assert!(labels.iter().any(|label| label.starts_with("ID")));
+
+    let mut state = stage::StageState::default();
+    let without_labels = render_snapshot_with_labels(
+        OutputMode::Speaker,
+        "9.1.6",
+        &mut state,
+        size,
+        &snapshot,
+        false,
+    );
+    let labels: Vec<_> = texts(&without_labels)
+        .iter()
+        .map(|text| text.galley.job.text.as_str())
+        .collect();
+    assert!(!labels.contains(&"Listener"));
+    assert!(!labels.iter().any(|label| label.starts_with("LFE")));
+    assert!(!labels.iter().any(|label| label.starts_with("ID")));
+    for channel in STANDARD_LAYOUTS
+        .iter()
+        .find(|layout| layout.name == "9.1.6")
+        .unwrap()
+        .channels
+        .iter()
+        .filter(|channel| !channel.is_lfe())
+    {
+        assert!(
+            !labels.contains(&channel.short_name()),
+            "speaker label {} should be hidden",
+            channel.short_name()
+        );
+    }
+}
+
+#[test]
+fn labels_are_not_limited_to_sixteen_objects() {
+    let snapshot = many_objects();
+    let shapes = render_snapshot_with_labels(
+        OutputMode::Speaker,
+        "9.1.6",
+        &mut stage::StageState::default(),
+        Vec2::new(1100.0, 800.0),
+        &snapshot,
+        true,
+    );
+    let ids: Vec<_> = texts(&shapes)
+        .iter()
+        .map(|text| text.galley.job.text.as_str())
+        .filter(|label| label.starts_with("ID"))
+        .collect();
+    assert!(
+        ids.iter()
+            .any(|id| id[2..].parse::<u32>().is_ok_and(|id| id > 16)),
+        "expected an object label above ID16, got {ids:?}"
     );
 }
