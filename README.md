@@ -57,6 +57,76 @@ GST_PLUGIN_PATH=$PWD/target/release \
 > [!NOTE]
 > On macOS/Homebrew, if a fresh registry scan deadlocks in `gst-plugin-scanner`, prefix with `GST_REGISTRY_FORK=no`.
 
+## Salsa Studio (GUI preview player)
+
+`apps/salsa-gui/` is a small eframe/egui preview player built on the Salsa
+elements.
+
+Features:
+
+- opens raw E-AC-3 JOC and TrueHD Atmos streams (`.ec3`, `.eac3`, `.mlp`, `.thd`, `.truehd`);
+- Speaker virtualization (object-rendered 2.0–9.1.6 layouts) and Binaural
+  virtualization through a Rosella `.personalized_headphone` model;
+- flushing, accurate seek and keyboard transport (Space, `←`/`→`,
+  `Shift+←`/`→`, Home/End);
+- 3D object stage with height color, level-sized objects, motion trails,
+  speaker anchors, an LFE icon and a binaural head icon;
+- device/layout fallback warning with a one-click switch to Binaural;
+- recent files, persisted output/model/volume/window settings, diagnostics;
+
+Build and run:
+
+```sh
+cargo build --release -p gst-eac3joc -p gst-objectaudio -p gst-truehd
+cd apps/salsa-gui
+cargo run --release -- /path/to/stream.ec3
+```
+
+With no path argument, use `Cmd+O`, the Open button, or drag and drop. Playback
+starts paused. The app auto-detects the repo's `target/release` or
+`target/debug` plugin directory; otherwise set `GST_PLUGIN_PATH` before
+launching. On macOS it sets `GST_REGISTRY_FORK=no` automatically.
+
+Binaural playback needs a Rosella model; choose one in the Output panel. Raw
+TrueHD has no container duration, so the app scans the parser output in the
+background and shows `Scanning…` until the duration is known.
+
+### macOS app bundle
+
+```sh
+SALSA_MODEL=/path/to/model.personalized_headphone \
+  apps/salsa-gui/scripts/bundle-macos.sh
+```
+
+This produces `apps/salsa-gui/target/release/Salsa Studio.app`, copies the
+three Salsa plugin dylibs into `Contents/Resources/gstreamer-1.0`, optionally
+bundles the model, and ad-hoc signs the app. It still uses the host GStreamer
+and FFmpeg installations; it does not bundle a GStreamer runtime.
+
+### GUI tests
+
+The GUI is a separate workspace, so run its tests from `apps/salsa-gui`:
+
+```sh
+cd apps/salsa-gui
+cargo test
+```
+
+Real-stream playback tests are opt-in and use a headless sink:
+
+```sh
+cd apps/salsa-gui
+SALSA_TEST_EC3=/path/to/stream.ec3 \
+SALSA_TEST_TRUEHD=/path/to/master.mlp \
+SALSA_TEST_NONATMOS=/path/to/non-atmos.ec3 \
+SALSA_TEST_MODEL=/path/to/model.personalized_headphone \
+SALSA_SINK_OVERRIDE=fakesink SALSA_SINK_SYNC=true \
+GST_PLUGIN_PATH=$PWD/../../target/debug \
+cargo test --test playback
+```
+
+Without these variables the tests skip.
+
 ## Object Audio Format
 
 All Salsa elements exchange a unified raw object stream:
