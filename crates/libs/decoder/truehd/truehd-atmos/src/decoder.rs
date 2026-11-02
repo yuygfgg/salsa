@@ -18,13 +18,7 @@ pub const PCM_SCALE: f32 = 8_388_608.0;
 /// Maximum channels the object presentation can carry.
 pub const MAX_CHANNELS: usize = 16;
 
-/// The spatial payload and placement of the most recently decoded access unit.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SpatialSnapshot {
-    pub payload: SpatialPayload,
-    /// Snapshot offset inside the access unit, in samples.
-    pub offset: u32,
-}
+pub type SpatialSnapshot = SpatialPayload;
 
 /// TrueHD Atmos decoder: consumes parsed access units and emits the shared IR.
 pub struct TrueHdDecoder {
@@ -177,11 +171,7 @@ impl SpatialDecoder for TrueHdDecoder {
                 mapping
                     .events
                     .iter()
-                    .filter(|event| {
-                        saw_oamd
-                            && event.object <= object_count as u32
-                            && event.offset as usize <= frames
-                    })
+                    .filter(|event| saw_oamd && event.state.id <= object_count as u32)
                     .cloned()
                     .collect()
             })
@@ -190,20 +180,15 @@ impl SpatialDecoder for TrueHdDecoder {
         let pcm = PcmBuffer::from_planar(planes)?;
         let sample_rate = decoded.sampling_frequency;
         let mut spatial = SpatialFrame::new(sample_rate, frames, objects, events, pcm)?;
-        if saw_oamd && let Some(oamd) = &self.oamd {
-            spatial = spatial.with_snapshot_ramp(oamd.ramp_samples);
+        if saw_oamd && let Some(mapping) = &mapping {
+            spatial = spatial
+                .with_snapshot_ramp(mapping.snapshot_ramp_samples)
+                .with_snapshot_offset(i64::from(mapping.snapshot_offset));
+            self.snapshot = Some(spatial.to_payload());
+        } else {
+            spatial.snapshot = objectaudio_ir::Snapshot::Continue;
+            self.snapshot = None;
         }
-        let payload = spatial.to_payload();
-        self.snapshot = Some(SpatialSnapshot {
-            payload,
-            offset: if saw_oamd {
-                mapping
-                    .as_ref()
-                    .map_or(0, |mapping| mapping.snapshot_offset)
-            } else {
-                0
-            },
-        });
         Ok(spatial)
     }
 }

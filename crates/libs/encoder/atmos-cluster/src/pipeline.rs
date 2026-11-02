@@ -35,7 +35,7 @@ struct SourceReader {
     caf: CafReader,
     channels: usize,
     sources: Vec<Timeline>,
-    lfe_channel: Option<usize>,
+    lfe_source: Option<Timeline>,
     n_fft: usize,
     hop: usize,
     total_frames: u64,
@@ -52,7 +52,7 @@ impl SourceReader {
     fn new(
         caf: CafReader,
         sources: Vec<Timeline>,
-        lfe_channel: Option<usize>,
+        lfe_source: Option<Timeline>,
         n_fft: usize,
         hop: usize,
         total_frames: u64,
@@ -64,7 +64,7 @@ impl SourceReader {
             caf,
             channels,
             sources,
-            lfe_channel,
+            lfe_source,
             n_fft,
             hop,
             total_frames,
@@ -98,7 +98,12 @@ impl SourceReader {
             for (frame, row) in raw.chunks_exact_mut(self.channels).enumerate() {
                 let sample = read_start + frame as u64;
                 for source in &self.sources {
-                    row[source.channel] *= source.track.step_at(sample).gain;
+                    row[source.channel] *= source.track.effective_gain_at(sample);
+                }
+            }
+            if let Some(lfe) = &self.lfe_source {
+                for (frame, row) in raw.chunks_exact_mut(self.channels).enumerate() {
+                    row[lfe.channel] *= lfe.track.effective_gain_at(read_start + frame as u64);
                 }
             }
             let offset = (read_start as i64 - start) as usize * self.channels;
@@ -134,8 +139,8 @@ impl SourceReader {
             for (index, source) in self.sources.iter().enumerate() {
                 self.block[offset * n_sources + index] = f64::from(self.buf[src + source.channel]);
             }
-            if let Some(channel) = self.lfe_channel {
-                self.lfe[offset] = f64::from(self.buf[src + channel]);
+            if let Some(source) = &self.lfe_source {
+                self.lfe[offset] = f64::from(self.buf[src + source.channel]);
             }
         }
         Ok(length)
@@ -207,7 +212,7 @@ impl MetadataCollector {
             decorr: None,
             importance: Some(1.0),
             gain: Some(Gain::Db(0.0)),
-            ramp_length: Some(1536),
+            ramp_length: Some(0),
             trim_bypass: Some(false),
             dialog: None,
             music: None,
@@ -230,7 +235,7 @@ impl MetadataCollector {
     }
 
     fn push(&mut self, frame: usize, metadata: &crate::clustering::ClusterFrameMetadata) {
-        if frame == 0 && !metadata.zones.is_empty() {
+        if !metadata.zones.is_empty() {
             self.zones = metadata.zones.clone();
         }
         let sample_pos = (frame as u64) * self.hop as u64;
@@ -288,7 +293,7 @@ impl MetadataCollector {
                 decorr: Some(0),
                 importance: Some(state.importance as f32),
                 gain: Some(Gain::Db(0.0)),
-                ramp_length: Some(1536),
+                ramp_length: Some(0),
                 trim_bypass: Some(false),
                 dialog: Some(state.dialog as f32),
                 music: Some(state.music as f32),
@@ -310,12 +315,13 @@ impl MetadataCollector {
     }
 }
 
-fn unique_temp_dir(settings: &ClusterSettings) -> PathBuf {
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_nanos());
+fn create_workdir(settings: &ClusterSettings) -> Result<tempfile::TempDir> {
     let base = settings.workdir.clone().unwrap_or_else(std::env::temp_dir);
-    base.join(format!("cluster_atmos_{}_{}", std::process::id(), nonce))
+    std::fs::create_dir_all(&base).with_context(|| format!("creating {}", base.display()))?;
+    tempfile::Builder::new()
+        .prefix("cluster_atmos_")
+        .tempdir_in(&base)
+        .with_context(|| format!("creating workdir in {}", base.display()))
 }
 
 fn scan_peak(path: &Path, channels: usize) -> Result<f64> {
@@ -408,7 +414,7 @@ pub fn run_cluster(
         manifest.audio.display()
     );
 
-    let source_set = build_sources(&manifest, &metadata);
+    let source_set = build_sources(&manifest, &metadata)?;
     ensure!(!source_set.sources.is_empty(), "no object sources");
     let n_sources = source_set.n_sources();
     let n_clusters = settings.max_objects.min(n_sources);
@@ -451,23 +457,25 @@ pub fn run_cluster(
 
     let loudness = Loudness::new(sample_rate, settings.window_ms, settings.db_max)?;
     let n_fft = loudness.n_fft;
-    let mut renderer =
-        ClusterRenderer::new(sample_rate, settings, tracks.zones.clone(), fixed_mask);
+    let mut renderer = ClusterRenderer::new(
+        sample_rate,
+        settings,
+        tracks.zones[..n_sources].to_vec(),
+        fixed_mask,
+    );
     let mut collector =
         MetadataCollector::new(settings.hop, settings.metadata_interval_frames, n_clusters);
     let mut reader = SourceReader::new(
         caf,
         source_set.sources,
-        source_set.lfe_channel,
+        source_set.lfe,
         n_fft,
         settings.hop,
         total_frames,
     );
 
-    let temp_dir = unique_temp_dir(settings);
-    std::fs::create_dir_all(&temp_dir)
-        .with_context(|| format!("creating {}", temp_dir.display()))?;
-    let raw_path = temp_dir.join("clusters.f32");
+    let temp_dir = create_workdir(settings)?;
+    let raw_path = temp_dir.path().join("clusters.f32");
     let mut raw = BufWriter::new(
         File::create(&raw_path).with_context(|| format!("creating {}", raw_path.display()))?,
     );
@@ -514,6 +522,7 @@ pub fn run_cluster(
         };
         timing_vad += stamp.elapsed().as_secs_f64();
         let position_start = frame * n_sources;
+        renderer.set_zones(&tracks.zones[position_start..position_start + n_sources]);
         let features = FrameFeatures {
             positions: &tracks.positions[position_start..position_start + n_sources],
             active: &tracks.active[position_start..position_start + n_sources],
@@ -706,9 +715,7 @@ pub fn run_cluster(
     }
 
     if settings.keep_workdir {
-        println!("workdir kept: {}", temp_dir.display());
-    } else {
-        let _ = std::fs::remove_dir_all(&temp_dir);
+        println!("workdir kept: {}", temp_dir.keep().display());
     }
 
     Ok(ClusterResult {
@@ -732,14 +739,13 @@ mod tests {
     use objectaudio_damf::DamfSource;
 
     struct TestMaster {
-        dir: PathBuf,
+        dir: tempfile::TempDir,
         manifest: Manifest,
     }
 
     impl TestMaster {
         fn new(rate: u32, channels: &[Vec<f32>], has_lfe: bool, events: Vec<DamfEvent>) -> Self {
-            let dir = unique_temp_dir(&ClusterSettings::default());
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = create_workdir(&ClusterSettings::default()).unwrap();
             let beds: Vec<_> = has_lfe
                 .then(|| BedEntry {
                     id: 3,
@@ -753,7 +759,7 @@ mod tests {
                     description: None,
                 })
                 .collect();
-            let path = dir.join("source.atmos");
+            let path = dir.path().join("source.atmos");
             write_manifest(
                 &path,
                 &ManifestSpec {
@@ -794,37 +800,25 @@ mod tests {
                 &self.manifest,
                 &Metadata::load(&self.manifest.metadata).unwrap(),
             )
+            .unwrap()
         }
 
         fn reader(&self, n_fft: usize, hop: usize) -> SourceReader {
             let sources = self.sources();
             let caf = CafReader::open(&self.manifest.audio).unwrap();
             let frames = caf.total_frames().unwrap();
-            SourceReader::new(
-                caf,
-                sources.sources,
-                sources.lfe_channel,
-                n_fft,
-                hop,
-                frames,
-            )
+            SourceReader::new(caf, sources.sources, sources.lfe, n_fft, hop, frames)
         }
 
         fn cluster(&self, settings: &ClusterSettings) -> ClusterResult {
             run_cluster(
                 &self.manifest.path,
-                &self.dir,
+                self.dir.path(),
                 settings,
                 Some("clustered"),
                 0,
             )
             .unwrap()
-        }
-    }
-
-    impl Drop for TestMaster {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.dir);
         }
     }
 
@@ -1059,6 +1053,21 @@ mod tests {
             assert_eq!(
                 tracks.positions[sample / 384],
                 [x, 0.0, 0.0],
+                "sample {sample}"
+            );
+        }
+        let result = master.cluster(&ClusterSettings {
+            hop: 384,
+            metadata_interval_frames: 1,
+            ..ClusterSettings::default()
+        });
+        let mut roundtrip = DamfSource::open(&result.manifest).unwrap();
+        for sample in [3072, 6144, 7680, 9984] {
+            roundtrip.seek(sample).unwrap();
+            let actual = roundtrip.read_block(1).unwrap().unwrap().payload.objects[0].position[0];
+            let expected = tracks.positions[sample as usize / 384][0];
+            assert!(
+                (f64::from(actual) - expected).abs() < 1e-4,
                 "sample {sample}"
             );
         }

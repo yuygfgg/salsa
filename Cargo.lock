@@ -83,6 +83,7 @@ dependencies = [
  "rayon",
  "rubato",
  "rustfft",
+ "tempfile",
  "tract-onnx",
 ]
 
@@ -547,6 +548,8 @@ dependencies = [
  "hmac",
  "log",
  "objectaudio-damf",
+ "objectaudio-ir",
+ "objectaudio-oamd",
  "reac3e",
  "rustfft",
  "sha2",

@@ -1,206 +1,12 @@
-//! DAMF presentation -> salsa object-audio blocks.
-//!
-//! This follows the `PosTimeline` semantics in `dolby-atmos-encoder`:
-//!
-//! * `samplePos` is inherited by events that omit it;
-//! * non-LFE beds become fixed-position objects;
-//! * an event holds the previous position until its sample time, then ramps to
-//!   the new target over `rampLength` samples;
-//! * `gain`, `active` and `size` are held between keyframes;
-//! * the trajectory is sampled at block boundaries, and each changed object
-//!   gets one ramp to its end-of-block state. The encoder's OAMD path also
-//!   samples positions at frame end and writes a full-frame ramp, so this keeps
-//!   the renderer's full-snapshot event model consistent across objects.
-//!
-//! `rampLength` drives the position trajectory. The salsa event ramp is the
-//! source block length because the renderer events carry full object snapshots
-//! and all objects in a block must share one ramp.
-
-use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
-
-use objectaudio_ir::{ObjectEvent, ObjectState, SpatialPayload};
+//! DAMF PCM and resolved scene segments in salsa channel order.
 
 use crate::caf::CafReader;
 use crate::error::{DamfError, Result};
 use crate::manifest::Manifest;
-use crate::metadata::{Event as DamfEvent, Metadata};
-
-/// Object metadata sampled from a DAMF timeline. Gain is linear.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TrackState {
-    pub position: [f32; 3],
-    pub gain: f32,
-    pub enabled: bool,
-    pub size: Option<f32>,
-}
-
-impl TrackState {
-    fn object(self, id: u32) -> ObjectState {
-        let mut object = ObjectState::new(id, self.position);
-        object.gain = self.gain;
-        object.enabled = self.enabled;
-        object.size = self.size;
-        object
-    }
-}
-
-impl Default for TrackState {
-    fn default() -> Self {
-        Self {
-            position: [0.0, 0.0, 0.0],
-            gain: 1.0,
-            enabled: true,
-            size: Some(0.0),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct Keyframe {
-    sample: u64,
-    state: TrackState,
-    /// Forward ramp length in samples, starting at `sample`.
-    ramp: u32,
-}
-
-/// Stateless DAMF sampling shared by readers and audio processors.
-#[derive(Debug, Clone)]
-pub struct ObjectTrack {
-    keys: Vec<Keyframe>,
-    /// Position at each key's sample time; the previous key's ramp may still run.
-    starts: Vec<[f32; 3]>,
-}
-
-impl ObjectTrack {
-    /// A fixed bed position with unity gain.
-    pub fn fixed(position: [f32; 3]) -> Self {
-        Self {
-            keys: vec![Keyframe {
-                sample: 0,
-                state: TrackState {
-                    position,
-                    ..TrackState::default()
-                },
-                ramp: 0,
-            }],
-            starts: vec![position],
-        }
-    }
-
-    /// Build an object timeline from events in metadata order.
-    pub fn dynamic(events: &[&DamfEvent]) -> Self {
-        let mut state = TrackState::default();
-        let mut ramp = 0u32;
-        let mut by_sample: BTreeMap<u64, (TrackState, u32)> = BTreeMap::new();
-        for event in events {
-            if let Some(position) = event.position {
-                state.position = position;
-            }
-            if let Some(gain) = event.gain {
-                state.gain = gain.linear();
-            }
-            if let Some(active) = event.active {
-                state.enabled = active;
-            }
-            if let Some(size) = event.size {
-                state.size = Some(size);
-            }
-            if let Some(value) = event.ramp_length {
-                ramp = value;
-            }
-            // Last event at the same sample wins.
-            by_sample.insert(event.sample_pos, (state, ramp));
-        }
-
-        let mut keys: Vec<Keyframe> = by_sample
-            .into_iter()
-            .map(|(sample, (state, ramp))| Keyframe {
-                sample,
-                state,
-                ramp,
-            })
-            .collect();
-        if keys.is_empty() {
-            keys.push(Keyframe {
-                sample: 0,
-                state: TrackState::default(),
-                ramp: 0,
-            });
-        }
-        let starts = key_starts(&keys);
-        Self { keys, starts }
-    }
-
-    /// `dolby-atmos-encoder` `PosTimeline::at`: hold until the key sample, then
-    /// ramp forward over `rampLength`.
-    pub fn position_at(&self, sample: u64) -> [f32; 3] {
-        let index = self.keys.partition_point(|key| key.sample <= sample);
-        if index == 0 {
-            return self.keys[0].state.position;
-        }
-        let key_index = index - 1;
-        let key = &self.keys[key_index];
-        let start = self.starts[key_index];
-        if key.ramp == 0 {
-            return key.state.position;
-        }
-        let fraction =
-            ((sample.saturating_sub(key.sample)) as f64 / f64::from(key.ramp)).clamp(0.0, 1.0);
-        [
-            lerp(start[0], key.state.position[0], fraction),
-            lerp(start[1], key.state.position[1], fraction),
-            lerp(start[2], key.state.position[2], fraction),
-        ]
-    }
-
-    /// Values that change at a keyframe and then hold until the next keyframe.
-    pub fn step_at(&self, sample: u64) -> &TrackState {
-        let index = self
-            .keys
-            .partition_point(|key| key.sample <= sample)
-            .saturating_sub(1)
-            .min(self.keys.len() - 1);
-        &self.keys[index].state
-    }
-
-    /// Sample the position ramp and the held gain, activity, and size.
-    pub fn state_at(&self, sample: u64) -> TrackState {
-        let held = self.step_at(sample);
-        TrackState {
-            position: self.position_at(sample),
-            ..*held
-        }
-    }
-}
-
-fn key_starts(keys: &[Keyframe]) -> Vec<[f32; 3]> {
-    let mut starts = Vec::with_capacity(keys.len());
-    for (index, key) in keys.iter().enumerate() {
-        if index == 0 {
-            starts.push(key.state.position);
-            continue;
-        }
-        let previous = &keys[index - 1];
-        let fraction = if previous.ramp == 0 {
-            1.0
-        } else {
-            (key.sample.saturating_sub(previous.sample) as f64 / f64::from(previous.ramp))
-                .clamp(0.0, 1.0)
-        };
-        let start = starts[index - 1];
-        starts.push([
-            lerp(start[0], previous.state.position[0], fraction),
-            lerp(start[1], previous.state.position[1], fraction),
-            lerp(start[2], previous.state.position[2], fraction),
-        ]);
-    }
-    starts
-}
-
-fn lerp(lower: f32, upper: f32, fraction: f64) -> f32 {
-    (f64::from(lower) + (f64::from(upper) - f64::from(lower)) * fraction) as f32
-}
+use crate::metadata::Metadata;
+use crate::scene::{Consumer, DamfScene, ObjectTrack};
+use objectaudio_ir::{ObjectState, SpatialPayload};
+use std::path::Path;
 
 /// One source object after the manifest's bed/object layout has been flattened.
 #[derive(Debug, Clone, PartialEq)]
@@ -246,6 +52,7 @@ pub struct DamfSource {
     info: DamfInfo,
     tracks: Vec<ObjectTrack>,
     next_sample: u64,
+    lfe_track: Option<ObjectTrack>,
 }
 
 impl DamfSource {
@@ -273,66 +80,29 @@ impl DamfSource {
             });
         }
 
-        let mut by_id: HashMap<i64, Vec<&DamfEvent>> = HashMap::new();
-        for event in &metadata.events {
-            by_id.entry(event.id).or_default().push(event);
-        }
-
-        let mut objects = Vec::new();
-        let mut tracks = Vec::new();
-        let mut lfe_channel = None;
-
-        for (channel, bed) in manifest.beds.iter().enumerate() {
-            if bed.name.eq_ignore_ascii_case("LFE") {
-                if lfe_channel.is_none() {
-                    lfe_channel = Some(channel);
-                } else {
-                    warnings.push(format!(
-                        "additional LFE bed id {} on channel {channel} is ignored",
-                        bed.id
-                    ));
-                }
-                continue;
-            }
-            let position = match bed_position(&bed.name) {
-                Some(position) => position,
-                None => {
-                    warnings.push(format!(
-                        "unknown bed channel {:?}; using a centre fixed position",
-                        bed.name
-                    ));
-                    [0.0, 0.0, 0.0]
-                }
-            };
-            objects.push(DamfObjectInfo {
-                id: objects.len() as u32 + 1,
-                damf_id: bed.id,
-                source_channel: channel,
-                name: bed.name.clone(),
-                fixed: true,
-                position,
-            });
-            tracks.push(ObjectTrack::fixed(position));
-        }
-
-        for (index, object) in manifest.objects.iter().enumerate() {
-            let source_channel = bed_count + index;
-            let events = by_id.get(&object.id).map(Vec::as_slice).unwrap_or(&[]);
-            let track = ObjectTrack::dynamic(events);
-            let position = track.state_at(0).position;
-            objects.push(DamfObjectInfo {
-                id: objects.len() as u32 + 1,
-                damf_id: object.id,
-                source_channel,
-                name: object
-                    .description
-                    .clone()
-                    .unwrap_or_else(|| format!("object {}", object.id)),
-                fixed: false,
-                position,
-            });
-            tracks.push(track);
-        }
+        let scene = DamfScene::resolve(&manifest, &metadata)?;
+        warnings.extend(scene.warnings.iter().cloned());
+        warnings.extend(scene.report(Consumer::Render).approximations);
+        let lfe_channel = scene.lfe.as_ref().map(|object| object.channel);
+        let lfe_track = scene.lfe.map(|object| object.track);
+        let objects = scene
+            .objects
+            .iter()
+            .enumerate()
+            .map(|(index, object)| DamfObjectInfo {
+                id: index as u32 + 1,
+                damf_id: object.obj_id,
+                source_channel: object.channel,
+                name: object.name.clone(),
+                fixed: object.is_fixed(),
+                position: object.track.position_at(0),
+            })
+            .collect::<Vec<_>>();
+        let tracks = scene
+            .objects
+            .into_iter()
+            .map(|object| object.track)
+            .collect();
 
         if lfe_channel.is_none() {
             warnings.push("no LFE bed found; a silent LFE channel will be emitted".to_string());
@@ -353,6 +123,7 @@ impl DamfSource {
             info,
             tracks,
             next_sample: 0,
+            lfe_track,
         })
     }
 
@@ -401,14 +172,17 @@ impl DamfSource {
         }
 
         let start = self.next_sample;
-        let end = start + frames as u64;
 
         let mut pcm = vec![0.0f32; frames * self.info.output_channels];
         for frame in 0..frames {
             let source_base = frame * self.info.source_channels;
             let output_base = frame * self.info.output_channels;
             if let Some(lfe) = self.info.lfe_channel {
-                pcm[output_base] = raw[source_base + lfe];
+                pcm[output_base] = raw[source_base + lfe]
+                    * self
+                        .lfe_track
+                        .as_ref()
+                        .map_or(1.0, |track| track.effective_gain_at(start + frame as u64));
             }
             for (index, object) in self.info.objects.iter().enumerate() {
                 pcm[output_base + 1 + index] = raw[source_base + object.source_channel];
@@ -419,29 +193,20 @@ impl DamfSource {
             .tracks
             .iter()
             .enumerate()
-            .map(|(index, track)| track.state_at(start).object(index as u32 + 1))
+            .map(|(index, track)| ObjectState {
+                id: index as u32 + 1,
+                ..track.state_at(start)
+            })
             .collect();
-
-        // The renderer treats every event as a full object snapshot, so all
-        // objects in a buffer must share one ramp. Sample the encoder
-        // trajectory at the buffer boundaries and ramp from start to end.
-        let mut events = Vec::new();
-        for (index, track) in self.tracks.iter().enumerate() {
-            let object = index as u32 + 1;
-            let begin = track.state_at(start);
-            let finish = track.state_at(end);
-            if begin != finish {
-                events.push(ObjectEvent {
-                    offset: 0,
-                    ramp_samples: u32::try_from(frames).unwrap_or(u32::MAX),
-                    object,
-                    state: finish.object(object),
-                });
-            }
-        }
-
+        let mut events = self
+            .tracks
+            .iter()
+            .enumerate()
+            .flat_map(|(index, track)| track.events(start, frames, index as u32 + 1))
+            .collect::<Vec<_>>();
+        events.sort_by_key(|event| event.offset);
         let payload = SpatialPayload::new(self.info.sample_rate, objects, events);
-        self.next_sample = end;
+        self.next_sample = start + frames as u64;
 
         Ok(Some(DamfBlock {
             sample_rate: self.info.sample_rate,
@@ -540,10 +305,10 @@ mod tests {
     }
 
     #[test]
-    fn block_sampling_uses_encoder_timeline() {
+    fn block_reads_preserve_steps_at_event_times() {
         let dir = unique_dir("semantics");
         let manifest = write_manifest(&dir, "LFE", &[10]);
-        // LFE + one object, 3 channels, 10 frames.
+        // LFE + one object, 2 channels, 10 frames.
         let mut samples = Vec::new();
         for frame in 0..10 {
             samples.extend_from_slice(&[0.0, frame as f32 / 10.0]);
@@ -580,21 +345,14 @@ events:
         assert_eq!(first.start_sample, 0);
         assert_eq!(first.frames, 4);
         assert_eq!(first.payload.objects[0].position, [-1.0, 0.0, 0.0]);
-        // Ramp from x=-1 at sample 0 to x=1 at sample 4; gain reaches -6 dB at 4.
-        assert_eq!(first.payload.events.len(), 1);
-        assert_eq!(first.payload.events[0].offset, 0);
-        assert_eq!(first.payload.events[0].ramp_samples, 4);
-        assert_eq!(first.payload.events[0].state.position, [1.0, 0.0, 0.0]);
-        assert!((first.payload.events[0].state.gain - 0.501187).abs() < 1e-5);
+        assert!(first.payload.events.is_empty());
 
         let second = source.read_block(4).unwrap().unwrap();
         assert_eq!(second.start_sample, 4);
         // The keyframe at sample 4 steps to x=1 and -6 dB.
         assert_eq!(second.payload.objects[0].position, [1.0, 0.0, 0.0]);
         assert!((second.payload.objects[0].gain - 0.501187).abs() < 1e-5);
-        assert_eq!(second.payload.events.len(), 1);
-        assert_eq!(second.payload.events[0].ramp_samples, 4);
-        assert_eq!(second.payload.events[0].state.position, [0.0, 1.0, 0.0]);
+        assert!(second.payload.events.is_empty());
 
         let third = source.read_block(4).unwrap().unwrap();
         assert_eq!(third.start_sample, 8);
@@ -680,13 +438,24 @@ events:
         assert!(first.payload.events.is_empty());
 
         // The 8-sample ramp runs from sample 2 to sample 10. Each 2-sample
-        // block targets the encoder timeline's end-of-block position.
+        // block keeps the original target and the remaining ramp duration.
         for (index, expected) in [-0.5f32, 0.0, 0.5, 1.0].into_iter().enumerate() {
             let block = source.read_block(2).unwrap().unwrap();
             assert_eq!(block.start_sample, 2 + index as u64 * 2);
             assert_eq!(block.payload.events.len(), 1);
-            assert_eq!(block.payload.events[0].ramp_samples, 2);
-            assert!((block.payload.events[0].state.position[0] - expected).abs() < 1e-6);
+            assert_eq!(
+                block.payload.events[0].transition.samples(),
+                8 - index as u32 * 2
+            );
+            let scene = objectaudio_ir::SceneTimeline::from_payload(
+                &block.payload,
+                block.start_sample as i64,
+            )
+            .unwrap();
+            assert!(
+                (scene.state_at(0, block.start_sample as i64 + 2).position[0] - expected).abs()
+                    < 1e-5
+            );
         }
         assert!(source.read_block(2).unwrap().is_none());
 

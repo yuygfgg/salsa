@@ -1,14 +1,12 @@
 //! `salsaobjectaudioadapt`: bridge between salsa `SpatialPayload` metadata and
 //! Dolby's OAMD `DlbObjectAudioMeta`.
 //!
-//! OAMD encoding only happens here. The core decoders and renderers exchange
-//! the versioned salsa `SpatialPayload`; this element is the only place that
-//! produces or consumes Dolby OAMD metadata.
+//! GStreamer interop converts metadata here through `objectaudio-oamd`.
+//! Renderers exchange only the versioned salsa `SpatialPayload`.
 
 use std::sync::{Mutex, OnceLock};
 
 use gst::glib;
-use gst::prelude::*;
 use gstreamer as gst;
 use gstreamer_audio as gst_audio;
 use gstreamer_base as gst_base;
@@ -59,6 +57,9 @@ struct State {
     rate: u32,
     in_format: Option<gst_audio::AudioFormat>,
     out_format: Option<gst_audio::AudioFormat>,
+    scene: Option<objectaudio_ir::SceneTimeline>,
+    received: i64,
+    bpf: usize,
 }
 
 impl Default for State {
@@ -71,6 +72,9 @@ impl Default for State {
             rate: 48_000,
             in_format: None,
             out_format: None,
+            scene: None,
+            received: 0,
+            bpf: 0,
         }
     }
 }
@@ -335,6 +339,8 @@ impl BaseTransformImpl for ObjectAudioAdapt {
         let mut state = self.state.lock().unwrap();
         state.in_format = None;
         state.out_format = None;
+        state.scene = None;
+        state.received = 0;
         Ok(())
     }
 
@@ -342,7 +348,21 @@ impl BaseTransformImpl for ObjectAudioAdapt {
         let mut state = self.state.lock().unwrap();
         state.in_format = None;
         state.out_format = None;
+        state.scene = None;
+        state.received = 0;
         Ok(())
+    }
+
+    fn sink_event(&self, event: gst::Event) -> bool {
+        if matches!(
+            event.view(),
+            gst::EventView::FlushStop(_) | gst::EventView::Segment(_)
+        ) {
+            let mut state = self.state.lock().unwrap();
+            state.scene = None;
+            state.received = 0;
+        }
+        self.parent_sink_event(event)
     }
 
     fn transform_caps(
@@ -407,6 +427,9 @@ impl BaseTransformImpl for ObjectAudioAdapt {
         let mut state = self.state.lock().unwrap();
         state.resolved = resolved;
         state.rate = in_info.rate();
+        state.bpf = in_info.bpf() as usize;
+        state.scene = None;
+        state.received = 0;
         state.in_format = Some(in_format);
         state.out_format = Some(out_format);
         Ok(())
@@ -440,9 +463,6 @@ impl BaseTransformImpl for ObjectAudioAdapt {
                     return Ok(gst::FlowSuccess::Ok);
                 }
                 let snapshots = objectaudio_meta::iter_spatial(buffer);
-                if snapshots.is_empty() {
-                    return Ok(gst::FlowSuccess::Ok);
-                }
                 if !objectaudio_meta::dlb_available() {
                     gst::error!(
                         gst::CAT_RUST,
@@ -453,24 +473,59 @@ impl BaseTransformImpl for ObjectAudioAdapt {
                 if !objectaudio_meta::dlb_payloads(buffer).is_empty() {
                     return Ok(gst::FlowSuccess::Ok);
                 }
+                let mut state = self.state.lock().unwrap();
+                if buffer.flags().contains(gst::BufferFlags::DISCONT) {
+                    state.scene = None;
+                    state.received = 0;
+                }
+                let start = state.received;
+                let bpf = state.bpf;
+                if bpf == 0 {
+                    return Err(gst::FlowError::NotNegotiated);
+                }
+                let frames = buffer.size() / bpf;
                 for snapshot in snapshots {
-                    let bytes = objectaudio_oamd::encode(&snapshot.payload).map_err(|error| {
-                        gst::error!(
-                            gst::CAT_RUST,
-                            "cannot encode SpatialPayload as OAMD: {error}"
-                        );
+                    snapshot
+                        .payload
+                        .validate_layout(rate, bpf / 4)
+                        .map_err(|error| {
+                            gst::error!(gst::CAT_RUST, "invalid adapter layout: {error}");
+                            gst::FlowError::Error
+                        })?;
+                    let result = match &mut state.scene {
+                        Some(scene) => scene.submit(&snapshot.payload, start),
+                        None => {
+                            objectaudio_ir::SceneTimeline::from_payload(&snapshot.payload, start)
+                                .map(|scene| state.scene = Some(scene))
+                        }
+                    };
+                    result.map_err(|error| {
+                        gst::error!(gst::CAT_RUST, "invalid adapter metadata: {error}");
                         gst::FlowError::Error
                     })?;
-                    objectaudio_meta::add_dlb_payload(
-                        buffer,
-                        &bytes,
-                        snapshot.offset,
-                        snapshot.bpf,
-                    )
-                    .map_err(|error| {
-                        gst::error!(gst::CAT_RUST, "failed to add DlbObjectAudioMeta: {error}");
-                        gst::FlowError::Error
-                    })?;
+                }
+                state.received += frames as i64;
+                if let Some(scene) = &mut state.scene {
+                    // OAMD offsets fit within a codec frame. Splitting here is
+                    // a format decision; scene slicing owns all time semantics.
+                    for offset in (0..frames).step_by(1536) {
+                        let count = (frames - offset).min(1536);
+                        let payload = scene.payload(start + offset as i64, count);
+                        let bytes = objectaudio_oamd::encode(&payload).map_err(|error| {
+                            gst::error!(gst::CAT_RUST, "cannot encode scene as OAMD: {error}");
+                            gst::FlowError::Error
+                        })?;
+                        objectaudio_meta::add_dlb_payload(buffer, &bytes, offset, bpf).map_err(
+                            |error| {
+                                gst::error!(
+                                    gst::CAT_RUST,
+                                    "failed to add DlbObjectAudioMeta: {error}"
+                                );
+                                gst::FlowError::Error
+                            },
+                        )?;
+                    }
+                    scene.discard_before(start + frames as i64);
                 }
                 Ok(gst::FlowSuccess::Ok)
             }
@@ -495,14 +550,9 @@ impl BaseTransformImpl for ObjectAudioAdapt {
                         frame.map_to_ir(offset as u32, objectaudio_oamd::BedPolicy::Expand);
                     let payload =
                         objectaudio_ir::SpatialPayload::new(rate, mapping.objects, mapping.events)
-                            .with_snapshot_ramp(mapping.snapshot_ramp_samples);
-                    objectaudio_meta::add_spatial(
-                        buffer,
-                        &payload,
-                        mapping.snapshot_offset as usize,
-                        bpf,
-                    )
-                    .map_err(|error| {
+                            .with_snapshot_ramp(mapping.snapshot_ramp_samples)
+                            .with_snapshot_offset(i64::from(mapping.snapshot_offset));
+                    objectaudio_meta::add_spatial(buffer, &payload, bpf).map_err(|error| {
                         gst::error!(gst::CAT_RUST, "cannot add SpatialPayload: {error}");
                         gst::FlowError::Error
                     })?;

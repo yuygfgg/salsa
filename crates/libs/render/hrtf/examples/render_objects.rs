@@ -76,7 +76,10 @@ fn main() {
     for index in 0..count {
         let frame = &parsed[index];
         let spatial = frame.oamd.as_ref().map(|oamd| {
-            oamd.to_spatial_payload(frame.sample_rate, objectaudio_oamd::BedPolicy::Expand)
+            let mut payload =
+                oamd.to_spatial_payload(frame.sample_rate, objectaudio_oamd::BedPolicy::Expand);
+            payload.rebase(i64::from(frame.oamd_sample_offset));
+            payload
         });
         let base = index * frame_bytes;
         let mut planar = vec![0.0f32; FRAME_SAMPLES * source_channels];
@@ -88,11 +91,7 @@ fn main() {
             }
         }
         renderer
-            .submit_frame(
-                &planar,
-                spatial.as_ref(),
-                i64::from(frame.oamd_sample_offset),
-            )
+            .submit_frame(&planar, spatial.as_ref())
             .expect("submit");
         stereo.extend(renderer.take_output());
     }

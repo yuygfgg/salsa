@@ -30,13 +30,13 @@ DAMF master
 
 | Crate | Role | GStreamer |
 |---|---|---|
-| `objectaudio-ir` | `SpatialFrame`, `SpatialPayload`, object state/events, LFE+object channel map, planar PCM, parser/decoder traits | no |
+| `objectaudio-ir` | `SceneTimeline`, `SpatialFrame`, `SpatialPayload`, object state/events, LFE+object channel map, planar PCM, parser/decoder traits | no |
 | `objectaudio-oamd` | single OAMD parser/writer; bed types live here, not in the IR | no |
 | `eac3joc` | E-AC-3 framing, EMDF containers, OAMD/ID11 and JOC/ID14 parsing | no |
 | `eac3joc-core-decoder` | E-AC-3 core PCM through libavcodec with DRC disabled | no |
 | `eac3joc-dsp` | QMF analysis, object matrix, synthesis and LFE handling | no |
 | `truehd-atmos` | TrueHD Atmos parse/decode adapter producing the same IR | no |
-| `objectaudio-damf` | DAMF `.atmos`/CAF/metadata reader; bed expansion and keyframe-to-IR mapping | no |
+| `objectaudio-damf` | DAMF parser, inherited metadata resolver, shared channel layout, and CAF I/O | no |
 | `objectaudio-meta` | `ObjectAudioMeta` GstMeta (`SpatialPayload`), caps feature, C ABI and Dolby compatibility | yes |
 | `objectaudio-render` | speaker layout tables, speaker anchors and the object-to-speaker renderer | no |
 | `objectaudio-hrtf` | personalized-headphone model, filterbanks, room model, binaural renderer | no |
@@ -62,39 +62,72 @@ building the frame. The renderer only sees `LFE + N` objects.
 Decoder latency stays with the decoder and is expressed through buffer PTS and
 event offsets. The frame itself always describes a contiguous block of audio.
 
-`SpatialPayload` is the metadata-only snapshot carried by `ObjectAudioMeta`:
+`SpatialPayload` version 2 carries metadata without PCM:
 
-- `version` (currently 1), `sample_rate`;
-- `objects`: the state at the payload's sample offset;
-- `events`: changes whose offsets are relative to the buffer start;
-- `snapshot_ramp_samples`: optional ramp for the snapshot transition, used by
-  OAMD's first object-info block.
+- `objects` declares channel-ordered object states or targets.
+- `snapshot` distinguishes an evaluated `State`, a transition `Target`, and
+  `Continue` with no new state update.
+- `snapshot_offset` and event offsets are signed samples relative to the same
+  PCM buffer start. A snapshot offset is never added to event offsets.
+- Each event has one object identifier, in its target state. `Transition`
+  selects a step, a position ramp, or a ramp of all continuous IR properties.
+  Discrete properties change at the event start.
 
-Serialization is `postcard`; unknown versions are rejected. PCM stays in the
-GStreamer buffer.
+`SceneTimeline` owns time interpretation. It resolves ramp origins, overlapping
+updates, and repeated timestamps. HRTF, GUI, speaker rendering, and buffer
+adapters use this timeline. Sources export actual event boundaries and unfinished
+ramps instead of replacing each input block with one ramp.
 
-## Metadata
+DAMF patches are resolved once by `DamfScene`. The resolver owns inheritance,
+defaults, bed expansion, and the source channel map. Encoding and clustering
+consume resolved objects. `ConversionReport` records unsupported properties at
+format and consumer boundaries. Complete field destructuring makes a new
+metadata property an explicit decision at these boundaries.
 
-`ObjectAudioMeta` carries an encoded `SpatialPayload`:
+The speaker adapter samples positions on its 32-sample DSP grid and interpolates
+speaker gains within each block. HRTF uses its own control grid and filterbank.
+Both apply source gain and activity before mixing. These renderer approximations
+are separate from authored timeline semantics. Clustering emits evaluated states
+at its analysis hop; it does not add another ramp to those states.
 
-- `offset` is the sample position of the object snapshot;
-- `bpf` is bytes per frame (`bytes_per_sample * channels`);
-- payloads are copied on add and freed with the meta;
-- a buffer may carry several instances;
-- `GST_META_TRANSFORM_COPY` recomputes `offset` and shifts/clips events to the
-  copied region.
+## Metadata and buffer operations
 
-The safe API is `add_spatial` / `add_spatial_bytes` / `get_spatial` / `iter_spatial`
-plus the caps helpers. `objectaudio-meta` never registers the Dolby meta.
-`DlbObjectAudioMeta` is read and written only by `salsaobjectaudioadapt`; the
-core decoders and renderers never consume it.
+`ObjectAudioMeta` carries a postcard-encoded `SpatialPayload`. Version 1 payloads
+are rejected. Rebuild the workspace plugins and GUI together after this change.
+PCM stays in the GStreamer buffer.
+
+- `bpf` is bytes per audio frame.
+- The encoded payload owns timestamps. The C ABI `offset` field mirrors the
+  nonnegative snapshot offset; C callers must supply a matching value.
+- A buffer can carry several metadata attachments. Consumers submit all of them.
+  The GUI queues them as one buffer update and smooths PCM levels once.
+- `SpatialPayload::rebase` moves both timestamp kinds to another buffer origin.
+- `SpatialPayload::slice` retains the causal prefix at negative offsets. It
+  does not shorten ramps or change their targets. Target snapshots still need
+  stream history; a slice cannot recover history absent from its input.
+- `SceneTimeline::payload` exports an evaluated state and the remaining events
+  for a range. Seek and streaming adapters use the same operation.
+
+Audio reblocking keeps an absolute sample counter. Metadata is submitted at the
+input buffer's sample position before PCM is consumed. Renderer reset, flush,
+and discontinuity boundaries also reset this clock and its scene history.
+
+The safe attachment API takes the payload and `bpf`; there is no second snapshot
+offset argument. `objectaudio-meta` does not register the Dolby meta.
 
 ## OAMD boundary
 
 `objectaudio-oamd` is the single OAMD implementation: parser and writer share
 the bed tables, object limits and field semantics. Codec decoders use it on
 their input wire format; `salsaobjectaudioadapt` uses it in both directions.
-No library above `objectaudio-oamd` imports the upstream `oamd` crate directly.
+The E-AC-3 encoder also uses this writer, with a profile that adds its trim
+metadata. Writers reject excess blocks, out-of-range event times, and conflicting
+ramp lengths instead of silently truncating or merging them. Position and gain
+quantization remain part of the OAMD format.
+
+Verification focuses on semantic regressions: hold/ramp timing, amplitude,
+buffer slicing, and parseable output. It does not require bit-exact renderer or
+encoder output.
 
 ## Elements
 

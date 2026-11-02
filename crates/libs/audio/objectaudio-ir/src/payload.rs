@@ -1,9 +1,19 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{IrError, ObjectEvent, ObjectState, PayloadError};
+use crate::{IrError, ObjectEvent, ObjectState, PayloadError, Transition};
 
 /// Current `SpatialPayload` wire version.
-pub const PAYLOAD_VERSION: u16 = 1;
+pub const PAYLOAD_VERSION: u16 = 2;
+
+/// A resolved state and a new transition target are different operations.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Snapshot {
+    #[default]
+    State,
+    /// Keep the previous stream state; `objects` only declares the layout.
+    Continue,
+    Target(Transition),
+}
 
 /// The version of [`SpatialPayload`] in this build.
 pub fn payload_version() -> u16 {
@@ -13,21 +23,19 @@ pub fn payload_version() -> u16 {
 /// Metadata carried by `ObjectAudioMeta`.
 ///
 /// The payload is metadata only: PCM stays in the GStreamer buffer. `objects`
-/// is the snapshot at the payload's sample offset; `events` carry state changes
+/// is the snapshot at `snapshot_offset`; `events` carry state changes
 /// whose offsets are relative to the start of the buffer.
 ///
-/// `snapshot_ramp_samples` is the ramp applied when the renderer moves from
-/// the previous state to `objects`. OAMD carries this on its first object-info
-/// block; when it is `None` renderers fall back to the first event's ramp (or
-/// zero) for compatibility with hand-built payloads.
+/// A state snapshot is already evaluated. A target snapshot starts a transition
+/// from stream history. No event supplies an implicit snapshot ramp.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpatialPayload {
     pub version: u16,
     pub sample_rate: u32,
     pub objects: Vec<ObjectState>,
     pub events: Vec<ObjectEvent>,
-    #[serde(default)]
-    pub snapshot_ramp_samples: Option<u32>,
+    pub snapshot: Snapshot,
+    pub snapshot_offset: i64,
 }
 
 impl SpatialPayload {
@@ -39,15 +47,43 @@ impl SpatialPayload {
             sample_rate,
             objects,
             events,
-            snapshot_ramp_samples: None,
+            snapshot: Snapshot::State,
+            snapshot_offset: 0,
         }
     }
 
-    /// Set the ramp used for the snapshot state. `Some(0)` explicitly means
-    /// an immediate snapshot, overriding the event fallback in renderers.
+    /// Mark the snapshot as an OAMD-style transition target.
     pub fn with_snapshot_ramp(mut self, ramp_samples: u32) -> Self {
-        self.snapshot_ramp_samples = Some(ramp_samples);
+        self.snapshot = Snapshot::Target(Transition::All(ramp_samples));
         self
+    }
+
+    pub fn with_snapshot_offset(mut self, offset: i64) -> Self {
+        self.snapshot_offset = offset;
+        self
+    }
+
+    /// Move this payload to another buffer origin. Both timestamp kinds move
+    /// exactly once; a snapshot offset never changes event offsets.
+    pub fn rebase(&mut self, samples: i64) {
+        self.snapshot_offset += samples;
+        for event in &mut self.events {
+            event.offset += samples;
+        }
+    }
+
+    /// Keep the causal prefix and all events before the slice end. Retaining
+    /// negative timestamps preserves in-progress ramps without changing their
+    /// targets or durations. Target snapshots still require stream history.
+    pub fn slice(&self, start: i64, frames: usize) -> Option<Self> {
+        let end = start + frames as i64;
+        if self.snapshot_offset >= end && self.events.iter().all(|event| event.offset >= end) {
+            return None;
+        }
+        let mut result = self.clone();
+        result.events.retain(|event| event.offset < end);
+        result.rebase(-start);
+        Some(result)
     }
 
     /// Validate the payload before it reaches a renderer.
@@ -61,11 +97,83 @@ impl SpatialPayload {
         if self.sample_rate == 0 {
             return Err(IrError::ZeroSampleRate);
         }
+        for (index, object) in self.objects.iter().enumerate() {
+            let expected = index as u32 + 1;
+            if object.id != expected {
+                return Err(IrError::ObjectIdNotContiguous {
+                    index,
+                    id: object.id,
+                    expected,
+                });
+            }
+        }
+        for event in &self.events {
+            if event.state.id == 0 || event.state.id as usize > self.objects.len() {
+                return Err(IrError::UnknownEventObject {
+                    object: event.state.id,
+                });
+            }
+        }
+        for state in self
+            .objects
+            .iter()
+            .chain(self.events.iter().map(|event| &event.state))
+        {
+            let ObjectState {
+                id,
+                position,
+                gain,
+                enabled: _,
+                size,
+                spread,
+            } = *state;
+            for (property, valid) in [
+                ("position", position.iter().all(|value| value.is_finite())),
+                ("gain", gain.is_finite() && gain >= 0.0),
+                (
+                    "size",
+                    size.is_none_or(|value| value.is_finite() && value >= 0.0),
+                ),
+                (
+                    "spread",
+                    spread.is_none_or(|value| value.is_finite() && value >= 0.0),
+                ),
+            ] {
+                if !valid {
+                    return Err(IrError::InvalidObjectProperty {
+                        object: id,
+                        property,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate metadata against the PCM format at a consumer boundary.
+    pub fn validate_layout(&self, sample_rate: u32, channels: usize) -> Result<(), IrError> {
+        self.validate()?;
+        if self.sample_rate != sample_rate {
+            return Err(IrError::SampleRateMismatch {
+                expected: sample_rate,
+                actual: self.sample_rate,
+            });
+        }
+        let expected = self.objects.len() + 1;
+        if channels != expected {
+            return Err(IrError::ChannelObjectCountMismatch {
+                channels,
+                objects: self.objects.len(),
+                expected,
+            });
+        }
         Ok(())
     }
 
     /// Encode into the compact `ObjectAudioMeta` wire format.
     pub fn encode(&self) -> Result<Vec<u8>, PayloadError> {
+        self.validate()
+            .map_err(|error| PayloadError::Encode(error.to_string()))?;
         postcard::to_allocvec(self).map_err(|error| PayloadError::Encode(error.to_string()))
     }
 
@@ -79,9 +187,9 @@ impl SpatialPayload {
                 supported: Self::VERSION,
             });
         }
-        if payload.sample_rate == 0 {
-            return Err(PayloadError::Decode("sample rate must be non-zero".into()));
-        }
+        payload
+            .validate()
+            .map_err(|error| PayloadError::Decode(error.to_string()))?;
         Ok(payload)
     }
 }
@@ -99,9 +207,8 @@ mod tests {
                 .collect(),
             (0..events)
                 .map(|index| ObjectEvent {
-                    offset: index as u32 * 32,
-                    ramp_samples: 32,
-                    object: 1,
+                    offset: index as i64 * 32,
+                    transition: crate::Transition::All(32),
                     state: ObjectState::new(1, [0.0, 1.0, 0.0]),
                 })
                 .collect(),

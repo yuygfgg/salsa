@@ -9,17 +9,14 @@
 //! The crate also provides `CafWriter`, `Metadata::save` and
 //! `ManifestSpec`/`write_manifest` for producing DAMF masters.
 //!
-//! Trajectory handling follows `dolby-atmos-encoder`'s `PosTimeline`: an event
-//! holds the previous position until its sample time, then ramps to the new
-//! target over `rampLength` samples. `gain`, `active` and `size` are held
-//! between keyframes. The source samples that trajectory at block boundaries
-//! and emits one shared ramp per block, matching the encoder's OAMD path and
-//! keeping the renderer's full-snapshot event model consistent.
+//! DAMF patches are resolved once into shared scene tracks. Buffer reads keep
+//! event boundaries and unfinished ramps; they do not resample the trajectory.
 
 mod caf;
 mod error;
 mod manifest;
 mod metadata;
+mod scene;
 mod source;
 mod yaml;
 
@@ -27,6 +24,8 @@ pub use caf::{CafInfo, CafReader, CafWriter, SampleFormat};
 pub use error::{DamfError, Result};
 pub use manifest::{BedEntry, Manifest, ManifestSpec, ObjectEntry, write_manifest};
 pub use metadata::{Event as DamfEvent, Gain, Metadata};
-pub use source::{
-    DamfBlock, DamfInfo, DamfObjectInfo, DamfSource, ObjectTrack, TrackState, bed_position,
+pub use source::{DamfBlock, DamfInfo, DamfObjectInfo, DamfSource, bed_position};
+
+pub use scene::{
+    Consumer, ConversionReport, DamfScene, ObjectTrack, ResolvedMetadata, ResolvedObject,
 };

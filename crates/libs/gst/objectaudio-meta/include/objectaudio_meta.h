@@ -19,6 +19,7 @@ struct _ObjectAudioMeta {
   guint32 payload_type;
   gpointer payload;
   gsize size;
+  /* Version 2 mirror: max(0, payload.snapshot_offset). */
   gsize offset;
   gsize bpf;
 };
@@ -26,6 +27,7 @@ struct _ObjectAudioMeta {
 GType object_audio_meta_api_get_type(void);
 const GstMetaInfo *object_audio_meta_get_info(void);
 
+/* offset must match the version 2 payload's nonnegative snapshot offset. */
 ObjectAudioMeta *object_audio_meta_add(GstBuffer *buffer, gconstpointer payload,
                                        gsize size, gsize offset, gsize bpf);
 guint object_audio_meta_get_n(GstBuffer *buffer);

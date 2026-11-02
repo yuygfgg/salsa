@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The state of one dynamic object.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ObjectState {
     /// Decoder-defined object identifier.
     pub id: u32,
@@ -27,6 +27,10 @@ impl ObjectState {
             spread: None,
         }
     }
+
+    pub fn effective_gain(&self) -> f32 {
+        if self.enabled { self.gain } else { 0.0 }
+    }
 }
 
 impl Default for ObjectState {
@@ -35,15 +39,34 @@ impl Default for ObjectState {
     }
 }
 
-/// A state change that starts at `offset` samples into the frame.
+/// Which continuous properties move toward a target. Discrete properties,
+/// including `enabled`, change at the event start, never halfway through it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Transition {
+    #[default]
+    /// Apply an evaluated state before any ramp target at the same sample.
+    Step,
+    Position(u32),
+    All(u32),
+}
+
+impl Transition {
+    pub fn samples(self) -> u32 {
+        match self {
+            Self::Step => 0,
+            Self::Position(samples) | Self::All(samples) => samples,
+        }
+    }
+}
+
+/// A target change relative to the PCM buffer start. Negative offsets carry
+/// the causal prefix of a sliced buffer; they are not clamped to zero.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ObjectEvent {
     /// Sample offset relative to the start of the PCM buffer.
-    pub offset: u32,
-    /// Ramp length in samples. `0` means an immediate change.
-    pub ramp_samples: u32,
-    /// Object identifier matching [`ObjectState::id`].
-    pub object: u32,
+    pub offset: i64,
+    pub transition: Transition,
+    /// The target state also carries the event's sole object identifier.
     pub state: ObjectState,
 }
 

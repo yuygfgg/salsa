@@ -9,7 +9,7 @@ mod frame;
 mod payload;
 
 pub use bed::{BED_CHANNEL_COUNT, BED_CHANNELS, BedChannel, BedLayout};
-pub use encode::encode;
+pub use encode::{EncodingProfile, encode, encode_with_profile};
 pub use error::OamdError;
 pub use frame::{
     BedPolicy, OamdFrame, OamdLimits, OamdMapping, OamdObject, OamdProgram, oamd_to_ir_events,
@@ -66,7 +66,10 @@ mod tests {
         assert!(first.enabled);
         assert!(frame.events.is_empty());
         let payload = frame.to_spatial_payload(48_000, BedPolicy::Expand);
-        assert_eq!(payload.snapshot_ramp_samples, Some(frame.ramp_samples));
+        assert_eq!(
+            payload.snapshot,
+            objectaudio_ir::Snapshot::Target(objectaudio_ir::Transition::All(frame.ramp_samples))
+        );
     }
 
     #[test]
@@ -123,8 +126,13 @@ mod tests {
         assert_eq!(round.version, SpatialPayload::VERSION);
         assert_eq!(round.sample_rate, 48_000);
         assert_eq!(round.objects.len(), source.objects.len());
-        assert_eq!(round.snapshot_ramp_samples, source.snapshot_ramp_samples);
-        assert_eq!(Some(reparsed.ramp_samples), source.snapshot_ramp_samples);
+        assert_eq!(round.snapshot, source.snapshot);
+        assert_eq!(
+            objectaudio_ir::Snapshot::Target(objectaudio_ir::Transition::All(
+                reparsed.ramp_samples
+            )),
+            source.snapshot
+        );
         for (a, b) in source.objects.iter().zip(&round.objects) {
             assert_eq!(a.id, b.id);
             for axis in 0..3 {
@@ -148,8 +156,7 @@ mod tests {
             ],
             vec![objectaudio_ir::ObjectEvent {
                 offset: 320,
-                ramp_samples: 512,
-                object: 1,
+                transition: objectaudio_ir::Transition::All(512),
                 state: objectaudio_ir::ObjectState {
                     enabled: false,
                     gain: 0.0,
@@ -161,10 +168,13 @@ mod tests {
         let bytes = encode(&payload).unwrap();
         let frame = parse(&bytes).unwrap();
         assert_eq!(frame.dynamic_objects().count(), 2);
-        assert_eq!(frame.events.len(), 1);
-        assert_eq!(frame.events[0].offset, 320);
-        assert_eq!(frame.events[0].ramp_samples, 512);
-        assert!(!frame.events[0].state.enabled);
+        // Each object keeps its authored block, including repeated targets.
+        assert_eq!(frame.events.len(), 2);
+        for event in &frame.events {
+            assert_eq!(event.offset, 320);
+            assert_eq!(event.transition.samples(), 512);
+            assert!(!event.state.enabled);
+        }
     }
 
     proptest! {

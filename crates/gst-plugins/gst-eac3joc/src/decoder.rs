@@ -134,23 +134,16 @@ impl Eac3JocDec {
         spatial: SpatialFrame,
     ) -> Result<(), gst::FlowError> {
         let attach_meta = self.state.lock().unwrap().attach_meta;
-        let meta = if attach_meta && let Some(oamd) = &frame.oamd {
+        let meta = if attach_meta && frame.oamd.is_some() {
             let mut payload = spatial.to_payload();
-            payload.snapshot_ramp_samples = Some(oamd.ramp_samples);
-            let delay = EAC3_DECODER_DELAY as u32;
-            for event in &mut payload.events {
-                event.offset = event.offset.saturating_add(delay);
-            }
-            let offset = EAC3_DECODER_DELAY
-                + usize::from(frame.oamd_sample_offset)
-                + oamd.sample_offset as usize;
-            Some((payload, offset))
+            payload.rebase(EAC3_DECODER_DELAY as i64);
+            Some(payload)
         } else {
             None
         };
         let borrowed = self.obj();
         let object: &super::Eac3JocDec = borrowed.as_ref();
-        push_spatial(object, &spatial, meta.as_ref().map(|(p, o)| (p, *o)), 1)?;
+        push_spatial(object, &spatial, meta.as_ref(), 1)?;
         Ok(())
     }
 }

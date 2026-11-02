@@ -86,8 +86,8 @@ impl PcmBuffer {
         &self.channels
     }
 
-    pub fn channels_mut(&mut self) -> &mut [Vec<f32>] {
-        &mut self.channels
+    pub fn channels_mut(&mut self) -> impl Iterator<Item = &mut [f32]> {
+        self.channels.iter_mut().map(Vec::as_mut_slice)
     }
 
     /// Interleave into `[frame0 ch0, frame0 ch1, ..., frame1 ch0, ...]`.

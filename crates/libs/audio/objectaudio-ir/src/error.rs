@@ -7,6 +7,12 @@ pub enum IrError {
     #[error("sample rate must be non-zero")]
     ZeroSampleRate,
 
+    #[error("metadata sample rate {actual} differs from scene rate {expected}")]
+    SampleRateMismatch { expected: u32, actual: u32 },
+
+    #[error("object {object} has an invalid {property}")]
+    InvalidObjectProperty { object: u32, property: &'static str },
+
     #[error("the frame has {channels} PCM channels for {objects} objects; expected {expected}")]
     ChannelObjectCountMismatch {
         channels: usize,
@@ -26,9 +32,6 @@ pub enum IrError {
 
     #[error("interleaved PCM length {len} is not divisible by channel count {channels}")]
     InterleavedLengthMismatch { len: usize, channels: usize },
-
-    #[error("object event offset {offset} is past the frame end {frames}")]
-    EventOutOfRange { offset: u32, frames: usize },
 
     #[error("the frame has no LFE channel")]
     MissingLfe,

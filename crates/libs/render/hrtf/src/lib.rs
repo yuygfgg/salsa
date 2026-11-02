@@ -14,7 +14,6 @@ mod model;
 mod renderer;
 mod tables_public;
 mod tables_rosella;
-mod timeline;
 
 pub use error::HrtfError;
 pub use filterbank::{
@@ -28,4 +27,3 @@ pub use renderer::{
     BLOCK_SAMPLES, DIRECTION_TERMS, FRAME_SAMPLES, OUTPUT_CHANNELS, RosellaProfile,
     RosellaRenderOptions, RosellaRenderer,
 };
-pub use timeline::{OamdPositionTimeline, align_metadata_sample};

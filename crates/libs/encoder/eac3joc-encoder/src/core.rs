@@ -14,7 +14,7 @@ use reac3e::{
 };
 
 use crate::emdf::{self, EmdfProtector, KeyedProtector, ObjectPos, PublicCrcProtector};
-use crate::{joc, joc_analysis, lfe, render, timeline};
+use crate::{joc, joc_analysis, lfe, render};
 
 /// Per-object fine/coarse fallback strategy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,8 +121,15 @@ pub fn encode(atmos: &Path, out: &Path, options: &EncodeOptions) -> Result<()> {
         metadata.sample_rate
     );
 
-    let timelines = timeline::build_timelines(&manifest, &metadata)?;
-    let nobj = timelines.len();
+    let scene = objectaudio_damf::DamfScene::resolve(&manifest, &metadata)?;
+    for warning in scene.warnings.iter().chain(
+        &scene
+            .report(objectaudio_damf::Consumer::Encode)
+            .approximations,
+    ) {
+        log::warn!("{warning}");
+    }
+    let nobj = scene.objects.len();
     ensure!(nobj > 0, "DAMF has no dynamic objects");
     ensure!(
         nobj <= 15,
@@ -141,7 +148,7 @@ pub fn encode(atmos: &Path, out: &Path, options: &EncodeOptions) -> Result<()> {
     // Stage 1: stream the downmix through the in-process FFmpeg LFE filter.
     let mut downmix = render::DownmixReader::new(
         &manifest,
-        &metadata,
+        &scene,
         options.gain_db,
         options.pan,
         options.surround_phase_shift,
@@ -165,7 +172,7 @@ pub fn encode(atmos: &Path, out: &Path, options: &EncodeOptions) -> Result<()> {
 
     let mut analyzer = joc_analysis::JocAnalyzer::new(
         &manifest,
-        &metadata,
+        &scene,
         options.pan,
         options.joc.lambda,
         options.joc.ridge,
@@ -232,7 +239,7 @@ pub fn encode(atmos: &Path, out: &Path, options: &EncodeOptions) -> Result<()> {
 
         let start = offset;
         let end = start + spf as u64;
-        let objects: Vec<ObjectPos> = timeline::positions_at(&timelines, end)
+        let objects: Vec<ObjectPos> = render::positions_at(&scene, end)
             .into_iter()
             .map(|position| ObjectPos {
                 x: position[0],
@@ -240,7 +247,7 @@ pub fn encode(atmos: &Path, out: &Path, options: &EncodeOptions) -> Result<()> {
                 z: position[2],
             })
             .collect();
-        let oamd = emdf::encode_oamd(&objects, true);
+        let oamd = emdf::encode_oamd(&objects)?;
         let matrices = analyzer
             .matrices_for_frame(start, end)
             .map_err(|error| anyhow::anyhow!("JOC band analysis at frame {frame_index}: {error}"))?

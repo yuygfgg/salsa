@@ -45,7 +45,12 @@ pub unsafe extern "C" fn object_audio_meta_add(
         return ptr::null_mut();
     }
     let bytes = unsafe { slice::from_raw_parts(payload.cast::<u8>(), size) };
-    if objectaudio_ir::SpatialPayload::decode(bytes).is_err() {
+    let Ok(decoded) = objectaudio_ir::SpatialPayload::decode(bytes) else {
+        return ptr::null_mut();
+    };
+    // Version 2 stores authoritative timestamps in the payload. The ABI field
+    // is a nonnegative mirror for foreign callers, not another time origin.
+    if offset != decoded.snapshot_offset.max(0) as usize {
         return ptr::null_mut();
     }
     unsafe {
@@ -122,6 +127,7 @@ mod tests {
             vec![ObjectState::new(1, [0.5, 0.5, 0.0])],
             Vec::new(),
         );
+        let payload = payload.with_snapshot_offset(4);
         let bytes = payload.encode().unwrap();
         let raw = buffer.get_mut().unwrap().as_mut_ptr();
 

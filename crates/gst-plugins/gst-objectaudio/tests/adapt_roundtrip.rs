@@ -136,8 +136,7 @@ fn payload() -> SpatialPayload {
         ],
         vec![ObjectEvent {
             offset: 0,
-            ramp_samples: 0,
-            object: 1,
+            transition: objectaudio_ir::Transition::All(0),
             state: ObjectState::new(1, [-1.0, 1.0, 0.0]),
         }],
     )
@@ -221,7 +220,7 @@ fn to_dolby_encodes_spatial_payload_as_oamd() {
     run(
         "to-dolby",
         objectaudio_meta::CAPS_FEATURE,
-        |buffer| add_spatial(buffer, &payload(), 0, 12).unwrap(),
+        |buffer| add_spatial(buffer, &payload(), 12).unwrap(),
         |buffer| {
             let payloads = objectaudio_meta::dlb_payloads(buffer);
             !payloads.is_empty()

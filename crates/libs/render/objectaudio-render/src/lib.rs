@@ -5,6 +5,9 @@ mod bed;
 mod layout;
 mod layouts;
 mod renderer;
+mod scene;
+
+pub use scene::render_scene;
 mod speaker;
 
 pub use bed::{bed_channel_q15, layout_bed_anchor};

@@ -1,5 +1,5 @@
 use crate::payload::ObjectAudioMetadataPayload;
-use objectaudio_ir::{ObjectEvent, ObjectState, SpatialPayload};
+use objectaudio_ir::{ConversionReport, ObjectEvent, ObjectState, SpatialPayload};
 
 use crate::bed::BedLayout;
 use objectaudio_ir::SpeakerPosition;
@@ -58,16 +58,44 @@ pub struct OamdObject {
 
 impl OamdObject {
     pub fn to_state(&self) -> ObjectState {
+        let Self {
+            slot,
+            in_bed_or_isf: _,
+            active,
+            gain_db: _,
+            gain,
+            priority: _,
+            position,
+            size,
+            distance: _,
+            snap: _,
+        } = *self;
         ObjectState {
-            id: self.slot as u32,
-            position: self.position,
-            gain: self.gain,
-            enabled: self.active,
-            size: self
-                .size
+            id: slot as u32,
+            position,
+            gain,
+            enabled: active,
+            size: size
                 .map(|size| size.into_iter().fold(0.0, f32::max))
                 .filter(|size| *size > 0.0),
             spread: None,
+        }
+    }
+    fn report_conversion(&self, report: &mut objectaudio_ir::ConversionReport) {
+        if self.priority != 1.0 {
+            report.record("priority", "not represented by the spatial IR");
+        }
+        if self.distance.is_some() {
+            report.record("distance", "not represented by the spatial IR");
+        }
+        if self.snap {
+            report.record("snap", "not represented by the spatial IR");
+        }
+        if self
+            .size
+            .is_some_and(|size| size[0] != size[1] || size[1] != size[2])
+        {
+            report.record("size", "three dimensions reduced to their maximum");
         }
     }
 }
@@ -75,6 +103,7 @@ impl OamdObject {
 /// A parsed OAMD payload in salsa's codec-independent terms.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OamdFrame {
+    pub report: objectaudio_ir::ConversionReport,
     pub version: u8,
     /// Number of object slots in the payload, including bed objects.
     pub object_count: usize,
@@ -102,6 +131,7 @@ pub enum BedPolicy {
 /// A payload mapped onto the IR, including the offset accumulation rule.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OamdMapping {
+    pub report: objectaudio_ir::ConversionReport,
     /// Dynamic objects rebased to `1..=N`, followed by any appended bed objects.
     pub objects: Vec<ObjectState>,
     /// Events with rebased ids and `base_offset` already added.
@@ -188,6 +218,7 @@ impl OamdFrame {
 
         let positions = payload.get_damf_pos();
         let object_data = object_element.map_or(&[][..], |element| &element.object_data[..]);
+        let mut report = ConversionReport::default();
         let mut objects = Vec::with_capacity(payload.object_count);
         for slot in 0..payload.object_count {
             let blocks = object_data.get(slot).map_or(&[][..], Vec::as_slice);
@@ -200,7 +231,7 @@ impl OamdFrame {
                 .and_then(|positions| positions.first())
                 .map_or([0.0, 0.0, 0.0], |position| adm_to_f32(*position));
             let object = match first {
-                Some(block) => object_at(slot, block, position, in_bed_or_isf),
+                Some(block) => object_at(slot, block, position, &mut report),
                 None => OamdObject {
                     slot,
                     in_bed_or_isf,
@@ -217,6 +248,9 @@ impl OamdFrame {
             objects.push(object);
         }
 
+        for object in &objects {
+            object.report_conversion(&mut report);
+        }
         let mut events = Vec::new();
         if let (Some(element), Some(update)) = (object_element, md_update) {
             for (slot, blocks) in element.object_data.iter().enumerate() {
@@ -227,7 +261,6 @@ impl OamdFrame {
                 {
                     continue;
                 }
-                let mut previous = objects.get(slot).map(OamdObject::to_state);
                 for (block_index, block) in blocks.iter().enumerate().skip(1) {
                     let block_update = update.block_update_info.get(block_index);
                     let offset = update.sample_offset as u32
@@ -241,16 +274,14 @@ impl OamdFrame {
                             || adm_position(block.object_render_info.pos3d),
                             |position| adm_to_f32(*position),
                         );
-                    let object = object_at(slot, block, position, false);
+                    let object = object_at(slot, block, position, &mut report);
+                    object.report_conversion(&mut report);
                     let state = object.to_state();
-                    if previous.as_ref() == Some(&state) {
-                        continue;
-                    }
-                    previous = Some(state.clone());
+                    // A repeated target can restart a transition with a new
+                    // duration. Do not infer time semantics from state equality.
                     events.push(ObjectEvent {
-                        offset,
-                        ramp_samples: ramp,
-                        object: slot as u32,
+                        offset: i64::from(offset),
+                        transition: objectaudio_ir::Transition::All(ramp),
                         state,
                     });
                 }
@@ -270,6 +301,7 @@ impl OamdFrame {
             .map_or(0, |info| u32::from(info.ramp_duration));
 
         Ok(Self {
+            report,
             version: payload.oamd_version,
             object_count: payload.object_count,
             program: OamdProgram {
@@ -303,6 +335,7 @@ impl OamdFrame {
         let mapping = self.map_to_ir(0, bed);
         SpatialPayload::new(sample_rate, mapping.objects, mapping.events)
             .with_snapshot_ramp(mapping.snapshot_ramp_samples)
+            .with_snapshot_offset(i64::from(mapping.snapshot_offset))
     }
 
     /// Map the payload onto the IR with an explicit base sample offset.
@@ -342,20 +375,20 @@ impl OamdFrame {
 
         let mut events = Vec::new();
         for event in &self.events {
-            let Some(id) = slot_to_id.get(&event.object) else {
+            let Some(id) = slot_to_id.get(&event.state.id) else {
                 continue;
             };
-            let mut state = event.state.clone();
+            let mut state = event.state;
             state.id = *id;
             events.push(ObjectEvent {
-                offset: event.offset.saturating_add(base_offset),
-                ramp_samples: event.ramp_samples,
-                object: *id,
+                offset: event.offset.saturating_add(i64::from(base_offset)),
+                transition: event.transition,
                 state,
             });
         }
         events.sort_by_key(|event| event.offset);
         OamdMapping {
+            report: self.report.clone(),
             objects,
             events,
             dynamic_count: dynamic.len(),
@@ -373,23 +406,56 @@ fn object_at(
     slot: usize,
     block: &crate::payload::ObjectInfoBlock,
     position: [f32; 3],
-    in_bed_or_isf: bool,
+    report: &mut ConversionReport,
 ) -> OamdObject {
-    let (gain_db, gain) = gain_from_code(block.object_basic_info.object_gain);
+    // Resolve wire fields in one place. New fields require an explicit mapping
+    // or loss report here, before consumers receive the smaller spatial IR.
+    let crate::payload::ObjectInfoBlock {
+        b_object_not_active,
+        object_basic_info:
+            crate::payload::ObjectBasicInfo {
+                object_gain,
+                object_priority,
+            },
+        b_object_in_bed_or_isf,
+        object_render_info:
+            crate::payload::ObjectRenderInfo {
+                b_differential_position_specified: _, // resolved by the parser
+                pos3d: _,                             // converted to ADM in `position`
+                b_object_distance_specified: _,       // represented by distance_factor
+                distance_factor,
+                zone_constraints_idx,
+                b_enable_elevation,
+                object_size: size,
+                b_object_use_screen_ref,
+                screen_factor,
+                depth_factor,
+                b_object_snap,
+            },
+    } = block;
+    for (property, used) in [
+        ("zones", *zone_constraints_idx != 0),
+        ("elevation", !b_enable_elevation),
+        ("screen reference", *b_object_use_screen_ref),
+        ("screen factor", *screen_factor != 0.0),
+        ("depth factor", *depth_factor != 0.25),
+    ] {
+        if used {
+            report.record(property, "not represented by the spatial IR");
+        }
+    }
+    let (gain_db, gain) = gain_from_code(*object_gain);
     OamdObject {
         slot,
-        in_bed_or_isf,
-        active: !block.b_object_not_active,
+        in_bed_or_isf: *b_object_in_bed_or_isf,
+        active: !b_object_not_active,
         gain_db,
         gain,
-        priority: block.object_basic_info.object_priority as f32,
+        priority: *object_priority as f32,
         position,
-        size: object_size(block.object_render_info.object_size),
-        distance: block
-            .object_render_info
-            .distance_factor
-            .map(|value| value as f32),
-        snap: block.object_render_info.b_object_snap,
+        size: object_size(*size),
+        distance: distance_factor.map(|value| value as f32),
+        snap: *b_object_snap,
     }
 }
 
@@ -429,8 +495,7 @@ mod tests {
         frame.sample_offset = 7;
         frame.events.push(ObjectEvent {
             offset: 100,
-            ramp_samples: 0,
-            object: 1,
+            transition: objectaudio_ir::Transition::All(0),
             state: ObjectState::new(1, [0.0, 1.0, 0.0]),
         });
         let mapping = frame.map_to_ir(1_000, BedPolicy::Ignore);

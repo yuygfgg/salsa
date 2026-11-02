@@ -1,8 +1,6 @@
 #![forbid(unsafe_code)]
 #![doc = "GStreamer caps/negotiation/PCM-push glue shared by the salsa decoders."]
 
-use gst::glib::prelude::*;
-use gst::prelude::*;
 use gstreamer as gst;
 use gstreamer_audio as gst_audio;
 
@@ -58,7 +56,7 @@ pub fn push_pcm<D: IsA<gst_audio::AudioDecoder>>(
     decoder: &D,
     interleaved: &[f32],
     channel_count: usize,
-    meta: Option<(&SpatialPayload, usize)>,
+    meta: Option<&SpatialPayload>,
     frames: i32,
 ) -> Result<gst::FlowSuccess, gst::FlowError> {
     let mut bytes = Vec::with_capacity(interleaved.len() * 4);
@@ -66,10 +64,10 @@ pub fn push_pcm<D: IsA<gst_audio::AudioDecoder>>(
         bytes.extend_from_slice(&sample.to_le_bytes());
     }
     let mut buffer = gst::Buffer::from_slice(bytes);
-    if let Some((payload, offset)) = meta {
+    if let Some(payload) = meta {
         let bpf = 4 * channel_count;
         let buffer_ref = buffer.get_mut().expect("fresh buffer is writable");
-        objectaudio_meta::add_spatial(buffer_ref, payload, offset, bpf).map_err(|error| {
+        objectaudio_meta::add_spatial(buffer_ref, payload, bpf).map_err(|error| {
             gst::error!(gst::CAT_RUST, "cannot attach ObjectAudioMeta: {error}");
             gst::FlowError::Error
         })?;
@@ -93,7 +91,7 @@ pub fn push_pcm<D: IsA<gst_audio::AudioDecoder>>(
 pub fn push_spatial<D: IsA<gst_audio::AudioDecoder>>(
     decoder: &D,
     spatial: &SpatialFrame,
-    meta: Option<(&SpatialPayload, usize)>,
+    meta: Option<&SpatialPayload>,
     frames: i32,
 ) -> Result<gst::FlowSuccess, gst::FlowError> {
     let interleaved = spatial.pcm.interleave();

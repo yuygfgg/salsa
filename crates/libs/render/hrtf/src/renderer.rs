@@ -1,7 +1,7 @@
 //! Rosella `.personalized_headphone` binaural renderer.
 //!
 //! Direct HRTF path, early reflections and the recursive table-A room model,
-//! driven by the OAMD position timeline. Input is planar object audio
+//! driven by the shared scene timeline. Input is planar object audio
 //! (channel 0 = LFE) in 1536-sample frames; output is interleaved stereo.
 
 use std::sync::Arc;
@@ -9,12 +9,11 @@ use std::sync::Arc;
 use num_complex::Complex64;
 use rustfft::{Fft as RustFft, FftPlanner};
 
-use objectaudio_ir::SpatialPayload;
+use objectaudio_ir::{SceneTimeline, SpatialPayload};
 
 use crate::error::HrtfError;
 use crate::filterbank::{Filterbank, FilterbankKind, HYBRID_BANDS, QMF_HOP, create};
 use crate::model::{RosellaDistanceProfile, RosellaModel};
-use crate::timeline::OamdPositionTimeline;
 
 pub const OUTPUT_CHANNELS: usize = 2;
 pub const DIRECTION_TERMS: usize = 36;
@@ -71,6 +70,7 @@ impl RosellaProfile {
 pub struct RosellaRenderOptions {
     pub profile: RosellaProfile,
     pub filterbank: FilterbankKind,
+    /// Delay spatial controls relative to PCM. Source gain stays at audio time.
     pub object_delay_samples: i64,
     pub tail_seconds: f64,
     pub output_gain: f64,
@@ -1017,7 +1017,7 @@ pub struct RosellaRenderer {
     core: Core,
     analysis_bank: Box<dyn Filterbank>,
     synthesis_bank: Box<dyn Filterbank>,
-    timeline: OamdPositionTimeline,
+    scene: Option<SceneTimeline>,
     buffer: Vec<f64>,
     buffer_used: usize,
     output: Vec<f64>,
@@ -1088,7 +1088,7 @@ impl RosellaRenderer {
             analysis_bank,
             synthesis_bank,
             core,
-            timeline: OamdPositionTimeline::new(source_channels - 1),
+            scene: None,
             buffer_used: 0,
             output: Vec::new(),
             input_samples: 0,
@@ -1140,16 +1140,31 @@ impl RosellaRenderer {
         self.options.chunk_frames * FRAME_SAMPLES
     }
 
+    /// Submit metadata at the absolute start sample of its PCM buffer.
+    pub fn submit_metadata(
+        &mut self,
+        payload: &SpatialPayload,
+        buffer_start: i64,
+    ) -> Result<(), HrtfError> {
+        payload
+            .validate_layout(48_000, self.source_channels)
+            .map_err(|error| HrtfError::Format(error.to_string()))?;
+        match &mut self.scene {
+            Some(scene) => scene.submit(payload, buffer_start),
+            None => SceneTimeline::from_payload(payload, buffer_start)
+                .map(|scene| self.scene = Some(scene)),
+        }
+        .map_err(|error| HrtfError::Format(error.to_string()))?;
+        self.metadata_updates += 1;
+        Ok(())
+    }
+
     /// Submit one 1536-sample planar-objects frame with `source_channels`
-    /// channels.
-    ///
-    /// `objects_planar` is channel-major (`channel * 1536 + sample`).
-    /// `outer_sample_offset` is the payload snapshot offset in the buffer.
+    /// channels. `objects_planar` is channel-major (`channel * 1536 + sample`).
     pub fn submit_frame(
         &mut self,
         objects_planar: &[f32],
         update: Option<&SpatialPayload>,
-        outer_sample_offset: i64,
     ) -> Result<(), HrtfError> {
         if !self.open {
             return Err(HrtfError::State("renderer is not open".into()));
@@ -1164,13 +1179,7 @@ impl RosellaRenderer {
             )));
         }
         if let Some(update) = update {
-            self.timeline.submit_update(
-                update,
-                self.input_samples,
-                outer_sample_offset,
-                self.options.object_delay_samples,
-            )?;
-            self.metadata_updates += 1;
+            self.submit_metadata(update, self.input_samples)?;
         }
         let chunk = self.chunk_samples();
         let mut offset = 0usize;
@@ -1181,7 +1190,21 @@ impl RosellaRenderer {
                 let row = (self.buffer_used + sample) * self.source_channels;
                 for channel in 0..self.source_channels {
                     self.buffer[row + channel] =
-                        f64::from(objects_planar[channel * FRAME_SAMPLES + offset + sample]);
+                        f64::from(objects_planar[channel * FRAME_SAMPLES + offset + sample])
+                            * if channel == 0 {
+                                1.0
+                            } else {
+                                self.scene.as_ref().map_or(1.0, |scene| {
+                                    f64::from(
+                                        scene
+                                            .state_at(
+                                                channel - 1,
+                                                self.input_samples + (offset + sample) as i64,
+                                            )
+                                            .effective_gain(),
+                                    )
+                                })
+                            };
                 }
             }
             self.buffer_used += count;
@@ -1281,6 +1304,12 @@ impl RosellaRenderer {
         }
         self.append_output(&time, produced);
         self.processed_input_samples += count as i64;
+        if let Some(scene) = &mut self.scene {
+            scene.discard_before(
+                (self.processed_input_samples - self.options.object_delay_samples)
+                    .min(self.input_samples),
+            );
+        }
         Ok(())
     }
 
@@ -1288,8 +1317,16 @@ impl RosellaRenderer {
         let profile = self.options.profile.index();
         let lfe = [0.0, 1.0, 0.0];
         self.core.set_source(0, &lfe, 3, true)?;
-        self.timeline
-            .positions_at_into(sample, &mut self.block_positions)?;
+        self.block_positions.clear();
+        for object in 0..self.object_count() {
+            self.block_positions
+                .push(self.scene.as_ref().map_or([0.0; 3], |scene| {
+                    scene
+                        .state_at(object, sample - self.options.object_delay_samples)
+                        .position
+                        .map(f64::from)
+                }));
+        }
         for object in 0..self.block_positions.len() {
             self.core
                 .set_source(object + 1, &self.block_positions[object], profile, false)?;
@@ -1361,7 +1398,7 @@ impl RosellaRenderer {
         self.raw_output_samples = 0;
         self.metadata_updates = 0;
         self.finished = false;
-        self.timeline.reset();
+        self.scene = None;
         Ok(())
     }
 

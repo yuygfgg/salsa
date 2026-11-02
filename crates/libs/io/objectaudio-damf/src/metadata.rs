@@ -69,6 +69,20 @@ fn parse_gain(value: &Value) -> Option<Gain> {
     text.parse::<f32>().ok().map(Gain::Db)
 }
 
+fn optional<'a, T>(
+    raw: &'a Value,
+    field: &str,
+    parse: impl FnOnce(&'a Value) -> Option<T>,
+) -> Result<Option<T>> {
+    get(raw, field)
+        .map(|value| {
+            parse(value).ok_or_else(|| {
+                DamfError::Invalid(format!("invalid metadata field {field}: {value:?}"))
+            })
+        })
+        .transpose()
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Event {
@@ -134,10 +148,10 @@ impl Metadata {
             source,
         })?;
 
-        let sample_rate = get(&document, "sampleRate")
-            .and_then(as_u32)
-            .filter(|rate| *rate != 0)
-            .unwrap_or(DEFAULT_SAMPLE_RATE);
+        let sample_rate = optional(&document, "sampleRate", as_u32)?.unwrap_or(DEFAULT_SAMPLE_RATE);
+        if sample_rate == 0 {
+            return Err(DamfError::Invalid("sampleRate must be non-zero".into()));
+        }
 
         let raw_events = get(&document, "events")
             .and_then(as_sequence)
@@ -147,36 +161,51 @@ impl Metadata {
         let mut current_sample = 0u64;
         let mut current_id = None;
         for raw in raw_events {
-            if let Some(id) = get(raw, "ID").and_then(as_i64) {
+            let mapping = raw
+                .as_mapping()
+                .ok_or_else(|| DamfError::Invalid("metadata event must be a mapping".into()))?;
+            for key in mapping.keys() {
+                match key.as_str() {
+                    Some(
+                        "ID" | "samplePos" | "active" | "pos" | "snap" | "elevation" | "zones"
+                        | "size" | "decorr" | "importance" | "gain" | "rampLength" | "trimBypass"
+                        | "dialog" | "music" | "screenFactor" | "depthFactor" | "headTrackMode"
+                        | "binauralRenderMode",
+                    ) => {}
+                    _ => {
+                        return Err(DamfError::Invalid(format!(
+                            "unknown metadata field {key:?}"
+                        )));
+                    }
+                }
+            }
+            if let Some(id) = optional(raw, "ID", as_i64)? {
                 current_id = Some(id);
             }
             let id = current_id.ok_or(DamfError::MissingField("events[].ID"))?;
-            if let Some(sample) = get(raw, "samplePos").and_then(as_u64) {
+            if let Some(sample) = optional(raw, "samplePos", as_u64)? {
                 current_sample = sample;
             }
             events.push(Event {
                 id,
                 sample_pos: current_sample,
-                active: get(raw, "active").and_then(as_bool),
-                position: get(raw, "pos").and_then(as_vec3),
-                snap: get(raw, "snap").and_then(as_bool),
-                elevation: get(raw, "elevation").and_then(as_bool),
-                zones: get(raw, "zones").and_then(as_str).map(ToOwned::to_owned),
-                size: get(raw, "size").and_then(as_f32),
-                decorr: get(raw, "decorr").and_then(as_u32),
-                importance: get(raw, "importance").and_then(as_f32),
-                gain: get(raw, "gain").and_then(parse_gain),
-                ramp_length: get(raw, "rampLength").and_then(as_u32),
-                trim_bypass: get(raw, "trimBypass").and_then(as_bool),
-                dialog: get(raw, "dialog").and_then(as_f32),
-                music: get(raw, "music").and_then(as_f32),
-                screen_factor: get(raw, "screenFactor").and_then(as_f32),
-                depth_factor: get(raw, "depthFactor").and_then(as_f32),
-                head_track_mode: get(raw, "headTrackMode")
-                    .and_then(as_str)
-                    .map(ToOwned::to_owned),
-                binaural_render_mode: get(raw, "binauralRenderMode")
-                    .and_then(as_str)
+                active: optional(raw, "active", as_bool)?,
+                position: optional(raw, "pos", as_vec3)?,
+                snap: optional(raw, "snap", as_bool)?,
+                elevation: optional(raw, "elevation", as_bool)?,
+                zones: optional(raw, "zones", as_str)?.map(ToOwned::to_owned),
+                size: optional(raw, "size", as_f32)?,
+                decorr: optional(raw, "decorr", as_u32)?,
+                importance: optional(raw, "importance", as_f32)?,
+                gain: optional(raw, "gain", parse_gain)?,
+                ramp_length: optional(raw, "rampLength", as_u32)?,
+                trim_bypass: optional(raw, "trimBypass", as_bool)?,
+                dialog: optional(raw, "dialog", as_f32)?,
+                music: optional(raw, "music", as_f32)?,
+                screen_factor: optional(raw, "screenFactor", as_f32)?,
+                depth_factor: optional(raw, "depthFactor", as_f32)?,
+                head_track_mode: optional(raw, "headTrackMode", as_str)?.map(ToOwned::to_owned),
+                binaural_render_mode: optional(raw, "binauralRenderMode", as_str)?
                     .map(ToOwned::to_owned),
             });
         }

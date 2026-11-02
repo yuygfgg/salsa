@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use gst::prelude::*;
 use gstreamer as gst;
 use gstsalsaobjectaudio::Oar;
-use objectaudio_ir::{ObjectEvent, ObjectState, SpatialPayload, adm_to_q15};
-use objectaudio_render::{SpeakerMetadata, SpeakerRenderer, layout_by_name};
+use objectaudio_ir::{ObjectEvent, ObjectState, SceneTimeline, SpatialPayload};
+use objectaudio_render::{SpeakerRenderer, layout_by_name, render_scene};
 
 const RATE: u32 = 48_000;
 const INPUT_CHANNELS: usize = 2;
@@ -120,7 +120,7 @@ fn input(start: u64, samples: usize, value: f32) -> gst::Buffer {
 }
 
 fn object(position: [f32; 3], gain: f32) -> ObjectState {
-    let mut state = ObjectState::new(7, position);
+    let mut state = ObjectState::new(1, position);
     state.gain = gain;
     state
 }
@@ -147,8 +147,7 @@ fn add_metadata_with_ramp(
     }
     objectaudio_meta::add_spatial(
         buffer.get_mut().unwrap(),
-        &payload,
-        offset,
+        &payload.with_snapshot_offset(offset as i64),
         INPUT_CHANNELS * 4,
     )
     .unwrap();
@@ -156,9 +155,8 @@ fn add_metadata_with_ramp(
 
 fn event(offset: u32, state: ObjectState) -> ObjectEvent {
     ObjectEvent {
-        offset,
-        ramp_samples: 64,
-        object: state.id,
+        offset: i64::from(offset),
+        transition: objectaudio_ir::Transition::All(64),
         state,
     }
 }
@@ -267,12 +265,7 @@ fn fragmented_pcm_and_metadata_match_the_block_renderer() {
         .get_mut()
         .unwrap()
         .set_flags(gst::BufferFlags::DISCONT);
-    add_metadata(
-        &mut first,
-        0,
-        states[0].clone(),
-        vec![event(23, states[1].clone())],
-    );
+    add_metadata(&mut first, 0, states[0], vec![event(23, states[1])]);
     harness.push(first);
     assert!(
         harness.take_buffers().is_empty(),
@@ -280,20 +273,10 @@ fn fragmented_pcm_and_metadata_match_the_block_renderer() {
     );
 
     let mut second = input(96_024, 1105, 0.25);
-    add_metadata(
-        &mut second,
-        9,
-        states[1].clone(),
-        vec![event(1090, states[2].clone())],
-    );
+    add_metadata(&mut second, 9, states[1], vec![event(1090, states[2])]);
     harness.push(second);
     let mut third = input(97_129, 408, 0.25);
-    add_metadata(
-        &mut third,
-        4,
-        states[3].clone(),
-        vec![event(200, states[4].clone())],
-    );
+    add_metadata(&mut third, 4, states[3], vec![event(200, states[4])]);
     harness.push(third);
     let buffers = harness.finish();
     assert_timeline(&buffers, 96_000, 1537);
@@ -304,36 +287,33 @@ fn fragmented_pcm_and_metadata_match_the_block_renderer() {
             .all(|buffer| !buffer.flags().contains(gst::BufferFlags::DISCONT))
     );
 
-    let positions: Vec<_> = states
-        .iter()
-        .map(|state| [adm_to_q15(state.position)])
-        .collect();
-    let gains: Vec<_> = states.iter().map(|state| [f64::from(state.gain)]).collect();
-    let events: Vec<_> = [(0, 0), (23, 1), (33, 1), (1114, 2), (1133, 3), (1329, 4)]
-        .into_iter()
-        .map(|(offset, index)| SpeakerMetadata {
-            offset,
-            ramp_samples: 64,
-            positions_q15: &positions[index],
-            object_gains: Some(&gains[index]),
-            region_indices: None,
-            height_enabled: None,
-        })
-        .collect();
+    let first = SpatialPayload::new(RATE, vec![states[0]], vec![event(23, states[1])]);
+    let mut scene = SceneTimeline::from_payload(&first, 0).unwrap();
+    scene
+        .submit(
+            &SpatialPayload::new(RATE, vec![states[1]], vec![event(1090, states[2])])
+                .with_snapshot_offset(9),
+            24,
+        )
+        .unwrap();
+    scene
+        .submit(
+            &SpatialPayload::new(RATE, vec![states[3]], vec![event(200, states[4])])
+                .with_snapshot_offset(4),
+            1129,
+        )
+        .unwrap();
     let mut renderer = SpeakerRenderer::new(layout_by_name("5.1").unwrap(), 1);
     let input: Vec<_> = (0..1568).flat_map(|_| [0.25, 1.0]).collect();
     let mut expected = vec![0.0; 1568 * OUTPUT_CHANNELS];
-    renderer
-        .process(&input, 1568, &events, &mut expected)
-        .unwrap();
-    let expected: Vec<_> = expected[..1537 * OUTPUT_CHANNELS]
-        .iter()
-        .map(|value| *value as f32)
-        .collect();
-    assert_eq!(
-        pcm(&buffers),
-        expected,
-        "reblocking must preserve metadata timing and ramps"
+    render_scene(&mut renderer, &scene, &input, 0, 1568, &mut expected).unwrap();
+    let actual = pcm(&buffers);
+    assert!(
+        actual
+            .iter()
+            .zip(&expected)
+            .all(|(a, b)| (f64::from(*a) - b).abs() < 1e-5),
+        "fragmentation changed the scene rendering"
     );
 }
 
@@ -453,14 +433,14 @@ fn metadata_offset_stays_relative_to_the_input_buffer() {
     assert_timeline(&buffers, 0, 96);
     let rendered = pcm(&buffers);
     // 24 queued samples + 9 snapshot samples + 16 extra samples = 49.
-    // The renderer rounds this event to its block boundary at sample 64.
+    // Source amplitude follows the authored time, independently of the panning grid.
     assert!(
-        rendered[..64 * OUTPUT_CHANNELS]
+        rendered[..49 * OUTPUT_CHANNELS]
             .iter()
             .all(|value| *value == 0.0)
     );
     assert!(
-        rendered[64 * OUTPUT_CHANNELS..]
+        rendered[49 * OUTPUT_CHANNELS..]
             .iter()
             .any(|value| *value != 0.0)
     );

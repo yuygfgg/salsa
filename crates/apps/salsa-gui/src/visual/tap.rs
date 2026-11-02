@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
-use objectaudio_meta::SpatialSnapshot;
 
 use super::timeline::{DEFAULT_TRAIL_SECONDS, TapEvent, Timeline, VisualSnapshot};
 
@@ -51,30 +50,27 @@ impl Shared {
         let Some(pts) = buffer.pts() else {
             return;
         };
-        let spatial = objectaudio_meta::get_spatial(buffer);
-        let (offset, payload, channels) = match spatial {
-            Some(SpatialSnapshot {
-                payload,
-                offset,
-                bpf,
-            }) => {
-                let channels = (bpf / 4) as u32;
-                (offset, Some(payload), channels)
-            }
-            None => (0, None, self.caps_channels.load(Ordering::Relaxed)),
-        };
+        let snapshots = objectaudio_meta::iter_spatial(buffer);
+        let channels = snapshots
+            .first()
+            .map_or(self.caps_channels.load(Ordering::Relaxed), |snapshot| {
+                (snapshot.bpf / 4) as u32
+            });
+        let payloads: Vec<_> = snapshots
+            .into_iter()
+            .map(|snapshot| snapshot.payload)
+            .collect();
         let levels = levels_from_buffer(buffer, channels as usize);
         let pending_segment = self.segment_pending.load(Ordering::Relaxed);
         let mut discont = buffer.flags().contains(gst::BufferFlags::DISCONT);
-        if pending_segment && payload.is_some() {
+        if pending_segment && !payloads.is_empty() {
             self.segment_pending.store(false, Ordering::Relaxed);
             discont = true;
         }
         self.send(TapEvent::Buffer {
             epoch: self.epoch.load(Ordering::Relaxed),
             pts_ns: pts.nseconds(),
-            offset,
-            payload,
+            payloads,
             levels,
             discont,
         });
@@ -389,12 +385,17 @@ mod tests {
             ],
             vec![ObjectEvent {
                 offset: 16,
-                ramp_samples: 0,
-                object: 1,
+                transition: objectaudio_ir::Transition::All(0),
                 state: ObjectState::new(1, [1.0, 1.0, 0.0]),
             }],
         );
-        objectaudio_meta::add_spatial(buffer.get_mut().unwrap(), &payload, 0, 12).unwrap();
+        objectaudio_meta::add_spatial(buffer.get_mut().unwrap(), &payload, 12).unwrap();
+        objectaudio_meta::add_spatial(
+            buffer.get_mut().unwrap(),
+            &payload.with_snapshot_offset(32),
+            12,
+        )
+        .unwrap();
         buffer
             .get_mut()
             .unwrap()
@@ -402,7 +403,7 @@ mod tests {
         shared.on_buffer(&buffer);
         let event = receiver.recv().unwrap();
         let TapEvent::Buffer {
-            payload: Some(payload),
+            payloads,
             levels,
             pts_ns,
             ..
@@ -411,7 +412,10 @@ mod tests {
             panic!("expected a buffer event");
         };
         assert_eq!(pts_ns, 100_000_000);
-        assert_eq!(payload.objects.len(), 2);
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0].objects.len(), 2);
+        assert_eq!(payloads[1].snapshot_offset, 32);
+        assert!(receiver.try_recv().is_err());
         assert_eq!(levels, vec![0.5, 0.25, 0.125]);
     }
 
@@ -440,7 +444,7 @@ mod tests {
             Vec::new(),
         );
         let mut buffer = frame_buffer(32, &[0.01, 0.0, 0.1]);
-        objectaudio_meta::add_spatial(buffer.get_mut().unwrap(), &payload, 0, 12).unwrap();
+        objectaudio_meta::add_spatial(buffer.get_mut().unwrap(), &payload, 12).unwrap();
         buffer
             .get_mut()
             .unwrap()

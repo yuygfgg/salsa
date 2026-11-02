@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};
 use eac3joc::parameter_band_map;
-use objectaudio_damf::{CafReader, Manifest, Metadata};
+use objectaudio_damf::{CafReader, Manifest};
 use rustfft::{Fft, FftPlanner, num_complex::Complex32};
 
 use crate::joc::{self, ENC_BANDS};
@@ -127,7 +127,6 @@ pub(crate) struct JocAnalyzer {
     scratch: Vec<Complex32>,
     window: Vec<f32>,
     band_bins: [(usize, usize); ENC_BANDS],
-    bed_channels: usize,
     channels: usize,
     nobj: usize,
     nsig: usize,
@@ -161,7 +160,7 @@ impl JocAnalyzer {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         manifest: &Manifest,
-        metadata: &Metadata,
+        scene: &objectaudio_damf::DamfScene,
         pan_mode: render::PanMode,
         joc_lambda: f64,
         ridge: f64,
@@ -186,17 +185,7 @@ impl JocAnalyzer {
             bed_channels + nobj
         );
 
-        let mut keys = render::gain_keyframes(metadata, pan_mode);
-        let objects = manifest
-            .objects
-            .iter()
-            .enumerate()
-            .map(|(index, object)| render::ObjEnv {
-                ess_ch: bed_channels + index,
-                keys: keys.remove(&object.id).unwrap_or_default(),
-                cursor: 0,
-            })
-            .collect();
+        let objects = render::object_envelopes(scene, pan_mode);
 
         let window = (0..FFT_SIZE)
             .map(|i| {
@@ -226,7 +215,6 @@ impl JocAnalyzer {
             scratch,
             window,
             band_bins,
-            bed_channels,
             channels,
             nobj,
             nsig,
@@ -298,7 +286,9 @@ impl JocAnalyzer {
 
     fn consume_sample(&mut self, t: u64, sample: Option<&[f32]>) {
         for o in 0..self.nobj {
-            self.obj_vals[o] = sample.map_or(0.0, |pcm| pcm[self.bed_channels + o]);
+            self.obj_vals[o] = sample.map_or(0.0, |pcm| {
+                pcm[self.objects[o].ess_ch] * self.objects[o].amplitude_at(t)
+            });
         }
 
         let mut core = [0f32; 5];

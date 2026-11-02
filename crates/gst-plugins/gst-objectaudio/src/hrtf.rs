@@ -40,6 +40,7 @@ struct State {
     out_bpf: usize,
     rate: u32,
     pending: Vec<f32>,
+    received_samples: i64,
     available: Vec<f64>,
     next_pts: Option<gst::ClockTime>,
     total_out_samples: u64,
@@ -64,6 +65,7 @@ impl Default for State {
             out_bpf: 0,
             rate: SAMPLE_RATE,
             pending: Vec::new(),
+            received_samples: 0,
             available: Vec::new(),
             next_pts: None,
             total_out_samples: 0,
@@ -75,6 +77,7 @@ impl Default for State {
 impl State {
     fn reset_stream(&mut self) {
         self.pending.clear();
+        self.received_samples = 0;
         self.available.clear();
         self.next_pts = None;
         self.total_out_samples = 0;
@@ -192,14 +195,6 @@ impl HrtfRender {
             );
         }
         Some(buffer)
-    }
-
-    fn spatial_for_buffer(
-        &self,
-        buffer: &gst::BufferRef,
-    ) -> Option<(objectaudio_meta::SpatialPayload, usize)> {
-        let snapshot = objectaudio_meta::get_spatial(buffer)?;
-        Some((snapshot.payload, snapshot.offset))
     }
 }
 
@@ -566,12 +561,25 @@ impl BaseTransformImpl for HrtfRender {
         }
         drop(inmap);
 
-        let update = self.spatial_for_buffer(inbuf);
+        let updates = objectaudio_meta::iter_spatial(inbuf);
 
         let mut state = self.state.lock().unwrap();
         if state.next_pts.is_none() {
             state.next_pts = inbuf.pts();
         }
+        let buffer_start = state.received_samples;
+        for update in updates {
+            state
+                .renderer
+                .as_mut()
+                .ok_or(gst::FlowError::NotNegotiated)?
+                .submit_metadata(&update.payload, buffer_start)
+                .map_err(|error| {
+                    gst::error!(gst::CAT_RUST, "invalid HRTF metadata: {error}");
+                    gst::FlowError::Error
+                })?;
+        }
+        state.received_samples += samples as i64;
         state.pending.extend_from_slice(&interleaved);
         let frame_samples = FRAME_SAMPLES * in_channels;
         while state.pending.len() >= frame_samples {
@@ -588,16 +596,10 @@ impl BaseTransformImpl for HrtfRender {
                     .renderer
                     .as_mut()
                     .ok_or(gst::FlowError::NotNegotiated)?;
-                renderer
-                    .submit_frame(
-                        &planar,
-                        update.as_ref().map(|(payload, _)| payload),
-                        update.as_ref().map_or(0, |(_, offset)| *offset as i64),
-                    )
-                    .map_err(|error| {
-                        gst::error!(gst::CAT_RUST, "salsahrtfrender: submit failed: {error}");
-                        gst::FlowError::Error
-                    })?;
+                renderer.submit_frame(&planar, None).map_err(|error| {
+                    gst::error!(gst::CAT_RUST, "salsahrtfrender: submit failed: {error}");
+                    gst::FlowError::Error
+                })?;
                 renderer.take_output()
             };
             state.available.extend(produced);

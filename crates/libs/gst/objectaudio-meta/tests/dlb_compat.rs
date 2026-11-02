@@ -104,7 +104,7 @@ fn salsa_meta_is_independent_of_dolby() {
         vec![ObjectState::new(1, [0.5, 0.5, 0.0])],
         Vec::new(),
     );
-    add_spatial(buffer.get_mut().unwrap(), &payload, 0, 4).unwrap();
+    add_spatial(buffer.get_mut().unwrap(), &payload, 4).unwrap();
 
     let borrowed = object_audio_payload(&buffer).unwrap();
     assert_eq!(borrowed.source, PayloadSource::ObjectAudio);

@@ -1,4 +1,4 @@
-use crate::{IrError, ObjectEvent, ObjectState, PcmBuffer, SpatialPayload};
+use crate::{IrError, ObjectEvent, ObjectState, PcmBuffer, Snapshot, SpatialPayload, Transition};
 
 /// One decoded block of object audio.
 ///
@@ -11,7 +11,8 @@ pub struct SpatialFrame {
     pub frames: usize,
     pub objects: Vec<ObjectState>,
     pub events: Vec<ObjectEvent>,
-    pub snapshot_ramp_samples: Option<u32>,
+    pub snapshot: Snapshot,
+    pub snapshot_offset: i64,
     pub pcm: PcmBuffer,
 }
 
@@ -28,7 +29,8 @@ impl SpatialFrame {
             frames,
             objects,
             events,
-            snapshot_ramp_samples: None,
+            snapshot: Snapshot::State,
+            snapshot_offset: 0,
             pcm,
         };
         frame.validate()?;
@@ -45,43 +47,18 @@ impl SpatialFrame {
                 actual: self.pcm.frames(),
             });
         }
-        let expected_channels = self.objects.len() + 1;
-        if expected_channels != self.pcm.channel_count() {
-            return Err(IrError::ChannelObjectCountMismatch {
-                channels: self.pcm.channel_count(),
-                objects: self.objects.len(),
-                expected: expected_channels,
-            });
-        }
-        for (index, object) in self.objects.iter().enumerate() {
-            let expected = index as u32 + 1;
-            if object.id != expected {
-                return Err(IrError::ObjectIdNotContiguous {
-                    index,
-                    id: object.id,
-                    expected,
-                });
-            }
-        }
-        for event in &self.events {
-            if event.offset as usize > self.frames {
-                return Err(IrError::EventOutOfRange {
-                    offset: event.offset,
-                    frames: self.frames,
-                });
-            }
-            if event.object == 0 || event.object as usize > self.objects.len() {
-                return Err(IrError::UnknownEventObject {
-                    object: event.object,
-                });
-            }
-        }
-        Ok(())
+        self.to_payload()
+            .validate_layout(self.sample_rate, self.pcm.channel_count())
+    }
+
+    pub fn with_snapshot_offset(mut self, offset: i64) -> Self {
+        self.snapshot_offset = offset;
+        self
     }
 
     /// Set the ramp used when a renderer moves to this frame's object state.
     pub fn with_snapshot_ramp(mut self, ramp_samples: u32) -> Self {
-        self.snapshot_ramp_samples = Some(ramp_samples);
+        self.snapshot = Snapshot::Target(Transition::All(ramp_samples));
         self
     }
 
@@ -89,9 +66,10 @@ impl SpatialFrame {
     pub fn to_payload(&self) -> SpatialPayload {
         let payload =
             SpatialPayload::new(self.sample_rate, self.objects.clone(), self.events.clone());
-        match self.snapshot_ramp_samples {
-            Some(ramp) => payload.with_snapshot_ramp(ramp),
-            None => payload,
+        SpatialPayload {
+            snapshot: self.snapshot,
+            snapshot_offset: self.snapshot_offset,
+            ..payload
         }
     }
 }
@@ -106,7 +84,8 @@ mod tests {
             frames: 0,
             objects,
             events,
-            snapshot_ramp_samples: None,
+            snapshot: Snapshot::State,
+            snapshot_offset: 0,
             pcm: PcmBuffer::silent(channels, 0),
         }
     }
@@ -119,8 +98,7 @@ mod tests {
             vec![ObjectState::new(1, [0.0, 1.0, 0.0])],
             vec![ObjectEvent {
                 offset: 2,
-                ramp_samples: 16,
-                object: 1,
+                transition: crate::Transition::All(16),
                 state: ObjectState::new(1, [1.0, 1.0, 0.0]),
             }],
             PcmBuffer::silent(2, 4),
@@ -159,8 +137,7 @@ mod tests {
     fn rejects_events_for_missing_objects() {
         let event = ObjectEvent {
             offset: 0,
-            ramp_samples: 0,
-            object: 2,
+            transition: crate::Transition::All(0),
             state: ObjectState::new(2, [0.0, 0.0, 0.0]),
         };
         let frame = frame(vec![ObjectState::new(1, [0.0, 1.0, 0.0])], 2, vec![event]);
@@ -181,8 +158,11 @@ mod tests {
         )
         .unwrap()
         .with_snapshot_ramp(1536);
-        assert_eq!(frame.snapshot_ramp_samples, Some(1536));
-        assert_eq!(frame.to_payload().snapshot_ramp_samples, Some(1536));
+        assert_eq!(frame.snapshot, Snapshot::Target(Transition::All(1536)));
+        assert_eq!(
+            frame.to_payload().snapshot,
+            Snapshot::Target(Transition::All(1536))
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Timestamped object keyframes and interpolation.
+//! Visual sampling and trail history over the shared scene timeline.
 //!
 //! The probe publishes keyframes, not per-display-frame snapshots. The UI
 //! samples this timeline at the pipeline position so motion stays aligned with
@@ -10,7 +10,7 @@
 //! object has already passed must keep the position it had at that instant.
 
 use gstreamer as gst;
-use objectaudio_ir::{ObjectState, SpatialPayload};
+use objectaudio_ir::{ObjectState, SceneTimeline, SpatialPayload, StateTrack};
 
 /// Seconds of keyframe history kept per object (also the maximum trail depth).
 pub const HISTORY_SECONDS: u64 = 12;
@@ -56,12 +56,6 @@ pub struct VisualSnapshot {
     pub state: VisualState,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct Keyframe {
-    pub time_ns: u64,
-    pub state: ObjectState,
-}
-
 /// One committed point of an object's motion history.
 #[derive(Debug, Clone, Copy)]
 struct TrailPoint {
@@ -79,8 +73,7 @@ pub(crate) enum TapEvent {
     Buffer {
         epoch: u64,
         pts_ns: u64,
-        offset: usize,
-        payload: Option<SpatialPayload>,
+        payloads: Vec<SpatialPayload>,
         /// RMS levels in decoder channel order: LFE, then objects.
         levels: Vec<f32>,
         discont: bool,
@@ -115,7 +108,7 @@ pub(crate) struct Timeline {
     sample_rate: u32,
     channels: u32,
     object_ids: Vec<u32>,
-    tracks: Vec<Vec<Keyframe>>,
+    scene: Option<SceneTimeline>,
     /// Append-only trail history per object, oldest first.
     trails: Vec<Vec<TrailPoint>>,
     /// Grid spacing currently used by `trails`; zero until the first trail.
@@ -139,7 +132,7 @@ impl Default for Timeline {
             sample_rate: 48_000,
             channels: 0,
             object_ids: Vec::new(),
-            tracks: Vec::new(),
+            scene: None,
             trails: Vec::new(),
             trail_step_ns: 0,
             trail_next_ns: None,
@@ -158,7 +151,7 @@ impl Timeline {
     pub(crate) fn reset(&mut self, epoch: u64) {
         self.epoch = epoch;
         self.object_ids.clear();
-        self.tracks.clear();
+        self.scene = None;
         self.clear_trails();
         self.levels.clear();
         self.level_time_ns = None;
@@ -197,11 +190,10 @@ impl Timeline {
             TapEvent::Buffer {
                 epoch: _,
                 pts_ns,
-                offset,
-                payload,
+                payloads,
                 levels,
                 discont,
-            } => self.push_buffer(pts_ns, offset, payload, levels, discont),
+            } => self.push_buffer(pts_ns, payloads, levels, discont),
             TapEvent::Flush { epoch: _, stop } => {
                 self.reset(self.epoch);
                 if stop {
@@ -219,24 +211,16 @@ impl Timeline {
     }
 
     fn set_caps(&mut self, channels: u32, rate: u32) {
-        let objects = channels.saturating_sub(1) as usize;
         if channels != self.channels || rate != self.sample_rate {
             self.channels = channels;
             self.sample_rate = rate.max(1);
-            if objects != self.tracks.len() {
-                self.object_ids.clear();
-                self.tracks.clear();
-                self.clear_trails();
-                self.levels.clear();
-                self.level_time_ns = None;
-                self.state = VisualState::Seeking;
-            }
+            self.clear_timeline();
         }
     }
 
     fn clear_timeline(&mut self) {
         self.object_ids.clear();
-        self.tracks.clear();
+        self.scene = None;
         self.clear_trails();
         self.levels.clear();
         self.level_time_ns = None;
@@ -247,8 +231,7 @@ impl Timeline {
     fn push_buffer(
         &mut self,
         pts_ns: u64,
-        offset: usize,
-        payload: Option<SpatialPayload>,
+        payloads: Vec<SpatialPayload>,
         levels: Vec<f32>,
         discont: bool,
     ) {
@@ -260,21 +243,22 @@ impl Timeline {
             self.clear_timeline();
         }
 
-        let rate = payload
-            .as_ref()
-            .map(|payload| payload.sample_rate)
-            .filter(|rate| *rate != 0)
-            .unwrap_or(self.sample_rate);
-
-        if let Some(payload) = payload {
-            self.sample_rate = rate;
-            self.ensure_objects(&payload.objects);
-            self.update_levels(&levels, pts_ns);
-            self.apply_payload(pts_ns, offset, &payload);
+        if !payloads.is_empty() {
+            for payload in payloads {
+                if let Err(error) = payload.validate() {
+                    gst::warning!(gst::CAT_RUST, "invalid visual metadata: {error}");
+                    continue;
+                }
+                if payload.sample_rate != self.sample_rate {
+                    self.clear_timeline();
+                    self.sample_rate = payload.sample_rate;
+                }
+                self.ensure_objects(&payload.objects);
+                self.apply_payload(pts_ns, &payload);
+            }
             self.state = VisualState::Live;
             self.last_meta_ns = Some(pts_ns);
         } else {
-            self.update_levels(&levels, pts_ns);
             if self.frozen {
                 self.state = VisualState::Eos;
             } else if self
@@ -284,7 +268,7 @@ impl Timeline {
                 self.state = VisualState::Stale;
             }
         }
-
+        self.update_levels(&levels, pts_ns);
         self.last_pts_ns = Some(pts_ns);
         self.frames_since_trim += 1;
         if self.frames_since_trim >= TRIM_EVERY {
@@ -304,7 +288,7 @@ impl Timeline {
             return;
         }
         self.object_ids = objects.iter().map(|object| object.id).collect();
-        self.tracks = vec![Vec::new(); objects.len()];
+        self.scene = None;
         self.clear_trails();
         self.levels.clear();
         self.level_time_ns = None;
@@ -342,81 +326,31 @@ impl Timeline {
         self.level_time_ns = Some(pts_ns);
     }
 
-    fn apply_payload(&mut self, pts_ns: u64, offset: usize, payload: &SpatialPayload) {
-        let rate = self.sample_rate.max(1);
-        let snapshot_ns = pts_ns.saturating_add(offset_to_ns(offset, rate));
-        let mut updates: Vec<(u64, usize, ObjectState)> =
-            Vec::with_capacity(payload.objects.len() + payload.events.len() * 2);
+    fn tracks(&self) -> &[StateTrack] {
+        self.scene
+            .as_ref()
+            .map(SceneTimeline::tracks)
+            .unwrap_or(&[])
+    }
 
-        for (index, object) in payload.objects.iter().enumerate() {
-            updates.push((snapshot_ns, index, object.clone()));
-        }
-
-        let mut events = payload.events.clone();
-        events.sort_by_key(|event| event.offset);
-        for event in events {
-            let Some(index) = self.object_index(event.object) else {
-                continue;
-            };
-            let time_ns = pts_ns.saturating_add(offset_to_ns(event.offset as usize, rate));
-            if event.ramp_samples > 0 {
-                let previous = self
-                    .sample_state(index, time_ns)
-                    .or_else(|| payload.objects.get(index).cloned());
-                if let Some(previous) = previous {
-                    updates.push((time_ns, index, previous));
-                }
-                let end_ns =
-                    time_ns.saturating_add(offset_to_ns(event.ramp_samples as usize, rate));
-                updates.push((end_ns, index, event.state));
-            } else {
-                updates.push((time_ns, index, event.state));
+    fn apply_payload(&mut self, pts_ns: u64, payload: &SpatialPayload) {
+        let start = ns_to_sample(pts_ns, self.sample_rate);
+        let result = match &mut self.scene {
+            Some(scene) => scene.submit(payload, start),
+            None => {
+                SceneTimeline::from_payload(payload, start).map(|scene| self.scene = Some(scene))
             }
-        }
-
-        updates.sort_by_key(|(time_ns, _, _)| *time_ns);
-        for (time_ns, index, state) in updates {
-            self.insert_keyframe(index, time_ns, state);
-        }
-    }
-
-    fn object_index(&self, id: u32) -> Option<usize> {
-        self.object_ids
-            .iter()
-            .position(|candidate| *candidate == id)
-    }
-
-    fn insert_keyframe(&mut self, index: usize, time_ns: u64, state: ObjectState) {
-        let Some(track) = self.tracks.get_mut(index) else {
-            return;
         };
-        let position = track.partition_point(|keyframe| keyframe.time_ns < time_ns);
-        if let Some(existing) = track.get_mut(position)
-            && existing.time_ns == time_ns
-        {
-            existing.state = state;
-            return;
+        if let Err(error) = result {
+            gst::warning!(gst::CAT_RUST, "invalid visual metadata: {error}");
         }
-        track.insert(position, Keyframe { time_ns, state });
     }
 
     fn trim(&mut self, now_ns: u64) {
-        let cutoff = now_ns.saturating_sub(HISTORY_SECONDS.saturating_mul(1_000_000_000));
-        for track in &mut self.tracks {
-            let drop = track.partition_point(|keyframe| keyframe.time_ns < cutoff);
-            if drop > 0 {
-                track.drain(0..drop);
-            }
-            if track.len() > MAX_KEYFRAMES_PER_OBJECT {
-                let remove = track.len() - MAX_KEYFRAMES_PER_OBJECT;
-                track.drain(0..remove);
-            }
+        let cutoff = now_ns.saturating_sub(HISTORY_SECONDS * 1_000_000_000);
+        if let Some(scene) = &mut self.scene {
+            scene.discard_before(ns_to_sample(cutoff, self.sample_rate));
         }
-    }
-
-    fn sample_state(&self, index: usize, time_ns: u64) -> Option<ObjectState> {
-        let track = self.tracks.get(index)?;
-        sample_track(track, time_ns)
     }
 
     /// Append fixed-grid trajectory samples up to `time_ns`.
@@ -432,8 +366,8 @@ impl Timeline {
             self.trail_next_ns = None;
             self.trail_step_ns = step_ns;
         }
-        if self.trails.len() != self.tracks.len() {
-            self.trails = vec![Vec::new(); self.tracks.len()];
+        if self.trails.len() != self.tracks().len() {
+            self.trails = vec![Vec::new(); self.tracks().len()];
             self.trail_next_ns = None;
         }
 
@@ -494,16 +428,19 @@ impl Timeline {
     }
 
     fn push_trail_times(&mut self, times: &[u64]) {
-        let tracks = &self.tracks;
+        let tracks = self
+            .scene
+            .as_ref()
+            .map(SceneTimeline::tracks)
+            .unwrap_or(&[]);
         let trails = &mut self.trails;
         for &time_ns in times {
             for (track, trail) in tracks.iter().zip(trails.iter_mut()) {
-                if let Some(state) = sample_track(track, time_ns) {
-                    trail.push(TrailPoint {
-                        time_ns,
-                        position: state.position,
-                    });
-                }
+                let state = sample_track(track, time_ns, self.sample_rate);
+                trail.push(TrailPoint {
+                    time_ns,
+                    position: state.position,
+                });
             }
         }
     }
@@ -532,9 +469,8 @@ impl Timeline {
         }
         // Connect the committed history to the current interpolated position.
         // This is the only vertex that moves between frames.
-        if let Some(state) = sample_track(&self.tracks[index], time_ns)
-            && points.last().is_none_or(|last| *last != state.position)
-        {
+        let state = sample_track(&self.tracks()[index], time_ns, self.sample_rate);
+        if points.last().is_none_or(|last| *last != state.position) {
             points.push(state.position);
         }
         points
@@ -546,10 +482,13 @@ impl Timeline {
         trail_seconds: f32,
     ) -> Option<VisualSnapshot> {
         let first_ns = self
-            .tracks
+            .tracks()
             .iter()
-            .filter_map(|track| track.first().map(|keyframe| keyframe.time_ns))
+            .filter_map(StateTrack::first_sample)
             .min()
+            .map(|sample| {
+                (sample.max(0) as u128 * 1_000_000_000 / u128::from(self.sample_rate)) as u64
+            })
             .or(self.level_time_ns)?;
 
         let stale = self.state == VisualState::Stale
@@ -567,11 +506,9 @@ impl Timeline {
             self.commit_trails(time_ns, trail_ns);
         }
 
-        let mut objects = Vec::with_capacity(self.tracks.len());
-        for (index, track) in self.tracks.iter().enumerate() {
-            let Some(state) = sample_track(track, time_ns) else {
-                continue;
-            };
+        let mut objects = Vec::with_capacity(self.tracks().len());
+        for (index, track) in self.tracks().iter().enumerate() {
+            let state = sample_track(track, time_ns, self.sample_rate);
             let level = self
                 .levels
                 .get(index + 1)
@@ -617,8 +554,8 @@ impl Timeline {
     }
 }
 
-fn offset_to_ns(samples: usize, rate: u32) -> u64 {
-    (samples as u128 * 1_000_000_000u128 / u128::from(rate.max(1))) as u64
+fn ns_to_sample(ns: u64, rate: u32) -> i64 {
+    (u128::from(ns) * u128::from(rate) / 1_000_000_000) as i64
 }
 
 fn normalized_level(rms: f32) -> f32 {
@@ -629,54 +566,8 @@ fn normalized_level(rms: f32) -> f32 {
     }
 }
 
-fn sample_track(track: &[Keyframe], time_ns: u64) -> Option<ObjectState> {
-    if track.is_empty() {
-        return None;
-    }
-    let index = track.partition_point(|keyframe| keyframe.time_ns <= time_ns);
-    if index == 0 {
-        return Some(track[0].state.clone());
-    }
-    let before = &track[index - 1];
-    let Some(after) = track.get(index) else {
-        return Some(before.state.clone());
-    };
-    if after.time_ns <= before.time_ns {
-        return Some(after.state.clone());
-    }
-    let span = (after.time_ns - before.time_ns) as f32;
-    let elapsed = (time_ns - before.time_ns) as f32;
-    Some(lerp_state(
-        &before.state,
-        &after.state,
-        (elapsed / span).clamp(0.0, 1.0),
-    ))
-}
-
-fn lerp_state(a: &ObjectState, b: &ObjectState, amount: f32) -> ObjectState {
-    let lerp = |x: f32, y: f32| x + (y - x) * amount;
-    ObjectState {
-        id: a.id,
-        position: [
-            lerp(a.position[0], b.position[0]),
-            lerp(a.position[1], b.position[1]),
-            lerp(a.position[2], b.position[2]),
-        ],
-        gain: lerp(a.gain, b.gain),
-        enabled: if amount < 0.5 { a.enabled } else { b.enabled },
-        size: match (a.size, b.size) {
-            (Some(x), Some(y)) => Some(lerp(x, y)),
-            (Some(x), None) => Some(x),
-            (None, Some(y)) => Some(y),
-            (None, None) => None,
-        },
-        spread: match (a.spread, b.spread) {
-            (Some(x), Some(y)) => Some(lerp(x, y)),
-            (Some(x), None) => Some(x),
-            (None, Some(y)) => Some(y),
-            (None, None) => None,
-        },
-    }
+fn sample_track(track: &StateTrack, time_ns: u64, rate: u32) -> ObjectState {
+    track.state_at(ns_to_sample(time_ns, rate))
 }
 
 fn trail_step_ns(trail_ns: u64) -> u64 {
@@ -702,8 +593,7 @@ mod tests {
         TapEvent::Buffer {
             epoch: 0,
             pts_ns,
-            offset,
-            payload: Some(payload),
+            payloads: vec![payload.with_snapshot_offset(offset as i64)],
             levels,
             discont: false,
         }
@@ -731,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn interpolation_is_linear_between_keyframes() {
+    fn state_snapshots_do_not_start_moving_early() {
         let mut timeline = Timeline::default();
         timeline.handle(TapEvent::Caps {
             epoch: 0,
@@ -749,7 +639,7 @@ mod tests {
             payload(vec![object(1, [1.0, 0.0, 0.0])], vec![]),
         ));
         let snapshot = timeline.snapshot_at(500_000_000, 0.0).expect("snapshot");
-        assert!((snapshot.objects[0].position[0] - 0.5).abs() < 1e-4);
+        assert!(snapshot.objects[0].position[0].abs() < 1e-4);
     }
 
     #[test]
@@ -767,8 +657,7 @@ mod tests {
         ));
         let event = ObjectEvent {
             offset: 4_800,
-            ramp_samples: 4_800,
-            object: 1,
+            transition: objectaudio_ir::Transition::All(4_800),
             state: object(1, [1.0, 0.0, 0.0]),
         };
         timeline.handle(buffer_event(
@@ -812,11 +701,10 @@ mod tests {
             timeline.handle(TapEvent::Buffer {
                 epoch: 0,
                 pts_ns: 0,
-                offset: 0,
-                payload: Some(payload(
+                payloads: vec![payload(
                     vec![object(1, [0.0; 3]), object(2, [0.0; 3])],
                     vec![],
-                )),
+                )],
                 levels: levels.clone(),
                 discont: false,
             });
@@ -849,8 +737,7 @@ mod tests {
             timeline.handle(TapEvent::Buffer {
                 epoch: 0,
                 pts_ns,
-                offset: 0,
-                payload: Some(payload(vec![object(1, [0.0; 3])], vec![])),
+                payloads: vec![payload(vec![object(1, [0.0; 3])], vec![])],
                 levels: vec![lfe, 0.0],
                 discont: false,
             });
@@ -892,8 +779,7 @@ mod tests {
         timeline.handle(TapEvent::Buffer {
             epoch: 0,
             pts_ns: 0,
-            offset: 0,
-            payload: Some(payload(vec![object(1, [0.0; 3])], vec![])),
+            payloads: vec![payload(vec![object(1, [0.0; 3])], vec![])],
             levels: vec![0.0, 0.5],
             discont: false,
         });
@@ -916,8 +802,7 @@ mod tests {
         timeline.handle(TapEvent::Buffer {
             epoch: 0,
             pts_ns: 1_000_000_000,
-            offset: 0,
-            payload: None,
+            payloads: Vec::new(),
             levels: vec![0.0, 0.0],
             discont: false,
         });
@@ -967,12 +852,11 @@ mod tests {
         timeline.handle(TapEvent::Buffer {
             epoch: 0,
             pts_ns: 1_000_000_000,
-            offset: 0,
-            payload: Some(payload(vec![object(1, [1.0, 0.0, 0.0])], vec![])),
+            payloads: vec![payload(vec![object(1, [1.0, 0.0, 0.0])], vec![])],
             levels: vec![0.0, 0.5],
             discont: true,
         });
-        assert_eq!(timeline.tracks[0].len(), 1);
+        assert_eq!(timeline.tracks().len(), 1);
         let snapshot = timeline.snapshot_at(1_000_000_000, 0.0).expect("snapshot");
         assert_eq!(snapshot.objects[0].position, [1.0, 0.0, 0.0]);
         assert_eq!(snapshot.state, VisualState::Live);
@@ -996,8 +880,7 @@ mod tests {
         timeline.handle(TapEvent::Buffer {
             epoch: 1,
             pts_ns: 1_000_000_000,
-            offset: 0,
-            payload: Some(payload(vec![object(1, [1.0, 0.0, 0.0])], vec![])),
+            payloads: vec![payload(vec![object(1, [1.0, 0.0, 0.0])], vec![])],
             levels: vec![0.5, 0.5],
             discont: false,
         });
@@ -1012,8 +895,7 @@ mod tests {
             channels: 2,
             rate: 48_000,
         });
-        // Sparse keyframes stay linear in time, so a trail vertex's x is the
-        // instant it was sampled.
+        // Sparse state snapshots hold until the next authored update.
         for (sample, x) in [(0u64, 0.0f32), (1_000_000_000, 1.0), (2_000_000_000, 2.0)] {
             timeline.handle(buffer_event(
                 sample,
@@ -1033,10 +915,12 @@ mod tests {
 
         // A late keyframe rewrites the interpolation around 0.4 s. The trail
         // has already been travelled, so its committed vertices must not move.
-        timeline.insert_keyframe(0, 490_000_000, object(1, [5.0, 0.0, 0.0]));
-        let resampled = sample_track(&timeline.tracks[0], 400_000_000)
-            .expect("resampled state")
-            .position;
+        timeline.apply_payload(
+            390_000_000,
+            &payload(vec![object(1, [5.0, 0.0, 0.0])], vec![]),
+        );
+        let resampled =
+            sample_track(&timeline.tracks()[0], 400_000_000, timeline.sample_rate).position;
         assert!(
             (resampled[0] - 0.4).abs() > 1.0,
             "the test must actually change the timeline"
@@ -1080,8 +964,8 @@ mod tests {
             .trail
             .clone();
         // The old window [0.5, 1.0] and the new window [0.8, 1.3] share
-        // [0.8, 1.0]. Those vertices must be bit-identical, not resampled.
-        for point in &first {
+        // [0.8, 1.0]. Exclude the live endpoint: only committed vertices persist.
+        for point in first.iter().take(first.len() - 1) {
             if (0.8..=1.0).contains(&point[0]) {
                 assert!(
                     second.iter().any(|other| other == point),

@@ -3,7 +3,6 @@
 use std::sync::{Mutex, OnceLock};
 
 use gst::glib;
-use gst::prelude::*;
 use gstreamer as gst;
 use gstreamer_audio as gst_audio;
 use gstreamer_base as gst_base;
@@ -347,7 +346,7 @@ impl BaseSrcImpl for DamfSrc {
             buffer.set_offset(block.start_sample);
             buffer.set_offset_end(block.start_sample + block.frames as u64);
             if attach_meta {
-                objectaudio_meta::add_spatial(buffer, &block.payload, 0, bpf).map_err(|error| {
+                objectaudio_meta::add_spatial(buffer, &block.payload, bpf).map_err(|error| {
                     gst::error!(gst::CAT_RUST, "salsadamfsrc: cannot attach meta: {error}");
                     gst::FlowError::Error
                 })?;

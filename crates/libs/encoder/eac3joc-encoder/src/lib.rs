@@ -15,7 +15,6 @@ mod joc_analysis;
 mod lfe;
 mod phase_shift;
 pub mod render;
-mod timeline;
 
 pub use core::{CoreOptions, EncodeOptions, JocMode, JocOptions, JocQuant, JocSelect, encode};
 pub use reac3e;

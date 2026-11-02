@@ -51,9 +51,12 @@ the renderer will then receive `ObjectAudioMeta` / `SpatialPayload`.
 ### to-dolby
 
 - Reads every `SpatialPayload` from `ObjectAudioMeta`.
-- Encodes it as OAMD ID11 with `objectaudio-oamd::encode`. Every non-LFE object
-  is written as a dynamic object; beds are not rebuilt.
-- Attaches `DlbObjectAudioMeta` with the same sample offset and `bpf`.
+- Submits updates to the shared scene timeline, then exports codec-sized ranges
+  through `objectaudio-oamd::encode`. Every non-LFE object is written as a
+  dynamic object; beds are not rebuilt.
+- Attaches `DlbObjectAudioMeta` at each exported range's buffer offset.
+- Rejects more than eight control blocks or conflicting ramps in one OAMD
+  block. These limits are explicit; excess events are not discarded.
 - Positions are quantized to 6-bit x/y and 4-bit z; gains to integer dB.
 
 ### to-salsa

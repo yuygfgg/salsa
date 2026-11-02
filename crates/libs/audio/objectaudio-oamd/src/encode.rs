@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use bitstream_io::{BigEndian, BitWrite, BitWriter};
-use objectaudio_ir::{METADATA_BLOCK_SAMPLES, SpatialPayload};
+use objectaudio_ir::{METADATA_BLOCK_SAMPLES, Snapshot, SpatialPayload, align_sample};
 
 use crate::OamdError;
 
@@ -19,7 +19,34 @@ const MAX_BLOCK_OFFSET: u32 = 63;
 ///
 /// Every non-LFE object is written as a dynamic object. Bed semantics are not
 /// reconstructed: this is the documented lossy direction of the Dolby adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncodingProfile {
+    ObjectAudio,
+    Eac3Joc,
+}
+
 pub fn encode(payload: &SpatialPayload) -> Result<Vec<u8>, OamdError> {
+    encode_with_profile(payload, EncodingProfile::ObjectAudio)
+}
+
+/// Profiles share the same OAMD schema. E-AC-3 adds its default trim element.
+pub fn encode_with_profile(
+    payload: &SpatialPayload,
+    profile: EncodingProfile,
+) -> Result<Vec<u8>, OamdError> {
+    payload
+        .validate()
+        .map_err(|error| OamdError::Encode(error.to_string()))?;
+    if payload
+        .objects
+        .iter()
+        .chain(payload.events.iter().map(|event| &event.state))
+        .any(|object| object.spread.is_some())
+    {
+        return Err(OamdError::Encode(
+            "object spread is not supported by the OAMD writer".into(),
+        ));
+    }
     let object_count = payload.objects.len() + 1;
     if object_count > 159 {
         return Err(OamdError::TooManyObjects {
@@ -28,9 +55,9 @@ pub fn encode(payload: &SpatialPayload) -> Result<Vec<u8>, OamdError> {
         });
     }
 
-    let blocks = block_table(payload);
+    let blocks = block_table(payload)?;
     let mut body = BitWriter::new(Vec::new());
-    write_body(&mut body, payload, &blocks)?;
+    write_body(&mut body, &blocks)?;
     body.byte_align()
         .map_err(|error| OamdError::Encode(error.to_string()))?;
     let body = body.into_writer();
@@ -49,12 +76,25 @@ pub fn encode(payload: &SpatialPayload) -> Result<Vec<u8>, OamdError> {
         .map_err(|error| OamdError::Encode(error.to_string()))?; // b_lfe_present
     out.write_bit(false)
         .map_err(|error| OamdError::Encode(error.to_string()))?; // b_alternate_object_data_present
-    write(&mut out, 4, 1)?; // one OA element
+    write(
+        &mut out,
+        4,
+        if profile == EncodingProfile::Eac3Joc {
+            2
+        } else {
+            1
+        },
+    )?;
 
     write(&mut out, 4, 1)?; // oa_element_id_idx = object
     write_variable(&mut out, (body.len() - 1) as u32)?;
     out.write_bytes(&body)
         .map_err(|error| OamdError::Encode(error.to_string()))?;
+    if profile == EncodingProfile::Eac3Joc {
+        write(&mut out, 4, 2)?; // trim element
+        write_variable(&mut out, 0)?; // one byte
+        write(&mut out, 8, 0b0010_0000)?; // warp mode 1; default global trim
+    }
     out.byte_align()
         .map_err(|error| OamdError::Encode(error.to_string()))?;
     Ok(out.into_writer())
@@ -107,34 +147,67 @@ struct BlockTable {
     offsets: Vec<u32>,
     ramps: Vec<u16>,
     /// `state[slot - 1][block]`, where slot 0 is LFE.
-    states: Vec<Vec<Option<objectaudio_ir::ObjectState>>>,
+    states: Vec<Vec<objectaudio_ir::ObjectState>>,
 }
 
-fn block_table(payload: &SpatialPayload) -> BlockTable {
-    let mut by_block: BTreeMap<u32, u16> = BTreeMap::new();
-    by_block.insert(
-        0,
-        payload
-            .snapshot_ramp_samples
-            .unwrap_or(0)
-            .min(u32::from(u16::MAX)) as u16,
-    );
-    let half_block = METADATA_BLOCK_SAMPLES as u32 / 2;
+fn block_table(payload: &SpatialPayload) -> Result<BlockTable, OamdError> {
     let block_samples = METADATA_BLOCK_SAMPLES as u32;
-    for event in &payload.events {
-        let block = (event.offset.saturating_add(half_block) / block_samples).min(MAX_BLOCK_OFFSET);
-        by_block
-            .entry(block)
-            .and_modify(|ramp| *ramp = (*ramp).max(event.ramp_samples.min(u16::MAX as u32) as u16))
-            .or_insert(event.ramp_samples.min(u16::MAX as u32) as u16);
-    }
-    let mut offsets: Vec<u32> = by_block.keys().copied().collect();
-    offsets.truncate(MAX_BLOCKS);
-    let ramps: Vec<u16> = offsets
+    let block_at = |sample: i64| -> Result<u32, OamdError> {
+        let aligned = align_sample(sample, block_samples);
+        if sample < 0 || aligned > i64::from(MAX_BLOCK_OFFSET * block_samples) {
+            return Err(OamdError::Encode(format!(
+                "sample offset {sample} is outside the OAMD block range; resolve or split the scene first"
+            )));
+        }
+        Ok((aligned / i64::from(block_samples)) as u32)
+    };
+    let snapshot_ramp = match payload.snapshot {
+        Snapshot::State => 0,
+        Snapshot::Continue => {
+            return Err(OamdError::Encode(
+                "resolve stream history before encoding a continuation".into(),
+            ));
+        }
+        Snapshot::Target(transition) => transition.samples(),
+    };
+    let mut by_block = BTreeMap::new();
+    by_block.insert(
+        block_at(payload.snapshot_offset)?,
+        matches!(payload.snapshot, Snapshot::Target(_)).then_some(snapshot_ramp),
+    );
+    let mut events = payload
+        .events
         .iter()
-        .map(|block| by_block.get(block).copied().unwrap_or(0))
+        .map(|event| Ok((block_at(event.offset)?, event)))
+        .collect::<Result<Vec<_>, OamdError>>()?;
+    events.sort_by_key(|(_, event)| event.offset);
+    for (block, event) in &events {
+        let ramp = event.transition.samples();
+        if let Some(Some(previous)) = by_block.insert(*block, Some(ramp))
+            && previous != ramp
+        {
+            return Err(OamdError::Encode(
+                "different ramp lengths share one OAMD block; resample the scene before encoding"
+                    .into(),
+            ));
+        }
+    }
+    if by_block.len() > MAX_BLOCKS {
+        return Err(OamdError::TooManyBlocks {
+            count: by_block.len(),
+            limit: MAX_BLOCKS,
+        });
+    }
+    if by_block.values().any(|ramp| ramp.unwrap_or(0) > 2047) {
+        return Err(OamdError::Encode(
+            "ramp exceeds the OAMD duration range".into(),
+        ));
+    }
+    let offsets: Vec<u32> = by_block.keys().copied().collect();
+    let ramps = by_block
+        .values()
+        .map(|ramp| ramp.unwrap_or(0) as u16)
         .collect();
-
     let states = payload
         .objects
         .iter()
@@ -142,33 +215,23 @@ fn block_table(payload: &SpatialPayload) -> BlockTable {
             offsets
                 .iter()
                 .map(|block| {
-                    let block_offset = block * block_samples;
-                    payload
-                        .events
+                    events
                         .iter()
-                        .rfind(|event| {
-                            event.object == object.id
-                                && (event.offset.saturating_add(half_block) / block_samples)
-                                    .min(MAX_BLOCK_OFFSET)
-                                    <= *block
-                                && event.offset <= block_offset
-                        })
-                        .map(|event| event.state.clone())
-                        .or_else(|| Some(object.clone()))
+                        .rfind(|(at, event)| *at <= *block && event.state.id == object.id)
+                        .map_or(*object, |(_, event)| event.state)
                 })
                 .collect()
         })
         .collect();
-    BlockTable {
+    Ok(BlockTable {
         offsets,
         ramps,
         states,
-    }
+    })
 }
 
 fn write_body(
     out: &mut BitWriter<Vec<u8>, BigEndian>,
-    _payload: &SpatialPayload,
     table: &BlockTable,
 ) -> Result<(), OamdError> {
     let write = |writer: &mut BitWriter<Vec<u8>, BigEndian>, bits: u32, value: u32| {
@@ -202,8 +265,7 @@ fn write_body(
 
     for object_states in &table.states {
         for (block, state) in object_states.iter().enumerate() {
-            let state = state.as_ref();
-            let active = state.is_some_and(|state| state.enabled && state.gain > 0.0);
+            let active = state.enabled && state.gain > 0.0;
             out.write_bit(!active)
                 .map_err(|error| OamdError::Encode(error.to_string()))?;
             if !active {
@@ -211,19 +273,18 @@ fn write_body(
                     .map_err(|error| OamdError::Encode(error.to_string()))?;
                 continue;
             }
-            let state = state.expect("active state");
             if block == 0 {
                 write_basic(out, state.gain)?;
             } else {
-                write(out, 2, 3)?; // full basic info
+                write(out, 2, 1)?; // all basic fields
                 write_basic(out, state.gain)?;
             }
             if block > 0 {
-                write(out, 2, 3)?; // full render info
+                write(out, 2, 1)?; // all render fields
                 out.write_bit(false)
                     .map_err(|error| OamdError::Encode(error.to_string()))?; // absolute position
             }
-            write_position(out, state.position, block > 0)?;
+            write_position(out, state.position)?;
             out.write_bit(false)
                 .map_err(|error| OamdError::Encode(error.to_string()))?; // no distance
             write(out, 3, 0)?; // zone constraints
@@ -286,7 +347,6 @@ fn write_basic(out: &mut BitWriter<Vec<u8>, BigEndian>, gain: f32) -> Result<(),
 fn write_position(
     out: &mut BitWriter<Vec<u8>, BigEndian>,
     position: [f32; 3],
-    _block: bool,
 ) -> Result<(), OamdError> {
     let write = |writer: &mut BitWriter<Vec<u8>, BigEndian>, bits: u32, value: u32| {
         writer

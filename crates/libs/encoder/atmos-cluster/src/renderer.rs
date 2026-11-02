@@ -154,6 +154,10 @@ impl<'a> ClusterRenderer<'a> {
         &self.stats
     }
 
+    pub fn set_zones(&mut self, zones: &[String]) {
+        self.zones.clone_from_slice(zones);
+    }
+
     pub fn render(
         &mut self,
         loudness: &Loudness,

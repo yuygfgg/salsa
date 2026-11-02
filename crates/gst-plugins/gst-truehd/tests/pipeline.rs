@@ -143,7 +143,10 @@ fn object_meta_reaches_the_sink() {
                 counters.0.fetch_add(1, Ordering::Relaxed);
                 if let Some(snapshot) = objectaudio_meta::get_spatial(buffer) {
                     counters.1.fetch_add(1, Ordering::Relaxed);
-                    if snapshot.payload.snapshot_ramp_samples.is_some() {
+                    if matches!(
+                        snapshot.payload.snapshot,
+                        objectaudio_ir::Snapshot::Target(_)
+                    ) {
                         counters.2.fetch_add(1, Ordering::Relaxed);
                     }
                 }

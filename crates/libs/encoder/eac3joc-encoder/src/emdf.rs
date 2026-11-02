@@ -22,156 +22,19 @@ pub struct ObjectPos {
     pub z: f32,
 }
 
-/// Quantize DAMF coordinates to OAMD position codes.
-/// OAMD: X 0=left..1=right (×1/62), Y 0=front..1=back (×1/62), Z 0=floor..1=ceiling (×1/15).
-fn quantize_pos(p: ObjectPos) -> (u32, u32, u32, u32) {
-    let oamd_x = ((p.x + 1.0) * 0.5).clamp(0.0, 1.0);
-    let oamd_y = ((1.0 - p.y) * 0.5).clamp(0.0, 1.0);
-    let oamd_z = p.z.clamp(0.0, 1.0);
-    let px = (oamd_x * 62.0).round() as u32; // 0..62
-    let py = (oamd_y * 62.0).round() as u32;
-    let pz = (oamd_z * 15.0).round() as u32; // 0..15
-    (px, py, 1, pz) // z sign always positive (z >= 0)
-}
-
-/// Encode an OAMD payload for a "dynamic object-only + LFE bed" program:
-/// object 0 is the LFE bed, objects 1.. are the dynamic objects. Single info block at frame start.
-/// Returns whole bytes (the EMDF payload body).
-pub fn encode_oamd(objects: &[ObjectPos], lfe: bool) -> Vec<u8> {
-    let bed_count: usize = if lfe { 1 } else { 0 };
-    let object_count = bed_count + objects.len();
-    assert!(
-        (1..=159).contains(&object_count),
-        "object_count out of range"
-    );
-
-    let mut w = BitWriter::new();
-    // object_audio_metadata_payload()
-    w.write(0, 2); // oa_md_version_bits
-    write_count5(&mut w, (object_count - 1) as u32); // object_count_bits (=count-1)
-    // program_assignment(): dynamic-object-only + LFE
-    w.bit(1); // b_dyn_object_only_program
-    w.bit(if lfe { 1 } else { 0 }); // b_lfe_present
-    w.bit(0); // b_alternate_object_data_present
-    w.write(2, 4); // oa_element_count_bits: object_element + trim_element
-
-    // oa_element_md()
-    w.write(1, 4); // oa_element_id_idx = 1 (object element)
-    let body = encode_object_element(objects, bed_count, object_count);
-    // TS 103 420 §5.6.4.3: oa_element_size is the total length in BYTES of
-    // b_discard_unknown_element + oa_element + padding (no alternate id here).
-    let element_bits = 1 + body.bit_len;
-    let element_bytes = element_bits.div_ceil(8);
-    let size_value = (element_bytes - 1) as u32;
-    write_var_max4(&mut w, size_value);
-    // (b_alternate_object_data_present == 0 → no alternate id)
-    w.bit(0); // b_discard_unknown_element
-    w.copy_bits(&body.bytes, body.bit_len); // oa_element() = object_element()
-    for _ in 0..(element_bytes * 8 - element_bits) {
-        w.bit(0); // padding, counted by oa_element_size
-    }
-
-    // DME appends a trim_element on every frame. The values are the Dolby encoder's defaults for
-    // this master: warp_mode=1 (Y x2), default global trim, and no per-object disable because
-    // every DAMF element has trimBypass=false. build_timelines() rejects trimBypass=true until
-    // the per-object b_disable_trim array is implemented.
-    w.write(2, 4); // oa_element_id_idx = 2 (trim_element)
-    write_var_max4(&mut w, 0); // oa_element_size = 1 byte
-    w.bit(0); // b_discard_unknown_element
-    w.write(0b01, 2); // warp_mode = 1 (object_position_Y multiplied by 2)
-    w.write(0b00, 2); // reserved
-    w.write(0b00, 2); // global_trim_mode = default_trim
-    w.bit(0); // b_disable_trim_per_obj = 0
-
-    w.into_bytes()
-}
-
-struct Bits {
-    bytes: Vec<u8>,
-    bit_len: usize,
-}
-
-fn encode_object_element(objects: &[ObjectPos], bed_count: usize, object_count: usize) -> Bits {
-    let mut w = BitWriter::new();
-    // md_update_info()
-    w.write(0, 2); // sample_offset_code = 0 (no offset)
-    w.write(0, 3); // num_obj_info_blocks_bits = 0 → 1 block
-    // block_update_info(0)
-    w.write(0, 6); // block_offset_factor_bits = 0 (start of frame)
-    w.write(0b10, 2); // ramp_duration_code = 2 → 1536-sample ramp (smooth, full frame)
-
-    w.bit(1); // b_reserved_data_not_present = 1 (no reserved 5 bits)
-
-    // object_data() for each object (single block, blk == 0). Objects [0, bed_count) are beds.
-    for obj in 0..object_count {
-        let is_bed = obj < bed_count;
-        let pos = if is_bed {
-            None
-        } else {
-            objects.get(obj - bed_count).copied()
-        };
-        encode_object_info_block(&mut w, is_bed, pos);
-    }
-
-    let bit_len = w.bit_len();
-    Bits {
-        bytes: w.into_bytes(),
-        bit_len,
-    }
-}
-
-fn encode_object_info_block(w: &mut BitWriter, is_bed: bool, pos: Option<ObjectPos>) {
-    w.bit(0); // b_object_not_active = 0 (active)
-    // blk == 0 ⇒ object_basic_info_status_idx = 0b01 (implicit) ⇒ object_basic_info()
-    //   object_basic_info[] = {true, true}
-    // object_gain_idx: real Dolby files use 0b00 (unity) for the LFE bed but 0b11 ("reuse last
-    // gain" → no per-frame attenuation) for dynamic objects. Match that exactly.
-    w.write(if is_bed { 0b00 } else { 0b11 }, 2);
-    w.bit(1); // b_default_object_priority = 1 (no priority bits)
-
-    if !is_bed {
-        // blk == 0, not bed ⇒ object_render_info_status_idx = 0b01 ⇒ object_render_info()
-        //   obj_render_info[] = {true, true, true, true}
-        let p = pos.unwrap_or(ObjectPos {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-        });
-        let (px, py, zsign, pz) = quantize_pos(p);
-        // obj_render_info[0]: position (blk==0 ⇒ no differential bit)
-        w.write(px, 6); // pos3D_X_bits
-        w.write(py, 6); // pos3D_Y_bits
-        w.write(zsign, 1); // pos3D_Z_sign_bits
-        w.write(pz, 4); // pos3D_Z_bits
-        w.bit(0); // b_object_distance_specified = 0
-        // obj_render_info[1]: zone_constraints_idx(3) + b_enable_elevation(1). Every real Dolby file
-        // sets this field to 0b0001 (elevation ENABLED); we previously wrote 0b0000, which Cavern
-        // ignores but a conformant Dolby renderer may read as "height disabled" → flattened objects.
-        w.write(0b0001, 4);
-        // obj_render_info[2]: object_size_idx = 0b00 (point source)
-        w.write(0b00, 2);
-        // obj_render_info[3]: b_object_use_screen_ref = 0
-        w.bit(0);
-        // b_object_snap = 0
-        w.bit(0);
-    }
-
-    w.bit(0); // b_additional_table_data_exists = 0
-}
-
-/// object_count_bits: 5 bits, with a 7-bit extension when == 0x1F.
-fn write_count5(w: &mut BitWriter, count_minus_1: u32) {
-    if count_minus_1 < 0x1F {
-        w.write(count_minus_1, 5);
-    } else {
-        w.write(0x1F, 5);
-        w.write(count_minus_1 - 0x1F, 7);
-    }
-}
-
-/// variable_bits_max(4, 4) for oa_element_size_bits.
-fn write_var_max4(w: &mut BitWriter, value: u32) {
-    w.write_var(value, 4);
+/// E-AC-3 samples targets at frame end and emits a full-frame transition.
+/// The OAMD schema and coordinate quantization live in the shared writer.
+pub fn encode_oamd(objects: &[ObjectPos]) -> Result<Vec<u8>, objectaudio_oamd::OamdError> {
+    let states = objects
+        .iter()
+        .enumerate()
+        .map(|(index, object)| {
+            objectaudio_ir::ObjectState::new(index as u32 + 1, [object.x, object.y, object.z])
+        })
+        .collect();
+    let payload =
+        objectaudio_ir::SpatialPayload::new(48_000, states, Vec::new()).with_snapshot_ramp(1536);
+    objectaudio_oamd::encode_with_profile(&payload, objectaudio_oamd::EncodingProfile::Eac3Joc)
 }
 
 /// Encode the 3-byte programme_information() payload (TS 102 366 H.3.2) we carry next to OAMD

@@ -2,17 +2,16 @@
 //! 5.1 bed downmix for the Atmos encoder.
 //!
 //! Each dynamic object is panned by its horizontal azimuth onto the standard
-//! 5.1 speaker ring. The LFE bed passes through. Per-object gains are linearly
-//! interpolated between metadata position keyframes so moving objects track
-//! smoothly.
+//! 5.1 speaker ring. The shared DAMF scene supplies source amplitude and the
+//! authored position trajectory. The LFE keeps its own amplitude track.
 //!
 //! This module also owns the encoder panning laws (`hard71` default, `hard51`
 //! and the legacy `vbap`).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
 use anyhow::{Context, Result, ensure};
-use objectaudio_damf::{CafReader, Manifest, Metadata};
+use objectaudio_damf::{CafReader, DamfScene, Manifest, ObjectTrack};
 
 use crate::phase_shift;
 
@@ -158,67 +157,43 @@ pub(crate) fn pan_vbap(x: f64, y: f64) -> [f32; 5] {
     g
 }
 
-/// One object's panning timeline: essence channel + (samplePos, gains) keyframes.
+/// Panning and source amplitude share the same resolved metadata track.
 #[derive(Debug)]
 pub(crate) struct ObjEnv {
     pub(crate) ess_ch: usize,
-    pub(crate) keys: Vec<(u64, [f32; 5])>,
-    pub(crate) cursor: usize,
+    track: ObjectTrack,
+    mode: PanMode,
 }
-
 impl ObjEnv {
-    /// Gains at absolute sample index `t`, advancing the cursor (t is monotonically increasing).
-    pub(crate) fn gains_at(&mut self, t: u64) -> [f32; 5] {
-        if self.keys.is_empty() {
-            return [0.0; 5];
-        }
-        while self.cursor + 1 < self.keys.len() && self.keys[self.cursor + 1].0 <= t {
-            self.cursor += 1;
-        }
-        let (p0, g0) = self.keys[self.cursor];
-        if self.cursor + 1 < self.keys.len() {
-            let (p1, g1) = self.keys[self.cursor + 1];
-            let frac = if p1 > p0 && t > p0 {
-                ((t - p0) as f32) / ((p1 - p0) as f32)
-            } else {
-                0.0
-            };
-            let mut g = [0.0f32; 5];
-            for k in 0..5 {
-                g[k] = g0[k] + (g1[k] - g0[k]) * frac;
-            }
-            g
-        } else {
-            g0
+    pub(crate) fn amplitude_at(&self, t: u64) -> f32 {
+        self.track.effective_gain_at(t)
+    }
+    pub(crate) fn gains_at(&self, t: u64) -> [f32; 5] {
+        let [x, y, z] = self.track.position_at(t).map(f64::from);
+        match self.mode {
+            PanMode::Vbap => pan_vbap(x, y),
+            PanMode::Hard51 => pan_hard51(x, y, z),
+            PanMode::Hard71 => pan_hard71(x, y, z),
         }
     }
 }
-
-/// Build each element's per-sample panning gain keyframes from the diff-encoded metadata events.
-pub(crate) fn gain_keyframes(meta: &Metadata, mode: PanMode) -> HashMap<i64, Vec<(u64, [f32; 5])>> {
-    let mut cur: HashMap<i64, ([f64; 3], bool)> = HashMap::new();
-    let mut keys: HashMap<i64, Vec<(u64, [f32; 5])>> = HashMap::new();
-    for e in &meta.events {
-        let id = e.id;
-        let st = cur.entry(id).or_insert(([0.0, 0.0, 0.0], true));
-        if let Some(p) = e.position {
-            st.0 = [f64::from(p[0]), f64::from(p[1]), f64::from(p[2])];
-        }
-        if let Some(a) = e.active {
-            st.1 = a;
-        }
-        let g = if st.1 {
-            match mode {
-                PanMode::Vbap => pan_vbap(st.0[0], st.0[1]),
-                PanMode::Hard51 => pan_hard51(st.0[0], st.0[1], st.0[2]),
-                PanMode::Hard71 => pan_hard71(st.0[0], st.0[1], st.0[2]),
-            }
-        } else {
-            [0.0; 5]
-        };
-        keys.entry(id).or_default().push((e.sample_pos, g));
-    }
-    keys
+pub(crate) fn object_envelopes(scene: &DamfScene, mode: PanMode) -> Vec<ObjEnv> {
+    scene
+        .objects
+        .iter()
+        .map(|object| ObjEnv {
+            ess_ch: object.channel,
+            track: object.track.clone(),
+            mode,
+        })
+        .collect()
+}
+pub(crate) fn positions_at(scene: &DamfScene, t: u64) -> Vec<[f32; 3]> {
+    scene
+        .objects
+        .iter()
+        .map(|object| object.track.position_at(t))
+        .collect()
 }
 
 /// Summary returned by [`write_downmix`].
@@ -234,6 +209,7 @@ pub(crate) struct DownmixReader {
     reader: CafReader,
     objects: Vec<ObjEnv>,
     lfe_ch: usize,
+    lfe_track: ObjectTrack,
     channels: usize,
     total_frames: u64,
     t: u64,
@@ -251,7 +227,7 @@ pub(crate) struct DownmixReader {
 impl DownmixReader {
     pub(crate) fn new(
         manifest: &Manifest,
-        metadata: &Metadata,
+        scene: &DamfScene,
         gain_db: f64,
         mode: PanMode,
         surround_phase_shift: bool,
@@ -261,34 +237,8 @@ impl DownmixReader {
             bed_count == 1 && manifest.beds[0].name.eq_ignore_ascii_case("LFE"),
             "the encoder supports an LFE-only bed; found {bed_count} bed channel(s)"
         );
-        ensure!(
-            metadata.sample_rate == 48_000,
-            "reac3e supports 48 kHz only (DAMF is {} Hz)",
-            metadata.sample_rate
-        );
-
-        let mut id_to_ch: HashMap<i64, usize> = HashMap::new();
-        let mut lfe_ch = None;
-        for (ch, bed) in manifest.beds.iter().enumerate() {
-            if bed.name.eq_ignore_ascii_case("LFE") {
-                lfe_ch = Some(ch);
-            }
-            id_to_ch.insert(bed.id, ch);
-        }
-        for (index, object) in manifest.objects.iter().enumerate() {
-            id_to_ch.insert(object.id, bed_count + index);
-        }
-
-        let mut keys = gain_keyframes(metadata, mode);
-        let objects: Vec<ObjEnv> = manifest
-            .objects
-            .iter()
-            .map(|object| ObjEnv {
-                ess_ch: id_to_ch[&object.id],
-                keys: keys.remove(&object.id).unwrap_or_default(),
-                cursor: 0,
-            })
-            .collect();
+        let lfe = scene.lfe.as_ref().context("encoder requires an LFE bed")?;
+        let objects = object_envelopes(scene, mode);
         let object_count = objects.len();
         let reader = CafReader::open(&manifest.audio)
             .with_context(|| format!("opening {}", manifest.audio.display()))?;
@@ -312,7 +262,8 @@ impl DownmixReader {
         Ok(Self {
             reader,
             objects,
-            lfe_ch: lfe_ch.expect("LFE bed"),
+            lfe_ch: lfe.channel,
+            lfe_track: lfe.track.clone(),
             channels,
             total_frames,
             t: 0,
@@ -382,11 +333,10 @@ impl DownmixReader {
         for f in 0..frames {
             let base = f * self.channels;
             let mut o = [0f32; 6];
-            o[3] = pcm[base + self.lfe_ch];
+            o[3] = pcm[base + self.lfe_ch] * self.lfe_track.effective_gain_at(self.t);
             for obj in &mut self.objects {
-                let sample = pcm[base + obj.ess_ch];
+                let sample = pcm[base + obj.ess_ch] * obj.amplitude_at(self.t);
                 if sample == 0.0 {
-                    obj.gains_at(self.t);
                     continue;
                 }
                 let gains = obj.gains_at(self.t);
@@ -461,39 +411,5 @@ mod tests {
         assert!(approx(pan_hard71(-1.0, -1.0, 0.0)[3], 0.842));
         assert!(approx(pan_hard71(1.0, 0.0, 0.0)[4], 0.867));
         assert!(approx(pan_hard71(1.0, -1.0, 0.0)[4], 0.842));
-    }
-
-    #[test]
-    fn gain_keyframes_follow_position_and_active() {
-        let yaml = br#"sampleRate: 48000
-events:
-  - ID: 10
-    samplePos: 0
-    active: true
-    pos: [-1, 1, 0]
-  - ID: 10
-    samplePos: 100
-    pos: [1, 1, 0]
-  - ID: 10
-    samplePos: 200
-    active: false
-"#;
-        let path = std::env::temp_dir().join(format!(
-            "salsa-encoder-gain-{}-{}.metadata",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::write(&path, yaml).unwrap();
-        let meta = Metadata::load(&path).unwrap();
-        std::fs::remove_file(&path).ok();
-        let keys = gain_keyframes(&meta, PanMode::Hard51);
-        let track = keys.get(&10).unwrap();
-        assert_eq!(track.len(), 3);
-        assert!(approx(track[0].1[0], 1.0));
-        assert!(approx(track[1].1[1], 1.0));
-        assert!(approx(track[2].1[0], 0.0));
     }
 }

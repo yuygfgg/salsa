@@ -78,7 +78,6 @@ impl ObjectAudioMeta {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpatialSnapshot {
     pub payload: SpatialPayload,
-    pub offset: usize,
     pub bpf: usize,
 }
 
@@ -153,18 +152,16 @@ pub fn scale_offset(offset: usize, from_rate: u32, to_rate: u32) -> usize {
 pub fn add_spatial(
     buffer: &mut gst::BufferRef,
     payload: &SpatialPayload,
-    offset: usize,
     bpf: usize,
 ) -> Result<(), MetaError> {
     let bytes = payload.encode().map_err(MetaError::Payload)?;
-    add_spatial_bytes(buffer, &bytes, offset, bpf)
+    add_spatial_bytes(buffer, &bytes, bpf)
 }
 
 /// Add a meta carrying already-encoded `SpatialPayload` bytes.
 pub fn add_spatial_bytes(
     buffer: &mut gst::BufferRef,
     bytes: &[u8],
-    offset: usize,
     bpf: usize,
 ) -> Result<(), MetaError> {
     if bytes.is_empty() {
@@ -173,13 +170,13 @@ pub fn add_spatial_bytes(
     if bpf == 0 {
         return Err(MetaError::InvalidBpf);
     }
-    SpatialPayload::decode(bytes).map_err(MetaError::Payload)?;
+    let payload = SpatialPayload::decode(bytes).map_err(MetaError::Payload)?;
     let _ = meta_info();
     let meta = unsafe {
         add_raw(
             buffer.as_mut_ptr(),
             bytes,
-            offset,
+            payload.snapshot_offset.max(0) as usize,
             bpf,
             u32::from(SpatialPayload::VERSION),
             PayloadType::Spatial.as_u32(),
@@ -209,7 +206,6 @@ pub fn get_spatial(buffer: &gst::BufferRef) -> Option<SpatialSnapshot> {
     let payload = SpatialPayload::decode(meta.payload()).ok()?;
     Some(SpatialSnapshot {
         payload,
-        offset: meta.offset(),
         bpf: meta.bpf(),
     })
 }
@@ -233,7 +229,6 @@ pub fn iter_spatial(buffer: &gst::BufferRef) -> Vec<SpatialSnapshot> {
             let payload = SpatialPayload::decode(meta.payload()).ok()?;
             Some(SpatialSnapshot {
                 payload,
-                offset: meta.offset(),
                 bpf: meta.bpf(),
             })
         })
@@ -309,34 +304,14 @@ unsafe extern "C" fn transform_meta(
         return glib::ffi::GFALSE;
     };
 
-    let (offset, copy_start, copy_frames) = if copy.region != 0 {
-        let source_bytes = source.offset.saturating_mul(source.bpf);
-        let copy_end = copy.offset.saturating_add(copy.size);
-        if copy.offset > source_bytes || source_bytes > copy_end {
+    if copy.region != 0 {
+        let Some(sliced) = payload.slice((copy.offset / source.bpf) as i64, copy.size / source.bpf)
+        else {
             return glib::ffi::GTRUE;
-        }
-        let start_samples = copy.offset / source.bpf;
-        let frames = copy.size / source.bpf;
-        (
-            source.offset - start_samples,
-            start_samples as i64,
-            frames as i64,
-        )
-    } else {
-        (source.offset, 0, i64::MAX)
-    };
-
-    payload.events.retain_mut(|event| {
-        let shifted = event.offset as i64 - copy_start;
-        if shifted < 0 || shifted > copy_frames {
-            return false;
-        }
-        event.offset = shifted as u32;
-        if event.ramp_samples as i64 > copy_frames - shifted {
-            event.ramp_samples = (copy_frames - shifted).max(0) as u32;
-        }
-        true
-    });
+        };
+        payload = sliced;
+    }
+    let offset = payload.snapshot_offset.max(0) as usize;
 
     let Ok(bytes) = payload.encode() else {
         return glib::ffi::GFALSE;
@@ -414,8 +389,7 @@ mod tests {
             vec![ObjectState::new(1, [0.5, 0.5, 0.0])],
             vec![ObjectEvent {
                 offset: 64,
-                ramp_samples: 32,
-                object: 1,
+                transition: objectaudio_ir::Transition::All(32),
                 state: ObjectState::new(1, [1.0, 0.0, 0.0]),
             }],
         )
@@ -432,8 +406,18 @@ mod tests {
     #[test]
     fn adds_gets_and_iterates() {
         let mut buffer = buffer(256);
-        add_spatial(buffer.get_mut().unwrap(), &payload(), 7, 4).unwrap();
-        add_spatial(buffer.get_mut().unwrap(), &payload(), 8, 4).unwrap();
+        add_spatial(
+            buffer.get_mut().unwrap(),
+            &payload().with_snapshot_offset(7),
+            4,
+        )
+        .unwrap();
+        add_spatial(
+            buffer.get_mut().unwrap(),
+            &payload().with_snapshot_offset(8),
+            4,
+        )
+        .unwrap();
 
         let meta = get(&buffer).unwrap();
         assert_eq!(meta.offset(), 7);
@@ -442,26 +426,34 @@ mod tests {
         assert_eq!(meta.payload_type(), PayloadType::Spatial);
         assert_eq!(iter(&buffer).count(), 2);
         assert_eq!(iter_spatial(&buffer).len(), 2);
-        assert_eq!(get_spatial(&buffer).unwrap().payload, payload());
+        assert_eq!(
+            get_spatial(&buffer).unwrap().payload,
+            payload().with_snapshot_offset(7)
+        );
     }
 
     #[test]
     fn rejects_invalid_payloads() {
         let mut buffer = buffer(16);
         assert_eq!(
-            add_spatial(buffer.get_mut().unwrap(), &payload(), 0, 0),
+            add_spatial(buffer.get_mut().unwrap(), &payload(), 0),
             Err(MetaError::InvalidBpf)
         );
         assert!(matches!(
-            add_spatial_bytes(buffer.get_mut().unwrap(), b"not a payload", 0, 4),
+            add_spatial_bytes(buffer.get_mut().unwrap(), b"not a payload", 4),
             Err(MetaError::Payload(PayloadError::Decode(_)))
         ));
     }
 
     #[test]
-    fn copy_region_recomputes_the_offset_and_clips_events() {
+    fn copy_region_rebases_events_without_changing_ramps() {
         let mut buffer = buffer(1024);
-        add_spatial(buffer.get_mut().unwrap(), &payload(), 64, 8).unwrap();
+        add_spatial(
+            buffer.get_mut().unwrap(),
+            &payload().with_snapshot_offset(64),
+            8,
+        )
+        .unwrap();
 
         let copy = buffer
             .copy_region(
@@ -470,7 +462,7 @@ mod tests {
             )
             .unwrap();
         let snapshot = get_spatial(&copy).unwrap();
-        assert_eq!(snapshot.offset, 48);
+        assert_eq!(snapshot.payload.snapshot_offset, 48);
         assert_eq!(snapshot.payload.events.len(), 1);
         assert_eq!(snapshot.payload.events[0].offset, 48);
 
@@ -486,7 +478,7 @@ mod tests {
     #[test]
     fn copy_outside_the_event_region_drops_it() {
         let mut buffer = buffer(1024);
-        add_spatial(buffer.get_mut().unwrap(), &payload(), 0, 8).unwrap();
+        add_spatial(buffer.get_mut().unwrap(), &payload(), 8).unwrap();
 
         let copy = buffer
             .copy_region(
@@ -501,18 +493,26 @@ mod tests {
     #[test]
     fn deep_copy_keeps_the_offset() {
         let mut buffer = buffer(256);
-        add_spatial(buffer.get_mut().unwrap(), &payload(), 12, 4).unwrap();
+        add_spatial(
+            buffer.get_mut().unwrap(),
+            &payload().with_snapshot_offset(12),
+            4,
+        )
+        .unwrap();
 
         let copy = buffer.copy_deep().unwrap();
         let meta = get(&copy).unwrap();
         assert_eq!(meta.offset(), 12);
-        assert_eq!(get_spatial(&copy).unwrap().payload, payload());
+        assert_eq!(
+            get_spatial(&copy).unwrap().payload,
+            payload().with_snapshot_offset(12)
+        );
     }
 
     #[test]
     fn remove_all_drops_the_meta() {
         let mut buffer = buffer(64);
-        add_spatial(buffer.get_mut().unwrap(), &payload(), 0, 4).unwrap();
+        add_spatial(buffer.get_mut().unwrap(), &payload(), 4).unwrap();
         assert!(get(&buffer).is_some());
         remove_all(buffer.get_mut().unwrap());
         assert!(get(&buffer).is_none());
@@ -525,10 +525,9 @@ mod tests {
             bpf in 1usize..16,
         ) {
             let mut buffer = buffer(4096);
-            for (index, offset) in offsets.iter().enumerate() {
-                let mut payload = payload();
-                payload.objects[0].id = index as u32 + 1;
-                add_spatial(buffer.get_mut().unwrap(), &payload, *offset, bpf).unwrap();
+            for offset in &offsets {
+                let payload = payload().with_snapshot_offset(*offset as i64);
+                add_spatial(buffer.get_mut().unwrap(), &payload, bpf).unwrap();
             }
 
             let copy = buffer.copy_deep().unwrap();

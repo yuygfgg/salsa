@@ -198,12 +198,15 @@ impl SpatialDecoder for Eac3JocDecoder {
             .as_ref()
             .map(|mapping| mapping.events.clone())
             .unwrap_or_default();
+        let snapshot = mapping
+            .as_ref()
+            .map(|mapping| (mapping.snapshot_offset, mapping.snapshot_ramp_samples));
         let mut objects = mapping.map(|mapping| mapping.objects).unwrap_or_default();
         objects.truncate(object_count);
         for id in objects.len() as u32 + 1..=object_count as u32 {
             objects.push(ObjectState::new(id, [0.0, 0.0, 0.0]));
         }
-        events.retain(|event| event.object as usize <= object_count);
+        events.retain(|event| event.state.id as usize <= object_count);
 
         let sample_rate = if frame.sample_rate != 0 {
             frame.sample_rate
@@ -215,8 +218,12 @@ impl SpatialDecoder for Eac3JocDecoder {
         }
 
         let mut spatial = SpatialFrame::new(sample_rate, FRAME_SAMPLES, objects, events, pcm)?;
-        if let Some(oamd) = frame.oamd.as_ref() {
-            spatial = spatial.with_snapshot_ramp(oamd.ramp_samples);
+        if let Some((offset, ramp)) = snapshot {
+            spatial = spatial
+                .with_snapshot_ramp(ramp)
+                .with_snapshot_offset(i64::from(offset));
+        } else {
+            spatial.snapshot = objectaudio_ir::Snapshot::Continue;
         }
         Ok(spatial)
     }

@@ -25,7 +25,7 @@ fn renders_a_silent_frame_with_both_banks() {
         };
         let mut renderer = RosellaRenderer::new(model, options, 16).expect("renderer");
         let frame = vec![0.0f32; FRAME_SAMPLES * 16];
-        renderer.submit_frame(&frame, None, 0).expect("submit");
+        renderer.submit_frame(&frame, None).expect("submit");
         let output = renderer.take_output();
         assert_eq!(output.len(), 2 * (FRAME_SAMPLES - filterbank.latency()));
         assert!(output.iter().all(|value| value.is_finite()));
@@ -53,7 +53,7 @@ fn renders_dynamic_source_counts() {
         assert_eq!(renderer.source_channels(), source_channels);
         assert_eq!(renderer.object_count(), source_channels - 1);
         let frame = vec![0.0f32; FRAME_SAMPLES * source_channels];
-        renderer.submit_frame(&frame, None, 0).expect("submit");
+        renderer.submit_frame(&frame, None).expect("submit");
         let output = renderer.take_output();
         assert!(output.iter().all(|value| value.is_finite()));
     }

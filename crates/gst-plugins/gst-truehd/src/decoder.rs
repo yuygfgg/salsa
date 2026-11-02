@@ -15,7 +15,6 @@ use objectaudio_decode::{
     TRUEHD_RATES, negotiate_attach_meta, object_audio_src_caps, object_audio_template_caps,
     push_pcm,
 };
-use objectaudio_ir::SpatialPayload;
 use objectaudio_ir::{SpatialDecoder, SpatialFrame};
 use truehd_atmos::{
     MAX_CHANNELS, SpatialSnapshot, TrueHdAccessUnitParser, TrueHdDecoder, TrueHdFrame,
@@ -138,11 +137,6 @@ impl Worker {
     }
 }
 
-struct PendingMeta {
-    payload: SpatialPayload,
-    offset: usize,
-}
-
 struct State {
     worker: Option<Worker>,
     rate: i32,
@@ -150,7 +144,9 @@ struct State {
     caps_set: bool,
     attach_meta: bool,
     pending: Vec<f32>,
-    pending_meta: Option<PendingMeta>,
+    scene: Option<objectaudio_ir::SceneTimeline>,
+    received: i64,
+    emitted: i64,
 }
 
 impl Default for State {
@@ -162,7 +158,9 @@ impl Default for State {
             caps_set: false,
             attach_meta: false,
             pending: Vec::new(),
-            pending_meta: None,
+            scene: None,
+            received: 0,
+            emitted: 0,
         }
     }
 }
@@ -178,7 +176,9 @@ impl State {
 
     fn clear_stream(&mut self) {
         self.pending.clear();
-        self.pending_meta = None;
+        self.scene = None;
+        self.received = 0;
+        self.emitted = 0;
         self.caps_set = false;
         self.channels = 0;
         self.attach_meta = false;
@@ -245,18 +245,20 @@ impl TrueHdAtmosDec {
             if state.channels as usize != channel_count {
                 return Err(gst::FlowError::NotNegotiated);
             }
-            let base = state.pending_samples();
-            state.pending.extend_from_slice(&interleaved);
-            if let Some(snapshot) = snapshot {
-                let mut payload = snapshot.payload;
-                for event in &mut payload.events {
-                    event.offset = event.offset.saturating_add(base as u32);
-                }
-                state.pending_meta = Some(PendingMeta {
-                    payload,
-                    offset: base + snapshot.offset as usize,
-                });
+            let start = state.received;
+            if let Some(payload) = snapshot {
+                let result = match &mut state.scene {
+                    Some(scene) => scene.submit(&payload, start),
+                    None => objectaudio_ir::SceneTimeline::from_payload(&payload, start)
+                        .map(|scene| state.scene = Some(scene)),
+                };
+                result.map_err(|error| {
+                    gst::error!(gst::CAT_RUST, "invalid TrueHD metadata: {error}");
+                    gst::FlowError::Error
+                })?;
             }
+            state.received += spatial.frames as i64;
+            state.pending.extend_from_slice(&interleaved);
         }
         self.flush_ready()
     }
@@ -285,17 +287,7 @@ impl TrueHdAtmosDec {
                 return Ok(());
             }
             let samples = state.pending_samples();
-            if let Some(meta) = &state.pending_meta {
-                let last_event = meta
-                    .payload
-                    .events
-                    .iter()
-                    .map(|event| event.offset as usize)
-                    .max()
-                    .unwrap_or(0);
-                let needed = samples_for_update(meta.offset.max(last_event));
-                if samples >= needed { needed } else { 0 }
-            } else if samples >= CHUNK_SAMPLES {
+            if samples >= CHUNK_SAMPLES {
                 CHUNK_SAMPLES
             } else {
                 0
@@ -316,27 +308,19 @@ impl TrueHdAtmosDec {
             }
             let take = (samples * channels).min(state.pending.len());
             let data: Vec<f32> = state.pending.drain(..take).collect();
-            let meta = match &state.pending_meta {
-                Some(meta)
-                    if meta.offset < samples
-                        || meta
-                            .payload
-                            .events
-                            .iter()
-                            .any(|event| event.offset as usize <= samples) =>
-                {
-                    state.pending_meta.take()
-                }
-                _ => None,
-            };
+            let meta = state
+                .scene
+                .as_ref()
+                .map(|scene| scene.payload(state.emitted, take / channels));
+            state.emitted += (take / channels) as i64;
+            let emitted = state.emitted;
+            if let Some(scene) = &mut state.scene {
+                scene.discard_before(emitted);
+            }
             (data, channels, state.attach_meta, meta)
         };
 
-        let meta = if attach_meta {
-            meta.as_ref().map(|meta| (&meta.payload, meta.offset))
-        } else {
-            None
-        };
+        let meta = if attach_meta { meta.as_ref() } else { None };
         let borrowed = self.obj();
         let object: &super::TrueHdAtmosDec = borrowed.as_ref();
         push_pcm(object, &data, channels, meta, -1)?;
@@ -348,17 +332,7 @@ impl TrueHdAtmosDec {
             let mut state = self.state.lock().unwrap();
             let channels = state.channels as usize;
             let samples = state.pending_samples();
-            let required = state.pending_meta.as_ref().map_or(samples, |meta| {
-                let last_event = meta
-                    .payload
-                    .events
-                    .iter()
-                    .map(|event| event.offset as usize)
-                    .max()
-                    .unwrap_or(0);
-                samples_for_update(meta.offset.max(last_event))
-            });
-            let take = round_up_32(samples.max(required));
+            let take = round_up_32(samples);
             if channels > 0 && take > samples {
                 state.pending.resize(take * channels, 0.0);
             }
@@ -376,14 +350,6 @@ impl TrueHdAtmosDec {
     fn take_worker(&self) -> Option<Worker> {
         self.state.lock().unwrap().worker.take()
     }
-}
-
-fn aligned_block(sample: usize) -> usize {
-    (sample + BLOCK_SAMPLES / 2 - 1) / BLOCK_SAMPLES
-}
-
-fn samples_for_update(offset: usize) -> usize {
-    (aligned_block(offset) + 1) * BLOCK_SAMPLES
 }
 
 fn round_up_32(samples: usize) -> usize {
@@ -534,7 +500,9 @@ impl AudioDecoderImpl for TrueHdAtmosDec {
         {
             let mut state = self.state.lock().unwrap();
             state.pending.clear();
-            state.pending_meta = None;
+            state.scene = None;
+            state.received = 0;
+            state.emitted = 0;
             if let Some(worker) = &state.worker
                 && let Err(error) = worker.reset()
             {
