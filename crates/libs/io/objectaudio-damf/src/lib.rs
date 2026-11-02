@@ -6,6 +6,9 @@
 //! blocks with `ch0 = LFE` and `ch1..N = objects`. Non-LFE bed channels are
 //! expanded into fixed-position objects before they reach a renderer.
 //!
+//! The crate also provides `CafWriter`, `Metadata::save` and
+//! `ManifestSpec`/`write_manifest` for producing DAMF masters.
+//!
 //! Trajectory handling follows `dolby-atmos-encoder`'s `PosTimeline`: an event
 //! holds the previous position until its sample time, then ramps to the new
 //! target over `rampLength` samples. `gain`, `active` and `size` are held
@@ -20,8 +23,10 @@ mod metadata;
 mod source;
 mod yaml;
 
-pub use caf::{CafInfo, CafReader, SampleFormat};
+pub use caf::{CafInfo, CafReader, CafWriter, SampleFormat};
 pub use error::{DamfError, Result};
-pub use manifest::{BedEntry, Manifest, ObjectEntry};
+pub use manifest::{BedEntry, Manifest, ManifestSpec, ObjectEntry, write_manifest};
 pub use metadata::{Event as DamfEvent, Gain, Metadata};
-pub use source::{DamfBlock, DamfInfo, DamfObjectInfo, DamfSource};
+pub use source::{
+    DamfBlock, DamfInfo, DamfObjectInfo, DamfSource, ObjectTrack, TrackState, bed_position,
+};

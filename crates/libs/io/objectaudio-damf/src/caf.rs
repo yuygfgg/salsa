@@ -5,8 +5,9 @@
 //! uncompressed layouts needed by DAMF and returns interleaved `f32` samples in
 //! the file's channel order.
 
+use rayon::prelude::*;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::error::{DamfError, Result};
@@ -235,6 +236,150 @@ impl CafReader {
     }
 }
 
+/// Streaming writer for uncompressed 24-bit CAF essence.
+#[derive(Debug)]
+pub struct CafWriter {
+    file: BufWriter<File>,
+    path: PathBuf,
+    channels: usize,
+    total_frames: u64,
+    frames_written: u64,
+    little_endian: bool,
+}
+
+impl CafWriter {
+    /// Create a CAF file with a known frame count.
+    pub fn create(
+        path: impl AsRef<Path>,
+        sample_rate: u32,
+        channels: usize,
+        total_frames: u64,
+        little_endian: bool,
+    ) -> Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        if channels == 0 {
+            return Err(DamfError::UnsupportedCaf(
+                "cannot write a CAF with zero channels".to_string(),
+            ));
+        }
+        let bytes_per_frame = channels
+            .checked_mul(3)
+            .ok_or_else(|| DamfError::UnsupportedCaf("CAF packet size overflow".to_string()))?;
+        let data_bytes = total_frames
+            .checked_mul(bytes_per_frame as u64)
+            .ok_or_else(|| DamfError::UnsupportedCaf("CAF data size overflow".to_string()))?;
+        let mut file = BufWriter::new(File::create(&path).map_err(|source| DamfError::Io {
+            path: path.clone(),
+            source,
+        })?);
+
+        let write = |file: &mut BufWriter<File>, bytes: &[u8]| -> Result<()> {
+            file.write_all(bytes).map_err(|source| DamfError::Io {
+                path: path.clone(),
+                source,
+            })
+        };
+
+        write(&mut file, b"caff")?;
+        write(&mut file, &1u16.to_be_bytes())?;
+        write(&mut file, &0u16.to_be_bytes())?;
+
+        write(&mut file, b"desc")?;
+        write(&mut file, &32u64.to_be_bytes())?;
+        write(&mut file, &f64::from(sample_rate).to_be_bytes())?;
+        write(&mut file, b"lpcm")?;
+        // CAF flag bit 1 is little-endian.
+        write(
+            &mut file,
+            &(if little_endian { 2u32 } else { 0u32 }).to_be_bytes(),
+        )?;
+        write(&mut file, &(bytes_per_frame as u32).to_be_bytes())?;
+        write(&mut file, &1u32.to_be_bytes())?;
+        write(&mut file, &(channels as u32).to_be_bytes())?;
+        write(&mut file, &24u32.to_be_bytes())?;
+
+        write(&mut file, b"data")?;
+        let data_chunk_size = data_bytes
+            .checked_add(4)
+            .ok_or_else(|| DamfError::UnsupportedCaf("CAF data size overflow".to_string()))?;
+        write(&mut file, &(data_chunk_size as i64).to_be_bytes())?;
+        write(&mut file, &0u32.to_be_bytes())?;
+
+        Ok(Self {
+            file,
+            path,
+            channels,
+            total_frames,
+            frames_written: 0,
+            little_endian,
+        })
+    }
+
+    pub fn channels(&self) -> usize {
+        self.channels
+    }
+
+    pub fn frames_written(&self) -> u64 {
+        self.frames_written
+    }
+
+    /// Append interleaved f32 frames; values are clipped to the 24-bit range.
+    pub fn write_frames(&mut self, samples: &[f32]) -> Result<()> {
+        if !samples.len().is_multiple_of(self.channels) {
+            return Err(DamfError::Invalid(format!(
+                "CAF write needs a multiple of {} samples, got {}",
+                self.channels,
+                samples.len()
+            )));
+        }
+        let mut bytes = Vec::with_capacity(samples.len() * 3);
+        for sample in samples {
+            let value = (f64::from(*sample) * 8_388_608.0).round();
+            let value = if value.is_nan() {
+                0
+            } else {
+                value.clamp(-8_388_608.0, 8_388_607.0) as i32
+            };
+            if self.little_endian {
+                bytes.extend_from_slice(&[
+                    (value & 0xff) as u8,
+                    ((value >> 8) & 0xff) as u8,
+                    ((value >> 16) & 0xff) as u8,
+                ]);
+            } else {
+                bytes.extend_from_slice(&[
+                    ((value >> 16) & 0xff) as u8,
+                    ((value >> 8) & 0xff) as u8,
+                    (value & 0xff) as u8,
+                ]);
+            }
+        }
+        self.file
+            .write_all(&bytes)
+            .map_err(|source| DamfError::Io {
+                path: self.path.clone(),
+                source,
+            })?;
+        self.frames_written += (samples.len() / self.channels) as u64;
+        Ok(())
+    }
+
+    /// Flush and verify the declared frame count.
+    pub fn finish(mut self) -> Result<()> {
+        self.file.flush().map_err(|source| DamfError::Io {
+            path: self.path.clone(),
+            source,
+        })?;
+        if self.frames_written != self.total_frames {
+            return Err(DamfError::Invalid(format!(
+                "CAF wrote {} frames, expected {}",
+                self.frames_written, self.total_frames
+            )));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct RawDesc {
     sample_rate: u32,
@@ -317,10 +462,22 @@ fn read_desc(file: &mut File, path: &Path) -> Result<RawDesc> {
 fn decode_interleaved(raw: &[u8], info: &CafInfo) -> Result<Vec<f32>> {
     let sample_bytes = info.bytes_per_sample;
     let count = raw.len() / sample_bytes;
+    let chunk_bytes = (sample_bytes * 8192).max(sample_bytes);
+    let blocks: Vec<Vec<f32>> = raw
+        .par_chunks(chunk_bytes)
+        .map(|block| {
+            let mut out = Vec::with_capacity(block.len() / sample_bytes);
+            for chunk in block.chunks_exact(sample_bytes) {
+                out.push(decode_sample(chunk, info));
+            }
+            out
+        })
+        .collect();
     let mut out = Vec::with_capacity(count);
-    for chunk in raw.chunks_exact(sample_bytes) {
-        out.push(decode_sample(chunk, info));
+    for block in blocks {
+        out.extend(block);
     }
+    debug_assert_eq!(out.len(), count);
     Ok(out)
 }
 
@@ -453,5 +610,45 @@ mod tests {
         }
         assert!(reader.read_frames(1).unwrap().is_empty());
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod writer_tests {
+    use super::*;
+
+    fn unique_path(name: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("salsa-caf-{}-{nonce}-{name}", std::process::id()))
+    }
+
+    fn roundtrip(little_endian: bool) {
+        let path = unique_path("roundtrip.caf");
+        let samples = [0.0f32, 0.25, -0.5, 0.75, 0.999, -0.999];
+        let mut writer = CafWriter::create(&path, 48_000, 2, 3, little_endian).unwrap();
+        writer.write_frames(&samples).unwrap();
+        writer.finish().unwrap();
+
+        let mut reader = CafReader::open(&path).unwrap();
+        reader.seek_to_frame(0).unwrap();
+        let decoded = reader.read_frames(3).unwrap();
+        assert_eq!(decoded.len(), samples.len());
+        for (actual, expected) in decoded.iter().zip(&samples) {
+            assert!((actual - expected).abs() < 1.0 / 8_388_608.0);
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn writes_little_endian_caf() {
+        roundtrip(true);
+    }
+
+    #[test]
+    fn writes_big_endian_caf() {
+        roundtrip(false);
     }
 }

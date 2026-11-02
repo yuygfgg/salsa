@@ -1,0 +1,17 @@
+[package]
+name = "atmos-cluster"
+description = "Perceptual object clustering for DAMF masters"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+objectaudio-damf.workspace = true
+rustfft.workspace = true
+rayon = "1"
+rubato = "3"
+tract-onnx = "0.23"

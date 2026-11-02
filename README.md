@@ -305,9 +305,8 @@ It expects:
 
 Masters outside this shape, for example **more than 15 objects**, a non-LFE bed,
 or more than one bed channel, will fail validation or fail to produce a valid
-JOC stream. Use
-[`atmos_cluster`](https://github.com/yuygfgg/atmos_cluster) to cluster the master
-to at most 15 objects and produce a compatible DAMF first.
+JOC stream. Use `salsa-cluster` to cluster the master into at most 15 objects
+and produce a compatible DAMF first.
 
 #### reac3e core parameters
 
@@ -364,9 +363,50 @@ to at most 15 objects and produce a compatible DAMF first.
 | `--emdf-key KEY` | — | Raw hex, `@hexfile`, or `@ddpmeta-key-set`. |
 | `--emdf-key-id 0..7` | `0` | Key-set entry used for signing. |
 
+### DAMF object clustering (`salsa-cluster`)
+
+`salsa-cluster` reduces a DAMF master to at most N dynamic objects while
+preserving the rendered scene.
+
+```sh
+cargo build --release -p salsa-cluster
+
+# write a .atmos manifest
+salsa-cluster master.atmos --out clustered.atmos --max-objects 15
+
+# write the manifest and sidecars into a directory
+salsa-cluster master.atmos --out out_dir --stem clustered --max-objects 15
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--max-objects N` | `15` | Target dynamic object count. |
+| `--centroid-score loudness\|reconstruction` | `loudness` | Rank centroids by loudness or by marginal rendered-scene error. |
+| `--assign nearest\|pan2\|pan3\|auto\|audio` | `audio` | Source-to-cluster gain assignment. |
+| `--audio-source-weighting none\|power\|importance` | `none` | Per-source weighting for the audio assignment objective. |
+| `--beds-as-objects` | off | Let non-LFE beds compete as fixed-position inputs. |
+| `--analysis-hop N` | `1536` | Samples between centroid updates. |
+| `--metadata-interval-frames N` | `2` | Minimum keyframe interval. |
+| `--max-seconds S` | `0` | Analyse only the first S seconds (`0` = whole master). |
+| `--limit peak\|none` | `peak` | Peak-limit the output. |
+| `--vad` | off | Enable the Silero VAD speech content prior. |
+| `--vad-gain-db DB` | `6` | Maximum VAD excitation gain. |
+| `--vad-threshold P` | `0.1` | VAD speech threshold. |
+| `--vad-smooth-ms MS` | `100` | VAD probability smoothing time. |
+
+The default is loudness-centered selection with audio-reconstruction gains
+and unweighted source covariance. `--centroid-score reconstruction`
+minimises rendered-scene error instead of ranking by loudness; it is slower and
+can trade some perceptual accuracy for a different objective. `--help` lists
+the remaining tuning parameters.
+
+VAD uses the embedded Silero V6 model through `tract-onnx`; the master is
+resampled to 16 kHz internally, so any DAMF sample rate works. It adds one
+inference per source per frame, so it is opt-in.
+
 ## Build & Test
 
-**Prerequisites:** Rust 1.88+ (edition 2024), GStreamer 1.24+ (`gstreamer-1.0`, `gstreamer-base-1.0`, `gstreamer-audio-1.0`), and FFmpeg `libavcodec` (`ffmpeg-next` 9.x).
+**Prerequisites:** Rust 1.91+ (edition 2024), GStreamer 1.24+ (`gstreamer-1.0`, `gstreamer-base-1.0`, `gstreamer-audio-1.0`), and FFmpeg `libavcodec` (`ffmpeg-next` 9.x).
 
 ```sh
 # macOS

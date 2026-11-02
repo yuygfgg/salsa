@@ -26,15 +26,16 @@ use crate::error::{DamfError, Result};
 use crate::manifest::Manifest;
 use crate::metadata::{Event as DamfEvent, Metadata};
 
+/// Object metadata sampled from a DAMF timeline. Gain is linear.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct State {
-    position: [f32; 3],
-    gain: f32,
-    enabled: bool,
-    size: Option<f32>,
+pub struct TrackState {
+    pub position: [f32; 3],
+    pub gain: f32,
+    pub enabled: bool,
+    pub size: Option<f32>,
 }
 
-impl State {
+impl TrackState {
     fn object(self, id: u32) -> ObjectState {
         let mut object = ObjectState::new(id, self.position);
         object.gain = self.gain;
@@ -44,7 +45,7 @@ impl State {
     }
 }
 
-impl Default for State {
+impl Default for TrackState {
     fn default() -> Self {
         Self {
             position: [0.0, 0.0, 0.0],
@@ -58,26 +59,28 @@ impl Default for State {
 #[derive(Debug, Clone)]
 struct Keyframe {
     sample: u64,
-    state: State,
+    state: TrackState,
     /// Forward ramp length in samples, starting at `sample`.
     ramp: u32,
 }
 
+/// Stateless DAMF sampling shared by readers and audio processors.
 #[derive(Debug, Clone)]
-struct Track {
+pub struct ObjectTrack {
     keys: Vec<Keyframe>,
     /// Position at each key's sample time; the previous key's ramp may still run.
     starts: Vec<[f32; 3]>,
 }
 
-impl Track {
-    fn fixed(position: [f32; 3]) -> Self {
+impl ObjectTrack {
+    /// A fixed bed position with unity gain.
+    pub fn fixed(position: [f32; 3]) -> Self {
         Self {
             keys: vec![Keyframe {
                 sample: 0,
-                state: State {
+                state: TrackState {
                     position,
-                    ..State::default()
+                    ..TrackState::default()
                 },
                 ramp: 0,
             }],
@@ -85,10 +88,11 @@ impl Track {
         }
     }
 
-    fn dynamic(events: &[&DamfEvent]) -> Self {
-        let mut state = State::default();
+    /// Build an object timeline from events in metadata order.
+    pub fn dynamic(events: &[&DamfEvent]) -> Self {
+        let mut state = TrackState::default();
         let mut ramp = 0u32;
-        let mut by_sample: BTreeMap<u64, (State, u32)> = BTreeMap::new();
+        let mut by_sample: BTreeMap<u64, (TrackState, u32)> = BTreeMap::new();
         for event in events {
             if let Some(position) = event.position {
                 state.position = position;
@@ -120,7 +124,7 @@ impl Track {
         if keys.is_empty() {
             keys.push(Keyframe {
                 sample: 0,
-                state: State::default(),
+                state: TrackState::default(),
                 ramp: 0,
             });
         }
@@ -130,10 +134,7 @@ impl Track {
 
     /// `dolby-atmos-encoder` `PosTimeline::at`: hold until the key sample, then
     /// ramp forward over `rampLength`.
-    fn position_at(&self, sample: u64) -> [f32; 3] {
-        if self.keys.is_empty() {
-            return [0.0; 3];
-        }
+    pub fn position_at(&self, sample: u64) -> [f32; 3] {
         let index = self.keys.partition_point(|key| key.sample <= sample);
         if index == 0 {
             return self.keys[0].state.position;
@@ -154,7 +155,7 @@ impl Track {
     }
 
     /// Values that change at a keyframe and then hold until the next keyframe.
-    fn step_at(&self, sample: u64) -> &State {
+    pub fn step_at(&self, sample: u64) -> &TrackState {
         let index = self
             .keys
             .partition_point(|key| key.sample <= sample)
@@ -163,9 +164,10 @@ impl Track {
         &self.keys[index].state
     }
 
-    fn state_at(&self, sample: u64) -> State {
+    /// Sample the position ramp and the held gain, activity, and size.
+    pub fn state_at(&self, sample: u64) -> TrackState {
         let held = self.step_at(sample);
-        State {
+        TrackState {
             position: self.position_at(sample),
             ..*held
         }
@@ -242,7 +244,7 @@ pub struct DamfBlock {
 pub struct DamfSource {
     caf: CafReader,
     info: DamfInfo,
-    tracks: Vec<Track>,
+    tracks: Vec<ObjectTrack>,
     next_sample: u64,
 }
 
@@ -310,13 +312,13 @@ impl DamfSource {
                 fixed: true,
                 position,
             });
-            tracks.push(Track::fixed(position));
+            tracks.push(ObjectTrack::fixed(position));
         }
 
         for (index, object) in manifest.objects.iter().enumerate() {
             let source_channel = bed_count + index;
             let events = by_id.get(&object.id).map(Vec::as_slice).unwrap_or(&[]);
-            let track = Track::dynamic(events);
+            let track = ObjectTrack::dynamic(events);
             let position = track.state_at(0).position;
             objects.push(DamfObjectInfo {
                 id: objects.len() as u32 + 1,
@@ -451,7 +453,8 @@ impl DamfSource {
     }
 }
 
-fn bed_position(name: &str) -> Option<[f32; 3]> {
+/// ADM normalized position for a standard DAMF bed channel name.
+pub fn bed_position(name: &str) -> Option<[f32; 3]> {
     let position = match name.trim().to_ascii_uppercase().as_str() {
         "L" => [-1.0, 1.0, 0.0],
         "R" => [1.0, 1.0, 0.0],

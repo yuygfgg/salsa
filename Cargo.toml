@@ -17,19 +17,22 @@ members = [
     "crates/gst-plugins/gst-objectaudio",
     "crates/gst-plugins/gst-damf",
     "crates/libs/encoder/eac3joc-encoder",
+    "crates/libs/encoder/atmos-cluster",
     "crates/apps/salsa-eac3joc-encode",
+    "crates/apps/salsa-cluster",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.91"
 license = "MPL-2.0"
 publish = false
 
 [workspace.dependencies]
 objectaudio-ir = { path = "crates/libs/audio/objectaudio-ir" }
 eac3joc-encoder = { path = "crates/libs/encoder/eac3joc-encoder" }
+atmos-cluster = { path = "crates/libs/encoder/atmos-cluster" }
 objectaudio-oamd = { path = "crates/libs/audio/objectaudio-oamd" }
 objectaudio-meta = { path = "crates/libs/gst/objectaudio-meta" }
 objectaudio-decode = { path = "crates/libs/gst/objectaudio-decode" }

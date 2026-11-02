@@ -1,0 +1,18 @@
+[package]
+name = "salsa-cluster"
+description = "CLI for perceptual DAMF object clustering"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "salsa-cluster"
+path = "src/main.rs"
+
+[dependencies]
+atmos-cluster.workspace = true
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"
