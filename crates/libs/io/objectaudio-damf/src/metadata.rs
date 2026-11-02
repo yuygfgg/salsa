@@ -2,8 +2,7 @@
 //!
 //! The file is a time-ordered list of per-object keyframes. Dolby's writer only
 //! emits `samplePos` on the first object of a time group; later objects in the
-//! same group omit it and inherit the previous position. This is the same rule
-//! used by `atmos_cluster/damf/metadata.py` and is essential for correct timing.
+//! same group omit it and inherit the previous position.
 //!
 //! Some writers (e.g. Dolby Atmos Renderer 3.3) also emit a trailing keyframe
 //! for the last object of a group without repeating its `ID`. A missing `ID`

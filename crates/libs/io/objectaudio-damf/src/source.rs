@@ -452,7 +452,6 @@ impl DamfSource {
 }
 
 fn bed_position(name: &str) -> Option<[f32; 3]> {
-    // Matches `BED_POSITIONS` in atmos_cluster/config.py.
     let position = match name.trim().to_ascii_uppercase().as_str() {
         "L" => [-1.0, 1.0, 0.0],
         "R" => [1.0, 1.0, 0.0],

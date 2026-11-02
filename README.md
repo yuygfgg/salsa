@@ -172,9 +172,8 @@ source resolves `presentations[0].audio` / `.metadata`, then the standard
 - **PCM**: uncompressed CAF `lpcm`, including 16/24/32-bit integer and 32-bit
   float; 24-bit big-endian is the normal DAMF layout. Samples are reordered to
   `ch0 = LFE`, `ch1..N = objects`.
-- **Bed expansion**: non-LFE bed channels become fixed-position objects using
-  the `atmos_cluster` bed table. LFE stays channel 0. A DAMF without an LFE bed
-  gets a silent LFE channel.
+- **Bed expansion**: non-LFE bed channels become fixed-position objects. 
+  LFE stays channel 0. A DAMF without an LFE bed gets a silent LFE channel.
 - **Metadata**: `samplePos` is inherited by events that omit it (the group rule
   used by Dolby's writer). Object positions follow the encoder's `PosTimeline`
   semantics: hold the previous position until the event sample, then ramp to the
