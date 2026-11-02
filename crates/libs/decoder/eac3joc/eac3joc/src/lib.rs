@@ -6,8 +6,9 @@ mod bit;
 mod emdf;
 mod error;
 mod frame;
-mod huffman_tables;
+pub mod huffman_tables;
 mod joc;
+mod joc_bands;
 mod transport;
 
 pub use bed::{
@@ -23,6 +24,7 @@ pub use joc::{
     num_channels_for_config, parse_id14, parse_syncframe, parse_syncframe_optional,
     score_container_with_frame,
 };
+pub use joc_bands::parameter_band_map;
 pub use transport::{
     Codec, FrameReader, SYNCWORD, SyncFrame, SyncFrameHeader, parse_syncframe_header,
 };

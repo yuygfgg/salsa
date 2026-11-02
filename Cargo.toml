@@ -16,6 +16,8 @@ members = [
     "crates/gst-plugins/gst-truehd",
     "crates/gst-plugins/gst-objectaudio",
     "crates/gst-plugins/gst-damf",
+    "crates/libs/encoder/eac3joc-encoder",
+    "crates/apps/salsa-eac3joc-encode",
 ]
 
 [workspace.package]
@@ -27,6 +29,7 @@ publish = false
 
 [workspace.dependencies]
 objectaudio-ir = { path = "crates/libs/audio/objectaudio-ir" }
+eac3joc-encoder = { path = "crates/libs/encoder/eac3joc-encoder" }
 objectaudio-oamd = { path = "crates/libs/audio/objectaudio-oamd" }
 objectaudio-meta = { path = "crates/libs/gst/objectaudio-meta" }
 objectaudio-decode = { path = "crates/libs/gst/objectaudio-decode" }

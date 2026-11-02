@@ -1,7 +1,7 @@
 # Architecture
 
 Salsa is split into small library crates and thin GStreamer plugin crates. The
-libraries decode, render, and model object audio without depending on
+libraries decode, encode, render, and model object audio without depending on
 GStreamer; only `objectaudio-meta` and the plugin crates link GStreamer.
 
 ```text
@@ -16,6 +16,14 @@ E-AC-3 JOC / TrueHD
         │
         ├──► speaker renderer      objectaudio-render ──► salsaoar
         └──► binaural renderer     objectaudio-hrtf   ──► salsahrtfrender
+
+DAMF master
+        │
+        ▼
+  eac3joc-encoder  (downmix + LFE filter + JOC + reac3e core)
+        │
+        ▼
+  E-AC-3 JOC  (.ec3)
 ```
 
 ## Crates
@@ -36,6 +44,8 @@ E-AC-3 JOC / TrueHD
 | `gst-truehd` | `salsatruehdparse`, `salsatruehdatmosdec` | yes |
 | `gst-objectaudio` | `salsaoar`, `salsahrtfrender`, `salsaobjectaudioadapt` | yes |
 | `gst-damf` | `salsadamfsrc` | yes |
+| `eac3joc-encoder` | DAMF → LFE-filtered 5.1 downmix → reac3e core → OAMD/JOC/EMDF → E-AC-3 JOC (library) | no |
+| `salsa-eac3joc-encode` | CLI front-end for `eac3joc-encoder` | no |
 
 ## Intermediate representation
 

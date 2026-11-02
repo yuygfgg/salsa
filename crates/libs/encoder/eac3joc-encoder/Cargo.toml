@@ -1,0 +1,19 @@
+[package]
+name = "eac3joc-encoder"
+description = "DAMF (Dolby Atmos Master) -> E-AC-3 JOC encoder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+objectaudio-damf.workspace = true
+eac3joc.workspace = true
+rustfft.workspace = true
+sha2.workspace = true
+ffmpeg-next = { workspace = true, features = ["filter"] }
+reac3e = { git = "https://github.com/yuygfgg/reac3e.git" }
+hmac = "0.12"

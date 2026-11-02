@@ -44,6 +44,8 @@ pub struct Event {
     pub ramp_length: Option<u32>,
     pub active: Option<bool>,
     pub size: Option<f32>,
+    /// Per-object trim bypass (`trimBypass` in the DAMF metadata).
+    pub trim_bypass: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,6 +94,7 @@ impl Metadata {
                 ramp_length: get(raw, "rampLength").and_then(as_u32),
                 active: get(raw, "active").and_then(as_bool),
                 size: get(raw, "size").and_then(as_f32),
+                trim_bypass: get(raw, "trimBypass").and_then(as_bool),
             });
         }
 

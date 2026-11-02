@@ -2,7 +2,7 @@
 
 **SALSA** — *SALSA Ain't Licensed Spatial Audio*
 
-Spatial audio tools for Dolby Atmos object audio: E-AC-3 JOC and TrueHD Atmos decoding, DAMF reading, speaker and binaural rendering, and Dolby OAMD interoperability.
+Spatial audio tools for Dolby Atmos object audio: E-AC-3 JOC and TrueHD Atmos decoding, E-AC-3 encoding, DAMF reading, speaker and binaural rendering, and Dolby OAMD interoperability.
 
 ## GST Plugins
 
@@ -279,6 +279,92 @@ Converts between Salsa `ObjectAudioMeta` and Dolby `gst-home-audio` (Reference P
 | `remove`    | `false` | In `to-dolby` mode, do not add `DlbObjectAudioMeta`; existing Salsa metadata is left untouched and the src advertises Salsa caps. |
 | `float`     | `false` | Convert interleaved `S32LE` samples to `F32LE` in place.                                                                      |
 
+### DAMF → E-AC-3 JOC encoder
+
+`crates/libs/encoder/eac3joc-encoder/` is the encoder library and
+`crates/apps/salsa-eac3joc-encode/` is its CLI. It converts a Dolby Atmos Master
+(`.atmos` + `.atmos.audio` + `.atmos.metadata`) to E-AC-3 JOC:
+
+```sh
+cargo build --release -p salsa-eac3joc-encode
+salsa-eac3joc-encode master.atmos -o output.ec3 \
+  --core-bitrate 692950 \
+  --emdf-key @/path/to/emdf_keys.bin
+```
+
+- Without correct `--emdf-key` the stream carries the public-CRC placeholder and
+  will not pass Dolby validation.
+- `reac3e` is LGPL-2.1-or-later; the rest of the tool follows salsa's MPL-2.0.
+
+#### DAMF input requirements
+
+This encoder does **not** cluster, remap, or otherwise process the input DAMF.
+It expects:
+
+- exactly one LFE bed channel;
+- at most **15 dynamic objects**.
+
+Masters outside this shape, for example **more than 15 objects**, a non-LFE bed,
+or more than one bed channel, will fail validation or fail to produce a valid
+JOC stream. Use
+[`atmos_cluster`](https://github.com/yuygfgg/atmos_cluster) to cluster the master
+to at most 15 objects and produce a compatible DAMF first.
+
+#### reac3e core parameters
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--core-bitrate BPS` | required | CBR core rate; must select 6-block frames (≤ 1,024,000). |
+| `--dialnorm DB` | `-21` | Dialogue normalization, `-31..=-1`. |
+| `--coupling auto\|on\|off` | `off` | E-AC-3 channel coupling. |
+| `--coupling-start 0..15` | — | Override the coupling start band. |
+| `--no-stereo-rematrixing` | rematrix on | Disable stereo rematrixing. |
+| `--no-block-switch` | block switch on | Disable the transient detector / short blocks. |
+| `--aht` | off | Enable experimental adaptive hybrid transform. |
+| `--cutoff-hz HZ` | bitrate table | Override the coded bandwidth cutoff. |
+| `--service-type main\|effects\|visually-impaired\|hearing-impaired\|commentary\|emergency\|voice-over\|karaoke` | `main` | BSI `bsmod`. |
+| `--copyright BOOL` / `--original BOOL` | not indicated | BSI informational bits. |
+| `--mixing-level 80..=111` | — | Audio production mixing level (dB). |
+| `--room-type not-indicated\|large\|small` | — | Audio production room type. |
+| `--ad-converter-type standard\|hdcd` | — | A/D converter type. |
+| `--dolby-surround-mode not-indicated\|off\|on` | — | Stereo Dolby Surround mode. |
+| `--dolby-headphone-mode not-indicated\|off\|on` | — | Stereo headphone mode. |
+| `--dolby-surround-ex-mode not-indicated\|off\|on\|dplii-z` | — | Dolby Surround EX mode. |
+| `--dmix-mode none\|ltrt\|loro\|dplii` | `loro` | Preferred stereo downmix; `none` omits the mixing metadata block. |
+| `--ltrt-center-mix-level F` | `0.70710677` | Lt/Rt centre mix level. |
+| `--ltrt-surround-mix-level F` | `0.70710677` | Lt/Rt surround mix level. |
+| `--loro-center-mix-level F` | `0.70710677` | Lo/Ro centre mix level. |
+| `--loro-surround-mix-level F` | `0.70710677` | Lo/Ro surround mix level. |
+
+#### JOC / OAMD / EMDF parameters
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--joc-lambda F` | `1e-3` | Huffman-aware RD weight; `0` disables RD refinement. |
+| `--joc-ridge F` | `1e-3` | Diagonal loading relative to the per-band core covariance trace. |
+| `--emdf-budget N` | `511` | Soft skip-field target; the hard limit is 511 bytes. |
+| `--joc-select knapsack\|greedy` | `knapsack` | Per-object fine→coarse fallback. |
+| `--joc-mode auto\|per-band\|broadband` | `auto` | Try per-band, then broadband only if needed. |
+| `--joc-quant auto\|fine\|coarse` | `auto` | `fine` forces fine matrices (may fail if over 511 B); `coarse` forces coarse. |
+| `--joc-refine-rounds N` | `2` | Quantization-aware coordinate-descent rounds. |
+| `--joc-rd-passes N` | `1` | Huffman-aware RD passes. |
+| `--joc-smooth F` | `0.9` | Causal covariance smoothing, `0..=1`. |
+| `--joc-power-gate F` | `1e-8` | Per-band power gate relative to core energy. |
+| `--emdf-target-block 0..5` | `2` | Audio block carrying the EMDF skip field. |
+| `--addbsi-complexity 1..16` | object count (capped) | Atmos `complexity_index_type_a`. |
+| `--drc-dynrng-profile 0..7` | `4` | Programme-information dynamic-range profile. |
+| `--drc-compr-profile 0..7` | `4` | Programme-information compression profile. |
+
+#### Downmix / signing
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--pan hard71\|hard51\|vbap` | `hard71` | Downmix panning law. |
+| `--gain-db DB` | `0` | Makeup gain on the five main channels (not LFE). |
+| `--no-surround-phase-shift` | phase shift on | Write `dmx_config=0` and skip the +90° Ls/Rs all-pass. |
+| `--emdf-key KEY` | — | Raw hex, `@hexfile`, or `@ddpmeta-key-set`. |
+| `--emdf-key-id 0..7` | `0` | Key-set entry used for signing. |
+
 ## Build & Test
 
 **Prerequisites:** Rust 1.88+ (edition 2024), GStreamer 1.24+ (`gstreamer-1.0`, `gstreamer-base-1.0`, `gstreamer-audio-1.0`), and FFmpeg `libavcodec` (`ffmpeg-next` 9.x).
@@ -326,3 +412,4 @@ Mozilla Public License 2.0 (MPL-2.0).
 - [truehdd](https://github.com/truehdd/truehdd) provides the original OAMD parser and truehd decoder.
 - [gst-plugin-oamd](https://github.com/yuygfgg/gst-plugin-oamd) can be useful to export DAMF master files.
 - [atmos_quality](https://github.com/yuygfgg/atmos_quality) is a test suite for verifying the fidelity of Atmos decoders and renderers.
+- [dolby-atmos-encoder](https://github.com/raress96/dolby-atmos-encoder) is a reference implementation for encoding E-AC-3 JOC.

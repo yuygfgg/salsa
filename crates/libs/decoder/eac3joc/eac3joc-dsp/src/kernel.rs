@@ -70,20 +70,6 @@ const DC_B: [f64; 21] = [
     0.0013996040215715766,
 ];
 
-fn parameter_band_map(bands: usize) -> Option<&'static [u8; 64]> {
-    match bands {
-        1 => Some(&tables::KPB_MAP1),
-        3 => Some(&tables::KPB_MAP3),
-        5 => Some(&tables::KPB_MAP5),
-        7 => Some(&tables::KPB_MAP7),
-        9 => Some(&tables::KPB_MAP9),
-        12 => Some(&tables::KPB_MAP12),
-        15 => Some(&tables::KPB_MAP15),
-        23 => Some(&tables::KPB_MAP23),
-        _ => None,
-    }
-}
-
 fn clamp_unit(value: f64) -> f64 {
     value.clamp(-1.0, 1.0)
 }
@@ -238,7 +224,7 @@ impl JocKernel {
                 continue;
             }
             let info = &params.objects[object];
-            if parameter_band_map(info.n_bands).is_none() {
+            if eac3joc::parameter_band_map(info.n_bands).is_none() {
                 return Err(KernelError::InvalidParameters(format!(
                     "unsupported parameter-band count {}",
                     info.n_bands
@@ -410,7 +396,7 @@ impl JocKernel {
         let bands = info.n_bands;
         let points = info.n_dpoints;
         let slope = info.slope_idx;
-        let map = parameter_band_map(bands).expect("validated");
+        let map = eac3joc::parameter_band_map(bands).expect("validated");
         let core_channels = usize::from(params.n_channels);
         for channel in 0..core_channels {
             for subband in 0..64 {

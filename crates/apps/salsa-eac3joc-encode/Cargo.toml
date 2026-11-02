@@ -1,0 +1,19 @@
+[package]
+name = "salsa-eac3joc-encode"
+description = "CLI for the salsa DAMF -> E-AC-3 JOC encoder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "salsa-eac3joc-encode"
+path = "src/main.rs"
+
+[dependencies]
+eac3joc-encoder.workspace = true
+anyhow.workspace = true
+log.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
+env_logger = "0.11"
