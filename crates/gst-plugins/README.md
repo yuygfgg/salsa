@@ -1,4 +1,4 @@
-# plugins
+# GST plugins
 
 | Crate | Elements |
 |---|---|

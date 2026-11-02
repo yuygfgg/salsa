@@ -1,13 +1,18 @@
-# gst-plugin-salsa
+# Salsa
 
 **SALSA** — *SALSA Ain't Licensed Spatial Audio*
 
-GStreamer plugins for decoding E-AC-3 JOC and TrueHD Atmos, reading Dolby Atmos Master Format (DAMF) masters, rendering to speaker layouts or binaural headphones, and bridging with Dolby OAMD pipelines.
+Spatial audio tools for Dolby Atmos object audio: E-AC-3 JOC and TrueHD Atmos decoding, DAMF reading, speaker and binaural rendering, and Dolby OAMD interoperability.
+
+## GST Plugins
+
+Salsa provides the following GStreamer elements. The plugin crates live in
+`crates/gst-plugins/`.
 
 > [!TIP]
 > Salsa is designed for spatial audio only. For non-object TrueHD or E-AC-3 streams, use standard GStreamer decoders.
 
-## Elements Overview
+### Elements Overview
 
 | Plugin            | Element                 | Description                           | Input → Output                                                                                                                                                                                                                    |
 | ----------------- | ----------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -20,7 +25,7 @@ GStreamer plugins for decoding E-AC-3 JOC and TrueHD Atmos, reading Dolby Atmos 
 | `gst-objectaudio` | `salsahrtfrender`       | Binaural HRTF renderer (Rosella)      | `audio/x-raw` F32LE interleaved with `meta:ObjectAudioMeta`, `rate=48000`, `channels=1..1024`, `channel-mask=0` → `audio/x-raw` F32LE interleaved stereo, 48 kHz, `channel-mask=0x3`                                               |
 | `gst-objectaudio` | `salsaobjectaudioadapt` | Salsa ↔ Dolby OAMD metadata bridge    | `audio/x-raw` F32LE/S32LE interleaved, `rate=32000..48000`, `channels=1..32`, `channel-mask=0`, with `meta:ObjectAudioMeta` or `meta:DlbObjectAudioMeta` (± `memory:SystemMemory`) or no feature → same rate/channels; `to-dolby` → `meta:DlbObjectAudioMeta`, `to-salsa` → `meta:ObjectAudioMeta`; `float=true` also converts S32LE → F32LE |
 
-## Quick Start
+### Quick Start
 
 ```sh
 cargo build --release -p gst-eac3joc -p gst-objectaudio -p gst-truehd -p gst-damf
@@ -70,9 +75,9 @@ directly; no FFmpeg or external demuxer is required.
 > [!NOTE]
 > On macOS/Homebrew, if a fresh registry scan deadlocks in `gst-plugin-scanner`, prefix with `GST_REGISTRY_FORK=no`.
 
-## Salsa Studio (GUI preview player)
+### Salsa Studio (GUI preview player)
 
-`apps/salsa-gui/` is a small eframe/egui preview player built on the Salsa
+`crates/apps/salsa-gui/` is a small eframe/egui preview player built on the Salsa
 elements.
 
 Features:
@@ -93,7 +98,7 @@ Build and run:
 
 ```sh
 cargo build --release -p gst-eac3joc -p gst-objectaudio -p gst-truehd -p gst-damf
-cd apps/salsa-gui
+cd crates/apps/salsa-gui
 cargo run --release -- /path/to/stream.ec3
 ```
 
@@ -106,31 +111,31 @@ Binaural playback needs a Rosella model; choose one in the Output panel. Raw
 TrueHD has no container duration, so the app scans the parser output in the
 background and shows `Scanning…` until the duration is known.
 
-### macOS app bundle
+#### macOS app bundle
 
 ```sh
 SALSA_MODEL=/path/to/model.personalized_headphone \
-  apps/salsa-gui/scripts/bundle-macos.sh
+  crates/apps/salsa-gui/scripts/bundle-macos.sh
 ```
 
-This produces `apps/salsa-gui/target/release/Salsa Studio.app`, copies the
+This produces `crates/apps/salsa-gui/target/release/Salsa Studio.app`, copies the
 four Salsa plugin dylibs into `Contents/Resources/gstreamer-1.0`, optionally
 bundles the model, and ad-hoc signs the app. It still uses the host GStreamer
 and FFmpeg installations; it does not bundle a GStreamer runtime.
 
-### GUI tests
+#### GUI tests
 
-The GUI is a separate workspace, so run its tests from `apps/salsa-gui`:
+The GUI is a separate workspace, so run its tests from `crates/apps/salsa-gui`:
 
 ```sh
-cd apps/salsa-gui
+cd crates/apps/salsa-gui
 cargo test
 ```
 
 Real-stream playback tests are opt-in and use a headless sink:
 
 ```sh
-cd apps/salsa-gui
+cd crates/apps/salsa-gui
 SALSA_TEST_EC3=/path/to/stream.ec3 \
 SALSA_TEST_TRUEHD=/path/to/master.mlp \
 SALSA_TEST_DAMF=/path/to/master.atmos \
@@ -143,7 +148,7 @@ cargo test --test playback
 
 Without these variables the tests skip.
 
-## Object Audio Format
+### Object Audio Format
 
 All Salsa elements exchange a unified raw object stream:
 
@@ -151,9 +156,9 @@ All Salsa elements exchange a unified raw object stream:
 - **Channel Mapping**: Channel `0` is LFE; channels `1..N` are dynamic point objects (`channels - 1` = object count). Decoders emit `1 + object_count` channels at 32/44.1/48 kHz for E-AC-3 JOC and up to 192 kHz for TrueHD; the renderers accept up to 1024 channels. Non-LFE beds are expanded into fixed-position objects by the TrueHD decoder or by `salsaobjectaudioadapt`; the E-AC-3 JOC decoder emits its JOC objects only.
 - **Metadata (`meta:ObjectAudioMeta`)**: Carries a versioned, postcard-serialized `SpatialPayload` with snapshot and intra-buffer event sample offsets, plus an optional `snapshot_ramp_samples` for OAMD's first object-info block. Decoders and DAMF sources advertise (and attach) it when downstream negotiates the caps feature, falling back to plain raw otherwise; `salsaoar` and `salsahrtfrender` require it, and Dolby `meta:DlbObjectAudioMeta` must be converted first by `salsaobjectaudioadapt`.
 
-## Element Reference
+### Element Reference
 
-### `salsadamfsrc` (DAMF Source)
+#### `salsadamfsrc` (DAMF Source)
 
 Reads a Dolby Atmos Master Format presentation without going through an
 encoder/decoder. The `location` property points at the `.atmos` manifest; the
@@ -189,7 +194,7 @@ source resolves `presentations[0].audio` / `.metadata`, then the standard
   `binauralRenderMode` have no salsa IR representation yet. The adapter/OAMD
   path remains the lossy Dolby boundary; DAMF input bypasses OAMD entirely.
 
-### Parsers (`salsaeac3jocparse`, `salsatruehdparse`)
+#### Parsers (`salsaeac3jocparse`, `salsatruehdparse`)
 
 Both parsers support flushing seeks (forward and backward) when the upstream source is seekable, and take no properties. TrueHD seeks land on the next major sync, so the granularity is bounded by the major-sync interval (≤32 access units for FBB, ≤128 for FBA):
 
@@ -203,7 +208,7 @@ Both parsers support flushing seeks (forward and backward) when the upstream sou
   - Emits one access unit per buffer, skips leading junk by resynchronising on major sync, and derives `rate`/frame rate from the major sync. `atmos` becomes `true` when an access unit carries OAMD.
   - The parser does not serialize `truehd::AccessUnit`; it forwards the original access-unit bytes.
 
-### Decoders (`salsaeac3jocdec`, `salsatruehdatmosdec`)
+#### Decoders (`salsaeac3jocdec`, `salsatruehdatmosdec`)
 
 Both decoders handle flushing seeks and reset their codec/DSP state on `FLUSH_STOP` (and on `DISCONT` for non-flushing seeks). They take no properties:
 
@@ -216,7 +221,7 @@ Both decoders handle flushing seeks and reset their codec/DSP state on `FLUSH_ST
   - Src caps: `audio/x-raw`, F32LE, interleaved, `channels=1..16`, `rate={44100,48000,88200,96000,176400,192000}`, `channel-mask=0`, optionally with `meta:ObjectAudioMeta`.
   - Consumes the access-unit-per-buffer output of `salsatruehdparse`; unframed streams are not accepted. It accumulates 40-sample access units into 32-sample blocks and emits a buffer per 1216 samples or per OAMD update. Presentation bed channels are expanded into fixed-position objects.
 
-### `salsaoar` (Speaker Renderer)
+#### `salsaoar` (Speaker Renderer)
 
 Sample-accurate equal-power panning to standard speaker layouts (`2.0`, `3.1`, `4.0`, `5.1`, `7.1`, `5.1.2`, `5.1.4`, `7.1.2`, `7.1.4`, `9.1.4`, `9.1.6`), passing LFE straight through.
 
@@ -240,7 +245,7 @@ buffers and reports this buffering latency. Output timestamps and sample offsets
 stay on the input timeline. EOS drains the final partial block without adding
 samples. `FLUSH_STOP` and `DISCONT` discard queued PCM and metadata.
 
-### `salsahrtfrender` (Binaural Renderer)
+#### `salsahrtfrender` (Binaural Renderer)
 
 Renders 48 kHz object audio to stereo via a Dolby `.personalized_headphone` (Rosella JSON) model, including direct HRTF, early reflections, recursive room model, and LFE low-pass. Requires table A (dim 64, option 3) + table B (20 groups, 36 terms), no table C.
 
@@ -260,7 +265,7 @@ Renders 48 kHz object audio to stereo via a Dolby `.personalized_headphone` (Ros
 
 The decoder-provided `SpatialPayload` already includes the codec delay, so `object-delay` defaults to zero.
 
-### `salsaobjectaudioadapt` (Dolby OAMD Bridge)
+#### `salsaobjectaudioadapt` (Dolby OAMD Bridge)
 
 Converts between Salsa `ObjectAudioMeta` and Dolby `gst-home-audio` (Reference Player) `DlbObjectAudioMeta` (resolved dynamically at runtime from loaded Dolby plugins). Note that OAMD quantization (6-bit x/y, 4-bit z, integer dB) and bed-to-object expansion are lossy. This element is in-place and does not change channel count, rate, or layout.
 
@@ -317,7 +322,7 @@ Mozilla Public License 2.0 (MPL-2.0).
 ## References
 
 - [JustOneCacophony](https://github.com/TheM14/JustOneCacophony) contributes main algorithms for E-AC-3 JOC decoding, object audio rendering and Rosella HRTF.
-- [Dolby gst-home-audio](https://github.com/DolbyLaboratories/gst-home-audio) is the development reference, compatibility target and also the architectural inspiration for the Salsa plugin design.
+- [Dolby gst-home-audio](https://github.com/DolbyLaboratories/gst-home-audio) is the development reference, compatibility target and also the architectural inspiration for the Salsa gst plugin design.
 - [truehdd](https://github.com/truehdd/truehdd) provides the original OAMD parser and truehd decoder.
 - [gst-plugin-oamd](https://github.com/yuygfgg/gst-plugin-oamd) can be useful to export DAMF master files.
 - [atmos_quality](https://github.com/yuygfgg/atmos_quality) is a test suite for verifying the fidelity of Atmos decoders and renderers.

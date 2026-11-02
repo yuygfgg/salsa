@@ -80,7 +80,7 @@ impl Metadata {
             if let Some(id) = get(raw, "ID").and_then(as_i64) {
                 current_id = Some(id);
             }
-            let id = current_id.ok_or_else(|| DamfError::MissingField("events[].ID"))?;
+            let id = current_id.ok_or(DamfError::MissingField("events[].ID"))?;
             if let Some(sample) = get(raw, "samplePos").and_then(as_u64) {
                 current_sample = sample;
             }

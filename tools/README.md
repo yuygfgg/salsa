@@ -8,7 +8,7 @@ Harness for the x86_64-only Dolby Reference Player runtime.
 `source tools/x86-interop-env.sh` prepares a cached x86_64 GStreamer/FFmpeg
 prefix, `tools/build-x86-plugins.sh` stages the salsa plugins, and
 `tools/test-dolby-interop.sh [stream.ec3]` runs the bidirectional matrix. See
-[`docs/interop.md`](../docs/interop.md).
+[`docs/gst-plugins/interop.md`](../docs/gst-plugins/interop.md).
 
 ## `check-oamd-source.sh`
 
@@ -48,4 +48,4 @@ tools/test-damf-export.sh /path/to/stream.ec3 --binaural --cavern
 ```
 
 `gst-plugin-oamd` is not modified; see
-[`docs/damf-export.md`](../docs/damf-export.md).
+[`docs/gst-plugins/damf-export.md`](../docs/gst-plugins/damf-export.md).

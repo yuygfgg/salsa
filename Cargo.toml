@@ -12,10 +12,10 @@ members = [
     "crates/libs/io/objectaudio-damf",
     "crates/libs/render/objectaudio-render",
     "crates/libs/render/hrtf",
-    "crates/plugins/gst-eac3joc",
-    "crates/plugins/gst-truehd",
-    "crates/plugins/gst-objectaudio",
-    "crates/plugins/gst-damf",
+    "crates/gst-plugins/gst-eac3joc",
+    "crates/gst-plugins/gst-truehd",
+    "crates/gst-plugins/gst-objectaudio",
+    "crates/gst-plugins/gst-damf",
 ]
 
 [workspace.package]

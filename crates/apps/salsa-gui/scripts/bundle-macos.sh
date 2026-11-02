@@ -5,14 +5,14 @@
 # and FFmpeg are still resolved from the host installation (Homebrew or the
 # system framework). Run from anywhere:
 #
-#   apps/salsa-gui/scripts/bundle-macos.sh
-#   SALSA_MODEL=/path/to/model.personalized_headphone apps/salsa-gui/scripts/bundle-macos.sh
+#   crates/apps/salsa-gui/scripts/bundle-macos.sh
+#   SALSA_MODEL=/path/to/model.personalized_headphone crates/apps/salsa-gui/scripts/bundle-macos.sh
 #
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 APP_NAME="Salsa Studio"
-APP="$ROOT/apps/salsa-gui/target/release/$APP_NAME.app"
+APP="$ROOT/crates/apps/salsa-gui/target/release/$APP_NAME.app"
 VERSION="0.1.0"
 
 echo "==> Building GStreamer plugins (release)"
@@ -20,13 +20,13 @@ cargo build --release --manifest-path "$ROOT/Cargo.toml" \
   -p gst-damf -p gst-eac3joc -p gst-objectaudio -p gst-truehd
 
 echo "==> Building Salsa Studio (release)"
-cargo build --release --manifest-path "$ROOT/apps/salsa-gui/Cargo.toml"
+cargo build --release --manifest-path "$ROOT/crates/apps/salsa-gui/Cargo.toml"
 
 echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/gstreamer-1.0"
-cp "$ROOT/apps/salsa-gui/target/release/salsa-gui" "$APP/Contents/MacOS/salsa-gui"
-cp "$ROOT/apps/salsa-gui/bundle/Info.plist" "$APP/Contents/Info.plist"
+cp "$ROOT/crates/apps/salsa-gui/target/release/salsa-gui" "$APP/Contents/MacOS/salsa-gui"
+cp "$ROOT/crates/apps/salsa-gui/bundle/Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 for library in \

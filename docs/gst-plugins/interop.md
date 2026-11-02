@@ -39,7 +39,7 @@ the renderer will then receive `ObjectAudioMeta` / `SpatialPayload`.
 
 ## `salsaobjectaudioadapt`
 
-`crates/plugins/gst-objectaudio/src/adapt.rs` is an always-in-place
+`crates/gst-plugins/gst-objectaudio/src/adapt.rs` is an always-in-place
 `GstBaseTransform`.
 
 | Property | Default | Meaning |

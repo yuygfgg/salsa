@@ -89,7 +89,7 @@ The PCM and metadata streams are then packaged exactly like the Dolby chain:
 3. Write `<stem>.atmos` with version `0.5.1`, LFE bed ID `3`, object IDs
    `10..N`, and the same fields as the `atmos_tools.py` manifest. The manifest
    generation is implemented in
-   [`../tools/test-atmos-tools-adapter.sh`](../tools/test-atmos-tools-adapter.sh).
+   [`../../tools/test-atmos-tools-adapter.sh`](../../tools/test-atmos-tools-adapter.sh).
 
 ### Binaural
 
