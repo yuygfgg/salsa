@@ -43,7 +43,7 @@ DAMF master
 | `gst-eac3joc` | `salsaeac3jocparse`, `salsaeac3jocdec` | yes |
 | `gst-truehd` | `salsatruehdparse`, `salsatruehdatmosdec` | yes |
 | `gst-objectaudio` | `salsaoar`, `salsahrtfrender`, `salsaobjectaudioadapt` | yes |
-| `gst-damf` | `salsadamfsrc` | yes |
+| `gst-damf` | `salsadamfsrc`, `salsadamfsink` | yes |
 | `eac3joc-encoder` | DAMF → LFE-filtered 5.1 downmix → reac3e core → OAMD/JOC/EMDF → E-AC-3 JOC (library) | no |
 | `salsa-eac3joc-encode` | CLI front-end for `eac3joc-encoder` | no |
 
@@ -134,6 +134,7 @@ encoder output.
 | Element | Base class | Purpose |
 |---|---|---|
 | `salsadamfsrc` | `GstBaseSrc` | read a DAMF presentation and emit `LFE + N` object PCM |
+| `salsadamfsink` | `GstBaseSink` | write `LFE + N` object PCM and `ObjectAudioMeta` as a DAMF presentation |
 | `salsaeac3jocparse` | `GstBaseParse` | frame E-AC-3 JOC and expose stream caps |
 | `salsaeac3jocdec` | `GstAudioDecoder` | decode E-AC-3 JOC to `LFE + N` object PCM |
 | `salsatruehdparse` | `GstBaseParse` | frame TrueHD access units and expose rate/Atmos caps |

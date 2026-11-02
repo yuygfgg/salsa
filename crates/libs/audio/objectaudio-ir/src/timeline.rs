@@ -251,6 +251,10 @@ impl SceneTimeline {
         Ok(())
     }
 
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
     pub fn object_count(&self) -> usize {
         self.tracks.len()
     }

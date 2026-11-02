@@ -14,6 +14,7 @@
 
 mod caf;
 mod error;
+mod export;
 mod manifest;
 mod metadata;
 mod scene;

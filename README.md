@@ -21,6 +21,7 @@ Salsa provides the following GStreamer elements. The plugin crates live in
 | `gst-truehd`      | `salsatruehdparse`      | TrueHD access-unit parser             | `audio/x-true-hd` or `audio/x-truehd` (unframed or framed) → `audio/x-true-hd, framed=true, alignment=frame, rate={44100,48000,88200,96000,176400,192000}, atmos={false,true}`                                                       |
 | `gst-truehd`      | `salsatruehdatmosdec`   | TrueHD Atmos decoder (presentation 3) | `audio/x-true-hd` or `audio/x-truehd`, `framed=true, alignment=frame`, `rate=1..655350` → `audio/x-raw` F32LE interleaved, `channels=1..16`, `rate={44100,48000,88200,96000,176400,192000}`, `channel-mask=0`, optional `meta:ObjectAudioMeta` |
 | `gst-damf`        | `salsadamfsrc`          | DAMF master source                    | (no sink pad) → `audio/x-raw` F32LE interleaved, `channels=1..1024` (LFE + objects), CAF rate, `channel-mask=0`, optional `meta:ObjectAudioMeta`                                                                                     |
+| `gst-damf`        | `salsadamfsink`         | DAMF master sink                      | `audio/x-raw` F32LE/S24LE interleaved with `meta:ObjectAudioMeta`, `channels=1..1024` (LFE + objects), `rate=8000..192000`, `channel-mask=0` → `.atmos` manifest + `.atmos.audio` (24-bit CAF) + `.atmos.metadata`                  |
 | `gst-objectaudio` | `salsaoar`              | Speaker layout renderer               | `audio/x-raw` F32LE interleaved with `meta:ObjectAudioMeta`, `rate=32000..48000`, `channels=1..1024`, `channel-mask=0` → `audio/x-raw` F32LE interleaved, one structure per layout (`2.0`–`9.1.6`), layout channel count and mask     |
 | `gst-objectaudio` | `salsahrtfrender`       | Binaural HRTF renderer (Rosella)      | `audio/x-raw` F32LE interleaved with `meta:ObjectAudioMeta`, `rate=48000`, `channels=1..1024`, `channel-mask=0` → `audio/x-raw` F32LE interleaved stereo, 48 kHz, `channel-mask=0x3`                                               |
 | `gst-objectaudio` | `salsaobjectaudioadapt` | Salsa ↔ Dolby OAMD metadata bridge    | `audio/x-raw` F32LE/S32LE interleaved, `rate=32000..48000`, `channels=1..32`, `channel-mask=0`, with `meta:ObjectAudioMeta` or `meta:DlbObjectAudioMeta` (± `memory:SystemMemory`) or no feature → same rate/channels; `to-dolby` → `meta:DlbObjectAudioMeta`, `to-salsa` → `meta:ObjectAudioMeta`; `float=true` also converts S32LE → F32LE |
@@ -30,6 +31,7 @@ Salsa provides the following GStreamer elements. The plugin crates live in
 ```sh
 cargo build --release -p gst-eac3joc -p gst-objectaudio -p gst-truehd -p gst-damf
 GST_PLUGIN_PATH=$PWD/target/release gst-inspect-1.0 salsaeac3jocdec
+GST_PLUGIN_PATH=$PWD/target/release gst-inspect-1.0 salsadamfsink
 ```
 
 **E-AC-3 JOC → 7.1.4 speaker layout:**
@@ -72,81 +74,25 @@ GST_PLUGIN_PATH=$PWD/target/release \
 and expands non-LFE bed channels into fixed-position objects. It reads CAF PCM
 directly; no FFmpeg or external demuxer is required.
 
+**E-AC-3 JOC → DAMF master:**
+
+```sh
+GST_PLUGIN_PATH=$PWD/target/release \
+  gst-launch-1.0 -q filesrc location=stream.ec3 ! salsaeac3jocparse ! salsaeac3jocdec \
+  ! salsadamfsink location=master.atmos
+```
+
+**TrueHD Atmos → DAMF master:**
+
+```sh
+GST_PLUGIN_PATH=$PWD/target/release \
+  gst-launch-1.0 -q filesrc location=stream.mlp blocksize=1048576 \
+  ! salsatruehdparse ! salsatruehdatmosdec \
+  ! salsadamfsink location=master.atmos
+```
+
 > [!NOTE]
 > On macOS/Homebrew, if a fresh registry scan deadlocks in `gst-plugin-scanner`, prefix with `GST_REGISTRY_FORK=no`.
-
-### Salsa Studio (GUI preview player)
-
-`crates/apps/salsa-gui/` is a small eframe/egui preview player built on the Salsa
-elements.
-
-Features:
-
-- opens raw E-AC-3 JOC and TrueHD Atmos streams (`.ec3`, `.eac3`, `.mlp`, `.thd`, `.truehd`) and DAMF masters (`.atmos`);
-- Speaker virtualization (object-rendered 2.0–9.1.6 layouts) and Binaural
-  virtualization through a Rosella `.personalized_headphone` model;
-- flushing, accurate seek and keyboard transport (Space, `←`/`→`,
-  `Shift+←`/`→`, Home/End);
-- 3D object stage with height color, level-sized objects, motion trails,
-  speaker anchors, an LFE icon and a binaural head icon;
-- a Settings switch that shows or hides the static 3D labels (object IDs,
-  speaker names, LFE and listener); hovering an object still shows its detail;
-- device/layout fallback warning with a one-click switch to Binaural;
-- recent files, persisted output/model/volume/window settings, diagnostics;
-
-Build and run:
-
-```sh
-cargo build --release -p gst-eac3joc -p gst-objectaudio -p gst-truehd -p gst-damf
-cd crates/apps/salsa-gui
-cargo run --release -- /path/to/stream.ec3
-```
-
-With no path argument, use `Cmd+O`, the Open button, or drag and drop. Playback
-starts paused. The app auto-detects the repo's `target/release` or
-`target/debug` plugin directory; otherwise set `GST_PLUGIN_PATH` before
-launching. On macOS it sets `GST_REGISTRY_FORK=no` automatically.
-
-Binaural playback needs a Rosella model; choose one in the Output panel. Raw
-TrueHD has no container duration, so the app scans the parser output in the
-background and shows `Scanning…` until the duration is known.
-
-#### macOS app bundle
-
-```sh
-SALSA_MODEL=/path/to/model.personalized_headphone \
-  crates/apps/salsa-gui/scripts/bundle-macos.sh
-```
-
-This produces `crates/apps/salsa-gui/target/release/Salsa Studio.app`, copies the
-four Salsa plugin dylibs into `Contents/Resources/gstreamer-1.0`, optionally
-bundles the model, and ad-hoc signs the app. It still uses the host GStreamer
-and FFmpeg installations; it does not bundle a GStreamer runtime.
-
-#### GUI tests
-
-The GUI is a separate workspace, so run its tests from `crates/apps/salsa-gui`:
-
-```sh
-cd crates/apps/salsa-gui
-cargo test
-```
-
-Real-stream playback tests are opt-in and use a headless sink:
-
-```sh
-cd crates/apps/salsa-gui
-SALSA_TEST_EC3=/path/to/stream.ec3 \
-SALSA_TEST_TRUEHD=/path/to/master.mlp \
-SALSA_TEST_DAMF=/path/to/master.atmos \
-SALSA_TEST_NONATMOS=/path/to/non-atmos.ec3 \
-SALSA_TEST_MODEL=/path/to/model.personalized_headphone \
-SALSA_SINK_OVERRIDE=fakesink SALSA_SINK_SYNC=true \
-GST_PLUGIN_PATH=$PWD/../../target/debug \
-cargo test --test playback
-```
-
-Without these variables the tests skip.
 
 ### Object Audio Format
 
@@ -192,6 +138,23 @@ source resolves `presentations[0].audio` / `.metadata`, then the standard
   `depthFactor`, `snap`, `elevation`, `trimBypass`, `headTrackMode` and
   `binauralRenderMode` have no salsa IR representation yet. The adapter/OAMD
   path remains the lossy Dolby boundary; DAMF input bypasses OAMD entirely.
+
+#### `salsadamfsink` (DAMF Sink)
+
+Writes a DAMF presentation from salsa object audio. The `location` property
+is the `.atmos` manifest path; the sink writes `<location>.audio` (24-bit CAF)
+and `<location>.metadata` next to it and references those names from the manifest.
+
+- **Sink caps**: `audio/x-raw` F32LE or S24LE interleaved with
+  `meta:ObjectAudioMeta` (required), `channels=1..1024` (LFE + objects),
+  `rate=8000..192000`, `channel-mask=0`.
+- **PCM**: `ch0` is written as the LFE bed; `ch1..N` become dynamic DAMF
+  objects with IDs `object-id-base + (n - 1)` (default `10..`).
+- **Metadata**: snapshots and events are written as DAMF keyframes at their
+  sample positions with `gain` in dB and `rampLength` from the transition.
+  `location`, `fps`, `offset`, `lfe-id`, `object-id-base`,
+  `creation-tool`, `creation-tool-version` and `little-endian` are configurable.
+- **Finalisation**: the CAF data chunk size is patched on EOS/stop.
 
 #### Parsers (`salsaeac3jocparse`, `salsatruehdparse`)
 
@@ -278,7 +241,7 @@ Converts between Salsa `ObjectAudioMeta` and Dolby `gst-home-audio` (Reference P
 | `remove`    | `false` | In `to-dolby` mode, do not add `DlbObjectAudioMeta`; existing Salsa metadata is left untouched and the src advertises Salsa caps. |
 | `float`     | `false` | Convert interleaved `S32LE` samples to `F32LE` in place.                                                                      |
 
-### DAMF → E-AC-3 JOC encoder
+### DAMF → E-AC-3 JOC encoder (`salsa-eac3joc-encoder`)
 
 `crates/libs/encoder/eac3joc-encoder/` is the encoder library and
 `crates/apps/salsa-eac3joc-encode/` is its CLI. It converts a Dolby Atmos Master
@@ -404,6 +367,79 @@ VAD uses the embedded Silero V6 model through `tract-onnx`; the master is
 resampled to 16 kHz internally, so any DAMF sample rate works. It adds one
 inference per source per frame, so it is opt-in.
 
+## Salsa Studio (GUI preview player)
+
+`crates/apps/salsa-gui/` is a small eframe/egui preview player built on the Salsa
+elements.
+
+Features:
+
+- opens raw E-AC-3 JOC and TrueHD Atmos streams (`.ec3`, `.eac3`, `.mlp`, `.thd`, `.truehd`) and DAMF masters (`.atmos`);
+- Speaker virtualization (object-rendered 2.0–9.1.6 layouts) and Binaural
+  virtualization through a Rosella `.personalized_headphone` model;
+- flushing, accurate seek and keyboard transport (Space, `←`/`→`,
+  `Shift+←`/`→`, Home/End);
+- 3D object stage with height color, level-sized objects, motion trails,
+  speaker anchors, an LFE icon and a binaural head icon;
+- a Settings switch that shows or hides the static 3D labels (object IDs,
+  speaker names, LFE and listener); hovering an object still shows its detail;
+- device/layout fallback warning with a one-click switch to Binaural;
+- recent files, persisted output/model/volume/window settings, diagnostics;
+
+Build and run:
+
+```sh
+cargo build --release -p gst-eac3joc -p gst-objectaudio -p gst-truehd -p gst-damf
+cd crates/apps/salsa-gui
+cargo run --release -- /path/to/stream.ec3
+```
+
+With no path argument, use `Cmd+O`, the Open button, or drag and drop. Playback
+starts paused. The app auto-detects the repo's `target/release` or
+`target/debug` plugin directory; otherwise set `GST_PLUGIN_PATH` before
+launching. On macOS it sets `GST_REGISTRY_FORK=no` automatically.
+
+Binaural playback needs a Rosella model; choose one in the Output panel. Raw
+TrueHD has no container duration, so the app scans the parser output in the
+background and shows `Scanning…` until the duration is known.
+
+### macOS app bundle
+
+```sh
+SALSA_MODEL=/path/to/model.personalized_headphone \
+  crates/apps/salsa-gui/scripts/bundle-macos.sh
+```
+
+This produces `crates/apps/salsa-gui/target/release/Salsa Studio.app`, copies the
+four Salsa plugin dylibs into `Contents/Resources/gstreamer-1.0`, optionally
+bundles the model, and ad-hoc signs the app. It still uses the host GStreamer
+and FFmpeg installations; it does not bundle a GStreamer runtime.
+
+### GUI tests
+
+The GUI is a separate workspace, so run its tests from `crates/apps/salsa-gui`:
+
+```sh
+cd crates/apps/salsa-gui
+cargo test
+```
+
+Real-stream playback tests are opt-in and use a headless sink:
+
+```sh
+cd crates/apps/salsa-gui
+SALSA_TEST_EC3=/path/to/stream.ec3 \
+SALSA_TEST_TRUEHD=/path/to/master.mlp \
+SALSA_TEST_DAMF=/path/to/master.atmos \
+SALSA_TEST_NONATMOS=/path/to/non-atmos.ec3 \
+SALSA_TEST_MODEL=/path/to/model.personalized_headphone \
+SALSA_SINK_OVERRIDE=fakesink SALSA_SINK_SYNC=true \
+GST_PLUGIN_PATH=$PWD/../../target/debug \
+cargo test --test playback
+```
+
+Without these variables the tests skip.
+
 ## Build & Test
 
 **Prerequisites:** Rust 1.91+ (edition 2024), GStreamer 1.24+ (`gstreamer-1.0`, `gstreamer-base-1.0`, `gstreamer-audio-1.0`), and FFmpeg `libavcodec` (`ffmpeg-next` 9.x).
@@ -449,6 +485,5 @@ Mozilla Public License 2.0 (MPL-2.0).
 - [JustOneCacophony](https://github.com/TheM14/JustOneCacophony) contributes main algorithms for E-AC-3 JOC decoding, object audio rendering and Rosella HRTF.
 - [Dolby gst-home-audio](https://github.com/DolbyLaboratories/gst-home-audio) is the development reference, compatibility target and also the architectural inspiration for the Salsa gst plugin design.
 - [truehdd](https://github.com/truehdd/truehdd) provides the original OAMD parser and truehd decoder.
-- [gst-plugin-oamd](https://github.com/yuygfgg/gst-plugin-oamd) can be useful to export DAMF master files.
 - [atmos_quality](https://github.com/yuygfgg/atmos_quality) is a test suite for verifying the fidelity of Atmos decoders and renderers.
 - [dolby-atmos-encoder](https://github.com/raress96/dolby-atmos-encoder) is a reference implementation for encoding E-AC-3 JOC.

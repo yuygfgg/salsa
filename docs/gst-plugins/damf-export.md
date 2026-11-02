@@ -1,25 +1,77 @@
 # DAMF export
 
-Salsa does not include an ADM/DAMF writer. DAMF export uses the external
-`gst-plugin-oamd` tooling. Two decode chains are supported:
+Salsa includes a native DAMF sink (`salsadamfsink`). It consumes salsa
+`ObjectAudioMeta` directly and writes the manifest, 24-bit CAF essence and
+metadata YAML without converting through OAMD or invoking `gst-plugin-oamd`.
+The external `gst-plugin-oamd` tooling remains available for Dolby Reference
+Player exports and as a compatibility oracle.
 
-- the Dolby Reference Player chain (`atmos_tools.py --mode decode`);
-- the salsa chain (`salsaeac3joc*` / `salsatruehd*` + `salsaobjectaudioadapt`),
-  which reuses the same `gst-plugin-oamd` packaging elements.
+Three chains are supported:
 
-The Reference Player export is lossless with respect to the Dolby decode. The
-salsa chain is lossless with respect to the salsa decoded object stream; the
-adapter's OAMD encoding is documented below.
+- the native salsa chain (`salsaeac3joc*` / `salsatruehd*` → `salsadamfsink`);
+- the external salsa + adapter chain (`salsaobjectaudioadapt` →
+  `gst-plugin-oamd` packaging), kept for comparison;
+- the Dolby Reference Player chain (`atmos_tools.py --mode decode`).
+
+The native and Reference Player exports are lossless with respect to their
+respective decoded object streams. The adapter chain is lossy because its OAMD
+encoding is documented below.
+
+## Native salsa chain (`salsadamfsink`)
+
+`gst-damf` provides both the reader and the writer, so a decoded stream can be
+packaged directly:
+
+```text
+E-AC-3:
+  filesrc blocksize=1048576 ! salsaeac3jocparse ! salsaeac3jocdec
+    ! salsadamfsink location=<stem>.atmos
+
+TrueHD:
+  filesrc blocksize=1048576 ! salsatruehdparse ! salsatruehdatmosdec
+    ! salsadamfsink location=<stem>.atmos
+```
+
+The sink writes:
+
+- `<stem>.atmos` (manifest `0.5.1`, LFE bed ID `3`, object IDs `10..N`);
+- `<stem>.atmos.audio` (24-bit CAF, big-endian by default; `little-endian=true`
+  flips the sample byte order);
+- `<stem>.atmos.metadata` (YAML keyframes with position, dB gain, active, size
+  and ramp length).
+
+Metadata is evaluated on the signed IR timeline before export. A seek or
+buffer slice therefore retains the state at the output start and the remaining
+motion. The sink resolves state snapshots and transition targets at the same
+sample before it writes a single DAMF event for that object and sample.
+
+DAMF ramp lengths control position only. The sink retains sparse position
+ramps when DAMF can represent their origin. It writes evaluated states at each
+sample for gain or size ramps, and for position ramps that start with a new
+state at the same sample. These cases produce more metadata. Each expansion
+ends at the next update, the ramp completion, or the end of the audio.
+
+Properties: `location`, `fps`, `offset`, `lfe-id`, `object-id-base`,
+`creation-tool`, `creation-tool-version`, `little-endian`. The CAF data chunk
+size is patched on EOS/stop, so readers see a normal closed CAF file.
+
+The sink requires `meta:ObjectAudioMeta`, so keep it directly downstream of a
+salsa decoder or source. Inserting a generic element that drops the caps
+feature (`audioconvert`, `tee` with renegotiation, etc.) prevents negotiation.
+
+Sidecars use the standard `<manifest>.audio` / `<manifest>.metadata` names,
+which both `salsadamfsrc` and Cavern resolve without symlink aliases.
 
 ## Toolchain
 
 | Item | Value |
 |---|---|
-| Tool | `gst-plugin-oamd/atmos_tools.py` (`--mode decode`) |
-| Plugin | `dlboamdmod` 0.1.0 (`oamdcapsfeature`, `oamdserialize`) |
+| Native tool | `salsadamfsink` (`gst-damf`) |
+| External tool | `gst-plugin-oamd/atmos_tools.py` (`--mode decode`) |
+| External plugin | `dlboamdmod` 0.1.0 (`oamdcapsfeature`, `oamdserialize`) |
 | Runtime | Dolby Reference Player GStreamer |
 | Reference decoder | `dlbac3dec` / `dlbtruehddec` |
-| Salsa chain | `salsaeac3jocparse ! salsaeac3jocdec` / `salsatruehdparse ! salsatruehdatmosdec` + `salsaobjectaudioadapt` |
+| Salsa chain | `salsaeac3jocparse ! salsaeac3jocdec` / `salsatruehdparse ! salsatruehdatmosdec` |
 | Read-back renderer | Cavern (`aq render`, verification only) |
 
 `gst-plugin-oamd` is treated as a third-party dependency and is not modified.
@@ -50,7 +102,7 @@ The Dolby chain above is the reference. The next section replaces only the
 decoder and metadata encoder with salsa while keeping the same
 `gst-plugin-oamd` packaging elements.
 
-## Salsa decode chain (`salsaobjectaudioadapt`)
+## External salsa + adapter chain (`salsaobjectaudioadapt`)
 
 `atmos_tools.py --mode decode` hardcodes `dlbac3parse`/`dlbac3dec` and
 `dlbtruehdparse`/`dlbtruehddec`, so it cannot drive the salsa decoders directly.
@@ -161,10 +213,10 @@ audio: stream.caf
 metadata: stream.metadata
 ```
 
-Cavern's DAMF reader resolves sidecars by the standard names
+`salsadamfsink` and Cavern's DAMF reader use the standard sidecar names
 `<manifest>.atmos.audio` and `<manifest>.atmos.metadata` in the same directory
-rather than through the manifest fields. The verification script creates
-aliases:
+rather than relying on the manifest fields. `atmos_tools.py` instead writes
+`<stem>.caf` / `<stem>.metadata`; its verification script creates aliases:
 
 ```sh
 ln -s stream.caf        stream.atmos.audio
@@ -182,7 +234,8 @@ PCM/metadata/CAF comparisons above.
 ## Supported scope
 
 - E-AC-3 and TrueHD raw streams to DAMF (`.atmos`, `.metadata`, `.caf`, `.pcm`);
+- native salsa decode → `salsadamfsink` (no OAMD round-trip);
 - Dolby Reference Player decode and salsa decode + `salsaobjectaudioadapt`;
 - binaural mode through the external tool (`oamdcapsfeature float=true` +
   `dlbdapvr`);
-- `oamdserialize` output, which is also embedded in the DAMF export.
+- `oamdserialize` output, which is also embedded in the external DAMF export.

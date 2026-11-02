@@ -242,9 +242,10 @@ pub struct CafWriter {
     file: BufWriter<File>,
     path: PathBuf,
     channels: usize,
-    total_frames: u64,
+    total_frames: Option<u64>,
     frames_written: u64,
     little_endian: bool,
+    data_size_offset: u64,
 }
 
 impl CafWriter {
@@ -256,6 +257,36 @@ impl CafWriter {
         total_frames: u64,
         little_endian: bool,
     ) -> Result<Self> {
+        Self::create_inner(
+            path,
+            sample_rate,
+            channels,
+            Some(total_frames),
+            little_endian,
+        )
+    }
+
+    /// Create a CAF file whose frame count is only known when it is finished.
+    ///
+    /// GStreamer sinks and other streaming writers use this entry point. The
+    /// data chunk still gets its exact size written by [`Self::finish`], so
+    /// readers never need to treat the file as open-ended.
+    pub fn create_streaming(
+        path: impl AsRef<Path>,
+        sample_rate: u32,
+        channels: usize,
+        little_endian: bool,
+    ) -> Result<Self> {
+        Self::create_inner(path, sample_rate, channels, None, little_endian)
+    }
+
+    fn create_inner(
+        path: impl AsRef<Path>,
+        sample_rate: u32,
+        channels: usize,
+        total_frames: Option<u64>,
+        little_endian: bool,
+    ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         if channels == 0 {
             return Err(DamfError::UnsupportedCaf(
@@ -265,9 +296,11 @@ impl CafWriter {
         let bytes_per_frame = channels
             .checked_mul(3)
             .ok_or_else(|| DamfError::UnsupportedCaf("CAF packet size overflow".to_string()))?;
-        let data_bytes = total_frames
-            .checked_mul(bytes_per_frame as u64)
-            .ok_or_else(|| DamfError::UnsupportedCaf("CAF data size overflow".to_string()))?;
+        if let Some(total_frames) = total_frames {
+            total_frames
+                .checked_mul(bytes_per_frame as u64)
+                .ok_or_else(|| DamfError::UnsupportedCaf("CAF data size overflow".to_string()))?;
+        }
         let mut file = BufWriter::new(File::create(&path).map_err(|source| DamfError::Io {
             path: path.clone(),
             source,
@@ -299,10 +332,14 @@ impl CafWriter {
         write(&mut file, &24u32.to_be_bytes())?;
 
         write(&mut file, b"data")?;
-        let data_chunk_size = data_bytes
-            .checked_add(4)
-            .ok_or_else(|| DamfError::UnsupportedCaf("CAF data size overflow".to_string()))?;
-        write(&mut file, &(data_chunk_size as i64).to_be_bytes())?;
+        let data_size_offset = file.stream_position().map_err(|source| DamfError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        // Placeholder; finish() rewrites the exact size. A known frame count is
+        // still an early size/overflow check, not an open-ended CAF.
+        let placeholder = 0i64;
+        write(&mut file, &placeholder.to_be_bytes())?;
         write(&mut file, &0u32.to_be_bytes())?;
 
         Ok(Self {
@@ -312,6 +349,7 @@ impl CafWriter {
             total_frames,
             frames_written: 0,
             little_endian,
+            data_size_offset,
         })
     }
 
@@ -364,18 +402,51 @@ impl CafWriter {
         Ok(())
     }
 
-    /// Flush and verify the declared frame count.
+    /// Flush, patch the exact data chunk size and verify a declared frame count.
     pub fn finish(mut self) -> Result<()> {
         self.file.flush().map_err(|source| DamfError::Io {
             path: self.path.clone(),
             source,
         })?;
-        if self.frames_written != self.total_frames {
+        if let Some(total_frames) = self.total_frames
+            && self.frames_written != total_frames
+        {
             return Err(DamfError::Invalid(format!(
-                "CAF wrote {} frames, expected {}",
-                self.frames_written, self.total_frames
+                "CAF wrote {} frames, expected {total_frames}",
+                self.frames_written
             )));
         }
+        let data_bytes = self
+            .frames_written
+            .checked_mul((self.channels * 3) as u64)
+            .ok_or_else(|| DamfError::UnsupportedCaf("CAF data size overflow".to_string()))?;
+        let data_chunk_size = data_bytes
+            .checked_add(4)
+            .ok_or_else(|| DamfError::UnsupportedCaf("CAF data size overflow".to_string()))?;
+        let data_chunk_size = i64::try_from(data_chunk_size)
+            .map_err(|_| DamfError::UnsupportedCaf("CAF data size overflow".to_string()))?;
+        self.file
+            .seek(SeekFrom::Start(self.data_size_offset))
+            .map_err(|source| DamfError::Io {
+                path: self.path.clone(),
+                source,
+            })?;
+        self.file
+            .write_all(&data_chunk_size.to_be_bytes())
+            .map_err(|source| DamfError::Io {
+                path: self.path.clone(),
+                source,
+            })?;
+        self.file
+            .seek(SeekFrom::End(0))
+            .map_err(|source| DamfError::Io {
+                path: self.path.clone(),
+                source,
+            })?;
+        self.file.flush().map_err(|source| DamfError::Io {
+            path: self.path.clone(),
+            source,
+        })?;
         Ok(())
     }
 }
@@ -650,5 +721,27 @@ mod writer_tests {
     #[test]
     fn writes_big_endian_caf() {
         roundtrip(false);
+    }
+
+    #[test]
+    fn streaming_writer_patches_the_data_size() {
+        let path = unique_path("streaming.caf");
+        let samples = [0.0f32, 0.25, -0.5, 0.75, 0.5, -0.25, 0.1, 0.2];
+        let mut writer = CafWriter::create_streaming(&path, 48_000, 2, false).unwrap();
+        writer.write_frames(&samples[..4]).unwrap();
+        writer.write_frames(&samples[4..]).unwrap();
+        assert_eq!(writer.frames_written(), 4);
+        writer.finish().unwrap();
+
+        let length = std::fs::metadata(&path).unwrap().len();
+        let mut reader = CafReader::open(&path).unwrap();
+        assert_eq!(reader.total_frames(), Some(4));
+        assert_eq!(reader.info().data_offset + 4 * 2 * 3, length);
+        let decoded = reader.read_frames(4).unwrap();
+        assert_eq!(decoded.len(), samples.len());
+        for (actual, expected) in decoded.iter().zip(&samples) {
+            assert!((actual - expected).abs() < 1.0 / 8_388_608.0);
+        }
+        std::fs::remove_file(path).unwrap();
     }
 }

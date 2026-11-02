@@ -1,6 +1,6 @@
 [package]
 name = "gst-damf"
-description = "GStreamer DAMF (Dolby Atmos Master Format) source"
+description = "GStreamer DAMF (Dolby Atmos Master Format) source and sink"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
