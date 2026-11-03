@@ -1,4 +1,7 @@
-use crate::{IrError, ObjectEvent, ObjectState, PcmBuffer, Snapshot, SpatialPayload, Transition};
+use crate::{
+    IrError, ObjectEvent, ObjectState, PcmBuffer, ProgramCalibration, Snapshot, SpatialPayload,
+    Transition,
+};
 
 /// One decoded block of object audio.
 ///
@@ -13,6 +16,7 @@ pub struct SpatialFrame {
     pub events: Vec<ObjectEvent>,
     pub snapshot: Snapshot,
     pub snapshot_offset: i64,
+    pub calibration: Option<ProgramCalibration>,
     pub pcm: PcmBuffer,
 }
 
@@ -31,6 +35,7 @@ impl SpatialFrame {
             events,
             snapshot: Snapshot::State,
             snapshot_offset: 0,
+            calibration: None,
             pcm,
         };
         frame.validate()?;
@@ -62,6 +67,12 @@ impl SpatialFrame {
         self
     }
 
+    /// Attach programme speaker calibration to this frame.
+    pub fn with_calibration(mut self, calibration: ProgramCalibration) -> Self {
+        self.calibration = Some(calibration);
+        self
+    }
+
     /// Metadata-only snapshot for `ObjectAudioMeta`.
     pub fn to_payload(&self) -> SpatialPayload {
         let payload =
@@ -69,6 +80,7 @@ impl SpatialFrame {
         SpatialPayload {
             snapshot: self.snapshot,
             snapshot_offset: self.snapshot_offset,
+            calibration: self.calibration.clone(),
             ..payload
         }
     }
@@ -86,6 +98,7 @@ mod tests {
             events,
             snapshot: Snapshot::State,
             snapshot_offset: 0,
+            calibration: None,
             pcm: PcmBuffer::silent(channels, 0),
         }
     }

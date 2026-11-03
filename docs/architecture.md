@@ -62,7 +62,7 @@ building the frame. The renderer only sees `LFE + N` objects.
 Decoder latency stays with the decoder and is expressed through buffer PTS and
 event offsets. The frame itself always describes a contiguous block of audio.
 
-`SpatialPayload` version 2 carries metadata without PCM:
+`SpatialPayload` version 3 carries metadata without PCM:
 
 - `objects` declares channel-ordered object states or targets.
 - `snapshot` distinguishes an evaluated `State`, a transition `Target`, and
@@ -72,6 +72,9 @@ event offsets. The frame itself always describes a contiguous block of audio.
 - Each event has one object identifier, in its target state. `Transition`
   selects a step, a position ramp, or a ramp of all continuous IR properties.
   Discrete properties change at the event start.
+- `calibration` optionally carries the programme speaker controls (warp, the
+  nine trim configurations and per-object bypass). It is payload-level, not
+  per-object; a payload without it keeps the previous controls.
 
 `SceneTimeline` owns time interpretation. It resolves ramp origins, overlapping
 updates, and repeated timestamps. HRTF, GUI, speaker rendering, and buffer
@@ -101,6 +104,9 @@ PCM stays in the GStreamer buffer.
   nonnegative snapshot offset; C callers must supply a matching value.
 - A buffer can carry several metadata attachments. Consumers submit all of them.
   The GUI queues them as one buffer update and smooths PCM levels once.
+- `SpatialPayload::calibration` carries programme speaker controls (OAMD warp,
+  trim configurations and per-object bypass). The renderer selects the
+  configuration for its target layout; binaural rendering ignores it.
 - `SpatialPayload::rebase` moves both timestamp kinds to another buffer origin.
 - `SpatialPayload::slice` retains the causal prefix at negative offsets. It
   does not shorten ramps or change their targets. Target snapshots still need
@@ -121,7 +127,8 @@ offset argument. `objectaudio-meta` does not register the Dolby meta.
 the bed tables, object limits and field semantics. Codec decoders use it on
 their input wire format; `salsaobjectaudioadapt` uses it in both directions.
 The E-AC-3 encoder also uses this writer, with a profile that adds its trim
-metadata. Writers reject excess blocks, out-of-range event times, and conflicting
+metadata; a payload with `ProgramCalibration` writes that element back. DAMF
+carries only the per-object `trimBypass` flag. Writers reject excess blocks, out-of-range event times, and conflicting
 ramp lengths instead of silently truncating or merging them. Position and gain
 quantization remain part of the OAMD format.
 

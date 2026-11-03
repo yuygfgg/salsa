@@ -3,9 +3,13 @@
 //! Input is interleaved `f32` with channel 0 = LFE and the remaining channels
 //! are point objects. All panning, ramps and accumulation use `f64`.
 
+use std::sync::OnceLock;
+
 use crate::layout::{
-    AxisGroup, MAX_CHANNELS, MAX_GROUPS, MAX_POINTS, RegionGeometry, SpeakerLayout,
+    AxisGroup, MAX_CHANNELS, MAX_GROUPS, MAX_POINTS, RegionGeometry, SpeakerLayout, SpeakerPoint,
+    layout_by_speaker_bitfield,
 };
+use crate::trim::{ControlError, SpeakerControls, TrimMode, apply_balance, explicit_position_gain};
 
 /// Renderer block size; `sample_count` must be a multiple of this.
 pub const BLOCK_SAMPLES: usize = objectaudio_ir::METADATA_BLOCK_SAMPLES;
@@ -48,7 +52,7 @@ impl<'a> SpeakerMetadata<'a> {
 }
 
 /// Errors returned by [`SpeakerRenderer::process`].
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum RenderError {
     #[error("input must contain sample_count * (object_count + 1) samples")]
     InputSize,
@@ -68,6 +72,10 @@ pub enum RenderError {
     NonFiniteGain,
     #[error("Q15 object coordinate is above 32767")]
     CoordinateRange,
+    #[error("speaker controls have an invalid {0}")]
+    InvalidControls(&'static str),
+    #[error(transparent)]
+    Controls(#[from] ControlError),
 }
 
 type PointGains = [f64; MAX_POINTS];
@@ -79,7 +87,13 @@ type RemainingCounts = [u32; MAX_CHANNELS];
 pub struct SpeakerRenderer {
     layout: &'static SpeakerLayout,
     attenuation_db: f64,
-    floor_y_exponent: i32,
+    target_floor_y_exponent: i32,
+    fold_layout: Option<&'static SpeakerLayout>,
+    fold_available: bool,
+    fold_source_channels: usize,
+    fold_source_floor_y_exponent: i32,
+    fold_pl2x: [[f64; MAX_CHANNELS]; MAX_CHANNELS],
+    fold_loro: [[f64; MAX_CHANNELS]; MAX_CHANNELS],
     object_count: usize,
     current: Vec<ObjectChannelGains>,
     target: Vec<ObjectChannelGains>,
@@ -111,7 +125,13 @@ impl SpeakerRenderer {
         let mut renderer = Self {
             layout,
             attenuation_db: layout_attenuation_db(layout.speaker_bitfield),
-            floor_y_exponent: floor_y_exponent(layout.speaker_bitfield),
+            target_floor_y_exponent: floor_y_exponent(layout.speaker_bitfield),
+            fold_layout: None,
+            fold_available: false,
+            fold_source_channels: 0,
+            fold_source_floor_y_exponent: 0,
+            fold_pl2x: [[0.0; MAX_CHANNELS]; MAX_CHANNELS],
+            fold_loro: [[0.0; MAX_CHANNELS]; MAX_CHANNELS],
             object_count,
             current: vec![[0.0; MAX_CHANNELS]; object_count],
             target: vec![[0.0; MAX_CHANNELS]; object_count],
@@ -119,6 +139,7 @@ impl SpeakerRenderer {
             remaining: vec![[0; MAX_CHANNELS]; object_count],
             standard_index_for_internal,
         };
+        renderer.configure_surround_fold();
         renderer.reset();
         renderer
     }
@@ -142,16 +163,18 @@ impl SpeakerRenderer {
         self.remaining.fill([0; MAX_CHANNELS]);
     }
 
-    /// Render `sample_count` samples.
+    /// Render `sample_count` samples with programme speaker controls.
     ///
     /// `input` is interleaved `[sample][object_count + 1]` with the LFE first;
     /// `output` is interleaved `[sample][layout.channel_count()]` and is
-    /// overwritten.
+    /// overwritten. Use [`SpeakerControls::default_for`] for a stream that has
+    /// no calibration.
     pub fn process(
         &mut self,
         input: &[f32],
         sample_count: usize,
         metadata: &[SpeakerMetadata<'_>],
+        controls: &SpeakerControls,
         output: &mut [f64],
     ) -> Result<(), RenderError> {
         if !sample_count.is_multiple_of(BLOCK_SAMPLES) {
@@ -165,19 +188,20 @@ impl SpeakerRenderer {
             return Err(RenderError::OutputSize(channel_count));
         }
         self.validate_metadata(sample_count, metadata)?;
+        validate_controls(controls)?;
 
         output[..sample_count * channel_count].fill(0.0);
         let total_blocks = sample_count / BLOCK_SAMPLES;
         let mut event = 0;
         for block in 0..total_blocks {
             while event < metadata.len() && aligned_block(metadata[event].offset) == block {
-                self.apply_event(&metadata[event]);
+                self.apply_event(&metadata[event], controls);
                 event += 1;
             }
             self.mix_block(input, output, block);
         }
         while event < metadata.len() && aligned_block(metadata[event].offset) == total_blocks {
-            self.apply_event(&metadata[event]);
+            self.apply_event(&metadata[event], controls);
             event += 1;
         }
         debug_assert_eq!(event, metadata.len(), "metadata event was not applied");
@@ -253,19 +277,125 @@ impl SpeakerRenderer {
         Ok(())
     }
 
+    /// Warp 2/3 render the 5.1-family and 4.0 layouts through an expanded
+    /// surround layout, then fold the rear pair into the target surround pair.
+    fn configure_surround_fold(&mut self) {
+        self.fold_layout = None;
+        self.fold_available = false;
+        self.fold_source_channels = 0;
+        if self.target_floor_y_exponent == 0 {
+            return;
+        }
+        let source = match self.layout.speaker_bitfield {
+            15 => layout_by_speaker_bitfield(31),
+            1039 => layout_by_speaker_bitfield(1055),
+            2575 => layout_by_speaker_bitfield(2591),
+            9 => Some(fold_40_layout()),
+            _ => None,
+        };
+        let Some(source) = source else {
+            return;
+        };
+        if source.channel_count() == 0 {
+            return;
+        }
+        self.fold_layout = Some(source);
+        self.fold_source_channels = source.channel_count();
+        self.fold_source_floor_y_exponent = floor_y_exponent(source.speaker_bitfield);
+        self.build_fold_matrix(source.speaker_bitfield, self.layout.speaker_bitfield);
+        self.fold_available = true;
+    }
+
+    /// Shared speakers pass through; speaker IDs 6/7 are the rear pair and fold
+    /// into the same-side (and, for PLIIx, the cross-side) surround.
+    fn build_fold_matrix(&mut self, source_bitfield: u32, target_bitfield: u32) {
+        let source_mask = expand_speaker_bitfield(source_bitfield);
+        let target_mask = expand_speaker_bitfield(target_bitfield);
+        let mut source_ids = [0u32; 64];
+        let mut target_ids = [0u32; 64];
+        let mut source_count = 0usize;
+        let mut target_count = 0usize;
+        for id in 0..64u32 {
+            if (source_mask >> id) & 1 != 0 {
+                source_ids[source_count] = id;
+                source_count += 1;
+            }
+            if (target_mask >> id) & 1 != 0 {
+                target_ids[target_count] = id;
+                target_count += 1;
+            }
+        }
+        self.fold_pl2x = [[0.0; MAX_CHANNELS]; MAX_CHANNELS];
+        self.fold_loro = [[0.0; MAX_CHANNELS]; MAX_CHANNELS];
+        const SQRT3_OVER_2: f64 = 0.866_025_403_784_438_6;
+        for (column, id) in source_ids.iter().take(source_count).copied().enumerate() {
+            let direct = target_position(&target_ids[..target_count], id);
+            if direct < MAX_CHANNELS {
+                self.fold_pl2x[direct][column] = 1.0;
+                self.fold_loro[direct][column] = 1.0;
+                continue;
+            }
+            if id != 6 && id != 7 {
+                continue;
+            }
+            let same = target_position(&target_ids[..target_count], id - 2);
+            let cross = target_position(&target_ids[..target_count], if id == 6 { 5 } else { 4 });
+            if same < MAX_CHANNELS {
+                self.fold_pl2x[same][column] = SQRT3_OVER_2;
+                self.fold_loro[same][column] = 1.0;
+            }
+            if cross < MAX_CHANNELS {
+                self.fold_pl2x[cross][column] = 0.5;
+                self.fold_loro[cross][column] = 0.0;
+            }
+        }
+    }
+
     fn render_point(
         &self,
         position: &[u16; 3],
         region_index: u8,
         enable_height: bool,
         object_gain: f64,
+        controls: &SpeakerControls,
+        bypass: bool,
     ) -> ChannelGains {
-        let mut output = [0.0; MAX_CHANNELS];
-        let region = &self.layout.regions[usize::from(region_index)];
+        let folding = self.fold_available && controls.warp_mode >= 2;
+        let layout = if folding {
+            self.fold_layout.unwrap_or(self.layout)
+        } else {
+            self.layout
+        };
+        let region = &layout.regions[usize::from(region_index)];
         let u = f64::from(position[0]) / Q15_SCALE;
         let v = f64::from(position[1]) / Q15_SCALE;
-        let w = f64::from(position[2]) / Q15_SCALE;
-        let floor_v = clamp(ldexp(v, self.floor_y_exponent), 0.0, 1.0);
+        let w = f64::from(position[2]).max(0.0) / Q15_SCALE;
+        let shift = match controls.warp_mode {
+            0 => 0,
+            1 => self.target_floor_y_exponent,
+            _ if folding => self.fold_source_floor_y_exponent,
+            _ => self.target_floor_y_exponent,
+        };
+        let mut floor_v = clamp(ldexp(v, shift), 0.0, 1.0);
+        let mut top_v = clamp(v, 0.0, 1.0);
+        let mut trim_v = v;
+        if controls.trim_mode == TrimMode::Explicit && !bypass {
+            // Warp feeds the floor coordinate only; the height and trim
+            // coordinates see the balance map on the original Y.
+            floor_v = apply_balance(
+                floor_v,
+                w,
+                controls.listener_balance,
+                controls.overhead_balance,
+            );
+            top_v = apply_balance(
+                top_v,
+                w,
+                controls.listener_balance,
+                controls.overhead_balance,
+            );
+            trim_v = apply_balance(v, w, controls.listener_balance, controls.overhead_balance);
+        }
         let mut floor = [0.0; MAX_POINTS];
         plane_gains(
             region,
@@ -284,7 +414,7 @@ impl SpeakerRenderer {
                 &region.axis1_groups,
                 region.axis1_group_count,
                 u,
-                v,
+                top_v,
                 3,
                 &mut height,
             );
@@ -302,17 +432,45 @@ impl SpeakerRenderer {
                 }
             }
         }
-        let y_term = clamp(v / 0.6, 0.0, 1.0);
-        let z_term = clamp((w - 0.2) / 0.8, 0.0, 1.0);
-        let amount = clamp(y_term + z_term, 0.0, 1.0);
-        let gain = 10.0f64.powf(self.attenuation_db * amount / 20.0) * object_gain;
+        let mut gain = object_gain;
+        if !bypass {
+            match controls.trim_mode {
+                TrimMode::Automatic => gain *= self.position_gain(trim_v, w),
+                TrimMode::Explicit => {
+                    gain *= explicit_position_gain(controls, u, trim_v, w);
+                }
+                TrimMode::Disabled => {}
+            }
+        }
+        let mut internal = [0.0; MAX_CHANNELS];
         for index in 0..usize::from(region.point_count) {
-            output[usize::from(region.points[index].speaker_id)] = point[index] * gain;
+            internal[usize::from(region.points[index].speaker_id)] = point[index] * gain;
+        }
+        if !folding {
+            return internal;
+        }
+        let matrix = if controls.warp_mode == 2 {
+            &self.fold_pl2x
+        } else {
+            &self.fold_loro
+        };
+        let mut output = [0.0; MAX_CHANNELS];
+        for target in 0..self.layout.channel_count() {
+            output[target] = (0..self.fold_source_channels)
+                .map(|source| matrix[target][source] * internal[source])
+                .sum();
         }
         output
     }
 
-    fn apply_event(&mut self, event: &SpeakerMetadata<'_>) {
+    fn position_gain(&self, v: f64, w: f64) -> f64 {
+        let y_term = clamp(v / 0.6, 0.0, 1.0);
+        let z_term = clamp((w - 0.2) / 0.8, 0.0, 1.0);
+        let amount = clamp(y_term + z_term, 0.0, 1.0);
+        10.0f64.powf(self.attenuation_db * amount / 20.0)
+    }
+
+    fn apply_event(&mut self, event: &SpeakerMetadata<'_>, controls: &SpeakerControls) {
         let blocks = ramp_blocks(event.ramp_samples);
         for object in 0..self.object_count {
             let region = event.region_indices.map_or(0, |regions| regions[object]);
@@ -320,7 +478,14 @@ impl SpeakerRenderer {
                 .height_enabled
                 .is_none_or(|enabled| enabled[object] != 0);
             let gain = event.object_gains.map_or(1.0, |gains| gains[object]);
-            let next = self.render_point(&event.positions_q15[object], region, height, gain);
+            let next = self.render_point(
+                &event.positions_q15[object],
+                region,
+                height,
+                gain,
+                controls,
+                controls.is_bypassed(object),
+            );
             for (channel, next_gain) in next.iter().take(self.layout.channel_count()).enumerate() {
                 let difference = next_gain - self.current[object][channel];
                 self.target[object][channel] = next[channel];
@@ -376,6 +541,116 @@ impl SpeakerRenderer {
             }
         }
     }
+}
+
+/// 4.0 expands to the 7.1 geometry without a centre or LFE channel.
+#[allow(clippy::needless_range_loop)]
+fn fold_40_layout() -> &'static SpeakerLayout {
+    static LAYOUT: OnceLock<SpeakerLayout> = OnceLock::new();
+    LAYOUT.get_or_init(|| {
+        let base = layout_by_speaker_bitfield(31).expect("7.1 layout exists");
+        let mut layout = *base;
+        layout.speaker_bitfield = 25; // 4.0's pair plus the rear pair
+        layout.out_ch_config = 255;
+        layout.channel_count = 6;
+        for (slot, target) in layout.standard_from_internal.iter_mut().enumerate() {
+            *target = slot as u8;
+        }
+        const MAPPED: [i8; 8] = [0, 1, -1, -1, 2, 3, 4, 5];
+        for region in &mut layout.regions {
+            let mut index_map = [-1i8; MAX_POINTS];
+            let mut kept = 0usize;
+            let point_count = usize::from(region.point_count);
+            for point in 0..point_count {
+                let speaker = usize::from(region.points[point].speaker_id);
+                let mapped = if speaker < MAPPED.len() {
+                    MAPPED[speaker]
+                } else {
+                    -1
+                };
+                if mapped < 0 {
+                    continue;
+                }
+                region.points[kept] = region.points[point];
+                region.points[kept].speaker_id = mapped as u8;
+                index_map[point] = kept as i8;
+                kept += 1;
+            }
+            for point in kept..point_count {
+                region.points[point] = SpeakerPoint {
+                    coordinate_q15: [0; 3],
+                    speaker_id: 0,
+                };
+            }
+            region.point_count = kept as u8;
+            filter_groups(
+                &mut region.axis0_groups,
+                &mut region.axis0_group_count,
+                &index_map,
+            );
+            filter_groups(
+                &mut region.axis1_groups,
+                &mut region.axis1_group_count,
+                &index_map,
+            );
+        }
+        layout
+    })
+}
+
+fn filter_groups(
+    groups: &mut [AxisGroup; MAX_GROUPS],
+    count: &mut u8,
+    index_map: &[i8; MAX_POINTS],
+) {
+    let mut filtered = [AxisGroup {
+        size: 0,
+        indices: [0; 3],
+    }; MAX_GROUPS];
+    let mut kept_groups = 0usize;
+    for row in 0..usize::from(*count) {
+        let mut group = AxisGroup {
+            size: 0,
+            indices: [0; 3],
+        };
+        for index in 0..usize::from(groups[row].size) {
+            let mapped = index_map[usize::from(groups[row].indices[index])];
+            if mapped < 0 {
+                continue;
+            }
+            group.indices[usize::from(group.size)] = mapped as u8;
+            group.size += 1;
+        }
+        if group.size != 0 {
+            filtered[kept_groups] = group;
+            kept_groups += 1;
+        }
+    }
+    *groups = filtered;
+    *count = kept_groups as u8;
+}
+
+fn target_position(ids: &[u32], id: u32) -> usize {
+    ids.iter()
+        .position(|candidate| *candidate == id)
+        .unwrap_or(MAX_CHANNELS)
+}
+
+fn validate_controls(controls: &SpeakerControls) -> Result<(), RenderError> {
+    if controls.warp_mode > 3 {
+        return Err(RenderError::InvalidControls("warp mode"));
+    }
+    for level in [controls.centre_db, controls.surround_db, controls.height_db] {
+        if !level.is_finite() {
+            return Err(RenderError::InvalidControls("trim level"));
+        }
+    }
+    for balance in [controls.listener_balance, controls.overhead_balance] {
+        if !balance.is_finite() || !(-1.0..=1.0).contains(&balance) {
+            return Err(RenderError::InvalidControls("balance"));
+        }
+    }
+    Ok(())
 }
 
 fn aligned_block(sample: u32) -> usize {
@@ -617,6 +892,7 @@ mod tests {
                 &input,
                 BLOCK_SAMPLES,
                 &[SpeakerMetadata::new(0, 0, &positions)],
+                &SpeakerControls::default_for(layout),
                 &mut output,
             )
             .unwrap();
@@ -641,7 +917,13 @@ mod tests {
         let positions = positions(LEGACY_OBJECTS, 0, left_position());
         let event = SpeakerMetadata::new(0, 64, &positions);
         renderer
-            .process(&input, frames * BLOCK_SAMPLES, &[event], &mut output)
+            .process(
+                &input,
+                frames * BLOCK_SAMPLES,
+                &[event],
+                &SpeakerControls::default_for(layout),
+                &mut output,
+            )
             .unwrap();
         let channels = layout.channel_count();
         let last = (frames * BLOCK_SAMPLES - 1) * channels;
@@ -653,6 +935,7 @@ mod tests {
                 &input[..BLOCK_SAMPLES * input_channels],
                 BLOCK_SAMPLES,
                 &[],
+                &SpeakerControls::default_for(layout),
                 &mut tail,
             )
             .unwrap();
@@ -670,7 +953,13 @@ mod tests {
         }
         let mut output = vec![0.0; BLOCK_SAMPLES * layout.channel_count()];
         renderer
-            .process(&input, BLOCK_SAMPLES, &[], &mut output)
+            .process(
+                &input,
+                BLOCK_SAMPLES,
+                &[],
+                &SpeakerControls::default_for(layout),
+                &mut output,
+            )
             .unwrap();
         assert_eq!(output[3], 0.25);
     }
@@ -681,7 +970,13 @@ mod tests {
         let mut renderer = SpeakerRenderer::new(layout, LEGACY_OBJECTS);
         let mut output = vec![0.0; 10 * layout.channel_count()];
         assert_eq!(
-            renderer.process(&[], 10, &[], &mut output),
+            renderer.process(
+                &[],
+                10,
+                &[],
+                &SpeakerControls::default_for(layout),
+                &mut output
+            ),
             Err(RenderError::BlockAlignment)
         );
     }
@@ -704,12 +999,24 @@ mod tests {
             };
             if object_count == 0 {
                 renderer
-                    .process(&input, BLOCK_SAMPLES, &[], &mut output)
+                    .process(
+                        &input,
+                        BLOCK_SAMPLES,
+                        &[],
+                        &SpeakerControls::default_for(layout),
+                        &mut output,
+                    )
                     .unwrap();
             } else {
                 let metadata = [SpeakerMetadata::new(0, 0, &positions)];
                 renderer
-                    .process(&input, BLOCK_SAMPLES, &metadata, &mut output)
+                    .process(
+                        &input,
+                        BLOCK_SAMPLES,
+                        &metadata,
+                        &SpeakerControls::default_for(layout),
+                        &mut output,
+                    )
                     .unwrap();
             }
             assert!(output.iter().all(|value| value.is_finite()));
@@ -725,11 +1032,395 @@ mod tests {
         let positions = vec![[0u16; 3]; 3];
         let event = SpeakerMetadata::new(0, 0, &positions);
         assert_eq!(
-            renderer.process(&input, BLOCK_SAMPLES, &[event], &mut output),
+            renderer.process(
+                &input,
+                BLOCK_SAMPLES,
+                &[event],
+                &SpeakerControls::default_for(layout),
+                &mut output,
+            ),
             Err(RenderError::ObjectCount {
                 expected: 4,
                 actual: 3,
             })
+        );
+    }
+    fn controls(layout: &'static SpeakerLayout, warp: u8) -> SpeakerControls {
+        let mut controls = SpeakerControls::default_for(layout);
+        controls.warp_mode = warp;
+        controls
+    }
+
+    fn speaker_gains(
+        layout: &'static SpeakerLayout,
+        controls: &SpeakerControls,
+        position: [u16; 3],
+        bypass: bool,
+    ) -> Vec<f64> {
+        let mut renderer = SpeakerRenderer::new(layout, 1);
+        let mut input = vec![0.0f32; BLOCK_SAMPLES * 2];
+        for sample in 0..BLOCK_SAMPLES {
+            input[sample * 2 + 1] = 1.0;
+        }
+        let positions = [position];
+        let mut applied = controls.clone();
+        if bypass {
+            applied.bypass = vec![true];
+        }
+        let mut output = vec![0.0; BLOCK_SAMPLES * layout.channel_count()];
+        renderer
+            .process(
+                &input,
+                BLOCK_SAMPLES,
+                &[SpeakerMetadata::new(0, 0, &positions)],
+                &applied,
+                &mut output,
+            )
+            .unwrap();
+        output[..layout.channel_count()].to_vec()
+    }
+
+    fn check_gains(actual: &[f64], expected: &[f64]) {
+        assert_eq!(actual.len(), expected.len());
+        for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+            assert!(
+                (actual - expected).abs() <= 1e-13,
+                "channel {index}: actual {actual:.17} expected {expected:.17}"
+            );
+        }
+    }
+
+    #[test]
+    fn warp_zero_leaves_floor_y_alone_and_warp_one_doubles_it() {
+        let layout = layout_by_name("5.1").unwrap();
+        let automatic = controls(layout, 0);
+        check_gains(
+            &speaker_gains(layout, &automatic, [0, 4096, 0], false),
+            &[
+                0.9126902722074105,
+                0.0,
+                0.0,
+                0.0,
+                0.181_551_068_237_089_7,
+                0.0,
+            ],
+        );
+        let warped = controls(layout, 1);
+        check_gains(
+            &speaker_gains(layout, &warped, [0, 4096, 0], false),
+            &[
+                0.859_732_194_193_924_4,
+                0.0,
+                0.0,
+                0.0,
+                0.356_124_806_249_951_6,
+                0.0,
+            ],
+        );
+        check_gains(
+            &speaker_gains(layout, &warped, [0, 24576, 0], false),
+            &[0.0, 0.0, 0.0, 0.0, 0.707_945_784_384_137_9, 0.0],
+        );
+    }
+
+    #[test]
+    fn the_height_layer_is_never_warped() {
+        let layout = layout_by_name("5.1.4").unwrap();
+        let warp0 = controls(layout, 0);
+        let warp1 = controls(layout, 1);
+        let expected = [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.841_395_141_645_195_1,
+            0.0,
+            0.0,
+            0.0,
+        ];
+        check_gains(
+            &speaker_gains(layout, &warp0, [0, 4096, 32767], false),
+            &expected,
+        );
+        check_gains(
+            &speaker_gains(layout, &warp1, [0, 4096, 32767], false),
+            &expected,
+        );
+    }
+
+    #[test]
+    fn explicit_trim_and_balance_apply_before_panning() {
+        let layout = layout_by_name("5.1").unwrap();
+        let mut explicit = controls(layout, 1);
+        explicit.trim_mode = TrimMode::Explicit;
+        explicit.surround_db = -6.0;
+        explicit.listener_balance = 9.0 / 16.0;
+        explicit.overhead_balance = -9.0 / 16.0;
+        check_gains(
+            &speaker_gains(layout, &explicit, [0, 4096, 0], false),
+            &[
+                0.681_179_110_590_160_6,
+                0.0,
+                0.0,
+                0.0,
+                0.41744281702545366,
+                0.0,
+            ],
+        );
+        check_gains(
+            &speaker_gains(layout, &explicit, [0, 4096, 0], true),
+            &[
+                0.923_874_946_140_654_4,
+                0.0,
+                0.0,
+                0.0,
+                0.382_694_504_655_610_4,
+                0.0,
+            ],
+        );
+    }
+
+    #[test]
+    fn centre_and_height_trim_are_position_dependent() {
+        let layout = layout_by_name("5.1").unwrap();
+        let mut centre = controls(layout, 0);
+        centre.trim_mode = TrimMode::Explicit;
+        centre.centre_db = -6.0;
+        check_gains(
+            &speaker_gains(layout, &centre, [16384, 0, 0], false),
+            &[0.0, 0.0, 0.501_187_233_627_272_2, 0.0, 0.0, 0.0],
+        );
+
+        let layout = layout_by_name("5.1.4").unwrap();
+        let mut height = controls(layout, 0);
+        height.trim_mode = TrimMode::Explicit;
+        height.height_db = -6.0;
+        check_gains(
+            &speaker_gains(layout, &height, [0, 0, 16384], false),
+            &[
+                0.500_593_264_850_453_4,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.500_593_264_850_453_4,
+                0.0,
+                0.0,
+                0.0,
+            ],
+        );
+    }
+
+    #[test]
+    fn warp_two_folds_the_rear_pair_with_pl2x() {
+        let layout = layout_by_name("5.1").unwrap();
+        let pl2x = controls(layout, 2);
+        check_gains(
+            &speaker_gains(layout, &pl2x, [0, 20480, 0], false),
+            &[
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.888_686_546_052_577_5,
+                0.13546740014942704,
+            ],
+        );
+        check_gains(
+            &speaker_gains(layout, &pl2x, [0, 24576, 0], false),
+            &[
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.934_116_532_931_164_9,
+                0.25030863131451864,
+            ],
+        );
+    }
+
+    #[test]
+    fn warp_three_folds_the_rear_pair_with_lo_ro() {
+        let layout = layout_by_name("5.1").unwrap();
+        let loro = controls(layout, 3);
+        check_gains(
+            &speaker_gains(layout, &loro, [0, 20480, 0], false),
+            &[0.0, 0.0, 0.0, 0.0, 0.924_984_926_523_360_2, 0.0],
+        );
+        check_gains(
+            &speaker_gains(layout, &loro, [0, 24576, 0], false),
+            &[0.0, 0.0, 0.0, 0.0, 1.0011865285504298, 0.0],
+        );
+    }
+
+    #[test]
+    fn four_zero_uses_the_synthetic_intermediate_layout() {
+        let layout = layout_by_name("4.0").unwrap();
+        let pl2x = controls(layout, 2);
+        let loro = controls(layout, 3);
+        check_gains(
+            &speaker_gains(layout, &pl2x, [0, 24576, 0], false),
+            &[0.0, 0.0, 0.934_116_532_931_164_9, 0.25030863131451864],
+        );
+        check_gains(
+            &speaker_gains(layout, &loro, [0, 24576, 0], false),
+            &[0.0, 0.0, 1.0011865285504298, 0.0],
+        );
+        check_gains(
+            &speaker_gains(layout, &loro, [0, 4096, 0], false),
+            &[0.859_736_462_142_204_3, 0.0, 0.35611450268596406, 0.0],
+        );
+    }
+
+    #[test]
+    fn five_one_two_and_five_one_four_fold_in_the_matching_family() {
+        let layout = layout_by_name("5.1.2").unwrap();
+        let pl2x = controls(layout, 2);
+        let loro = controls(layout, 3);
+        check_gains(
+            &speaker_gains(layout, &pl2x, [0, 28672, 16384], false),
+            &[
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.645_469_528_627_975_7,
+                0.252_106_061_070_189_5,
+                0.545_739_014_332_405_2,
+                0.0,
+            ],
+        );
+        check_gains(
+            &speaker_gains(layout, &loro, [0, 28672, 16384], false),
+            &[
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.7130211440987243,
+                0.0,
+                0.545_739_014_332_405_2,
+                0.0,
+            ],
+        );
+
+        let layout = layout_by_name("5.1.4").unwrap();
+        let pl2x = controls(layout, 2);
+        check_gains(
+            &speaker_gains(layout, &pl2x, [0, 28672, 16384], false),
+            &[
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.703_680_870_417_357_4,
+                0.274_842_118_215_018_6,
+                0.0,
+                0.0,
+                0.594_956_210_314_733_2,
+                0.0,
+            ],
+        );
+    }
+
+    #[test]
+    fn calibration_stays_on_the_target_layout_before_folding() {
+        let layout = layout_by_name("5.1").unwrap();
+        let mut trimmed = controls(layout, 2);
+        trimmed.trim_mode = TrimMode::Explicit;
+        trimmed.surround_db = -6.0;
+        check_gains(
+            &speaker_gains(layout, &trimmed, [0, 24576, 0], false),
+            &[
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.661_303_861_612_144_9,
+                0.17720494033407685,
+            ],
+        );
+        check_gains(
+            &speaker_gains(layout, &trimmed, [0, 24576, 0], true),
+            &[
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.319474673818108,
+                0.353_570_339_474_892_4,
+            ],
+        );
+    }
+
+    #[test]
+    fn layouts_with_two_surround_pairs_or_none_render_directly() {
+        for name in ["7.1", "2.0"] {
+            let layout = layout_by_name(name).unwrap();
+            let automatic = controls(layout, 0);
+            for warp in [2, 3] {
+                let warped = controls(layout, warp);
+                check_gains(
+                    &speaker_gains(layout, &warped, [0, 24576, 0], false),
+                    &speaker_gains(layout, &automatic, [0, 24576, 0], false),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lfe_passes_through_folded_output() {
+        let layout = layout_by_name("5.1").unwrap();
+        let pl2x = controls(layout, 2);
+        let mut renderer = SpeakerRenderer::new(layout, 1);
+        let mut input = vec![0.0f32; BLOCK_SAMPLES * 2];
+        for sample in 0..BLOCK_SAMPLES {
+            input[sample * 2] = 0.25;
+        }
+        let positions = [[16384u16, 16384, 0]];
+        let mut output = vec![0.0; BLOCK_SAMPLES * layout.channel_count()];
+        renderer
+            .process(
+                &input,
+                BLOCK_SAMPLES,
+                &[SpeakerMetadata::new(0, 0, &positions)],
+                &pl2x,
+                &mut output,
+            )
+            .unwrap();
+        for sample in 0..BLOCK_SAMPLES {
+            for channel in 0..layout.channel_count() {
+                let value = output[sample * layout.channel_count() + channel];
+                if channel == 3 {
+                    assert!((value - 0.25).abs() <= 1e-15);
+                } else {
+                    assert_eq!(value, 0.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn warp_modes_above_three_are_rejected() {
+        let layout = layout_by_name("5.1").unwrap();
+        let mut invalid = controls(layout, 4);
+        invalid.trim_mode = TrimMode::Disabled;
+        let mut renderer = SpeakerRenderer::new(layout, 1);
+        let input = vec![0.0f32; BLOCK_SAMPLES * 2];
+        let positions = [[0u16, 0, 0]];
+        let mut output = vec![0.0; BLOCK_SAMPLES * layout.channel_count()];
+        assert_eq!(
+            renderer.process(
+                &input,
+                BLOCK_SAMPLES,
+                &[SpeakerMetadata::new(0, 0, &positions)],
+                &invalid,
+                &mut output,
+            ),
+            Err(RenderError::InvalidControls("warp mode"))
         );
     }
 }

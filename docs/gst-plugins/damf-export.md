@@ -37,13 +37,18 @@ The sink writes:
 - `<stem>.atmos` (manifest `0.5.1`, LFE bed ID `3`, object IDs `10..N`);
 - `<stem>.atmos.audio` (24-bit CAF, big-endian by default; `little-endian=true`
   flips the sample byte order);
-- `<stem>.atmos.metadata` (YAML keyframes with position, dB gain, active, size
-  and ramp length).
+- `<stem>.atmos.metadata` (YAML keyframes with position, dB gain, active, size,
+  ramp length and per-object `trimBypass`).
 
 Metadata is evaluated on the signed IR timeline before export. A seek or
 buffer slice therefore retains the state at the output start and the remaining
 motion. The sink resolves state snapshots and transition targets at the same
 sample before it writes a single DAMF event for that object and sample.
+
+Programme speaker calibration survives as per-object `trimBypass`; DAMF has no
+carrier for warp mode, layout trim records or front-back balance. Reading such a
+DAMF back attaches a calibration with the same bypass flags and otherwise
+automatic defaults.
 
 DAMF ramp lengths control position only. The sink retains sparse position
 ramps when DAMF can represent their origin. It writes evaluated states at each

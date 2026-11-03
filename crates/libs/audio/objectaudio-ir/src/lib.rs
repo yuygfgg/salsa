@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 #![doc = "Format-independent spatial audio IR used by the salsa decoders and renderers."]
 
+mod calibration;
 mod conversion;
 mod error;
 mod frame;
@@ -11,11 +12,12 @@ mod pipeline;
 mod speaker;
 mod timeline;
 
+pub use calibration::{ProgramCalibration, TRIM_CONFIG_COUNT, TrimRecord, TrimRecordKind};
 pub use conversion::ConversionReport;
 pub use error::{IrError, PayloadError};
 pub use frame::SpatialFrame;
 pub use object::{ObjectEvent, ObjectState, Transition};
-pub use payload::{Snapshot, SpatialPayload, payload_version};
+pub use payload::{Snapshot, SpatialPayload};
 pub use pcm::PcmBuffer;
 pub use pipeline::{SpatialDecoder, SpatialParser};
 pub use speaker::{

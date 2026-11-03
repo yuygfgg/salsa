@@ -46,6 +46,15 @@ pub enum IrError {
     #[error("an event references object id {object}, which is not in the frame")]
     UnknownEventObject { object: u32 },
 
+    #[error("calibration has an invalid {property}")]
+    InvalidCalibration { property: &'static str },
+
+    #[error("trim configuration {index} has an invalid {property}")]
+    InvalidTrimRecord {
+        index: usize,
+        property: &'static str,
+    },
+
     #[error("unsupported spatial payload version {version}; this build supports {supported}")]
     UnsupportedPayloadVersion { version: u16, supported: u16 },
 }

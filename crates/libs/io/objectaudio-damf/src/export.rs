@@ -25,7 +25,7 @@ impl Metadata {
                 let id = object_id_base
                     .checked_add(index as i64)
                     .ok_or_else(|| DamfError::Invalid("DAMF object ID overflow".into()))?;
-                events.extend(export_track(track, end, id));
+                events.extend(export_track(track, end, id, index, timeline));
             }
         }
         events.sort_by_key(|event| (event.sample_pos, event.id));
@@ -36,7 +36,18 @@ impl Metadata {
     }
 }
 
-fn export_track(track: &StateTrack, end: i64, id: i64) -> Vec<DamfEvent> {
+fn export_track(
+    track: &StateTrack,
+    end: i64,
+    id: i64,
+    index: usize,
+    timeline: &SceneTimeline,
+) -> Vec<DamfEvent> {
+    let bypass_at = |sample: i64| {
+        timeline
+            .calibration_at(sample)
+            .is_some_and(|calibration| calibration.is_bypassed(index))
+    };
     // The track has already resolved state-before-target ordering. One update
     // per time now describes each interval, including a ramp crossing zero.
     let initial = track.state_at(0);
@@ -65,19 +76,19 @@ fn export_track(track: &StateTrack, end: i64, id: i64) -> Vec<DamfEvent> {
         let constant_properties =
             origin.gain == event.state.gain && origin.size == event.state.size;
         if duration == 0 || (constant_properties && origin.position == event.state.position) {
-            output.push(start, origin, 0);
+            output.push(start, origin, 0, bypass_at(start));
         } else if !output.events.is_empty()
             && output.spatial.state_at(start).position == origin.position
             && (constant_properties || matches!(event.transition, Transition::Position(_)))
         {
-            output.push(start, event.state, duration);
+            output.push(start, event.state, duration, bypass_at(start));
         } else {
             // A first ramp or a simultaneous position jump has no representable
             // DAMF origin. Sampling also preserves All's linear gain and size.
             // Include the settled state, unless another update interrupts it.
             let stop = next.min(start.saturating_add(i64::from(duration) + 1));
             for sample in start..stop {
-                output.push(sample, track.state_at(sample), 0);
+                output.push(sample, track.state_at(sample), 0, bypass_at(sample));
             }
         }
     }
@@ -91,16 +102,16 @@ struct TrackExport {
 }
 
 impl TrackExport {
-    fn push(&mut self, sample: i64, state: ObjectState, ramp: u32) {
+    fn push(&mut self, sample: i64, state: ObjectState, ramp: u32, bypass: bool) {
         self.events
-            .push(damf_event(self.id, sample as u64, state, ramp));
+            .push(damf_event(self.id, sample as u64, state, ramp, bypass));
         self.spatial
             .set_target(sample, state, Transition::Position(ramp));
         self.spatial.discard_before(sample);
     }
 }
 
-fn damf_event(id: i64, sample_pos: u64, state: ObjectState, ramp: u32) -> DamfEvent {
+fn damf_event(id: i64, sample_pos: u64, state: ObjectState, ramp: u32, bypass: bool) -> DamfEvent {
     let ObjectState {
         id: _,
         position: [x, y, z],
@@ -127,7 +138,7 @@ fn damf_event(id: i64, sample_pos: u64, state: ObjectState, ramp: u32) -> DamfEv
         importance: Some(1.0),
         gain: Some(gain),
         ramp_length: Some(ramp),
-        trim_bypass: Some(false),
+        trim_bypass: Some(bypass),
         dialog: Some(-1.0),
         music: Some(-1.0),
         screen_factor: Some(0.0),
@@ -175,6 +186,28 @@ mod tests {
             }
         }
         metadata
+    }
+
+    #[test]
+    fn exports_per_object_trim_bypass_from_calibration() {
+        let payload = SpatialPayload::new(
+            48_000,
+            vec![
+                ObjectState::new(1, [0.0, 0.0, 0.0]),
+                ObjectState::new(2, [0.0, 0.0, 0.0]),
+            ],
+            Vec::new(),
+        )
+        .with_calibration(objectaudio_ir::ProgramCalibration {
+            bypass: vec![false, true],
+            ..objectaudio_ir::ProgramCalibration::default()
+        });
+        let metadata =
+            Metadata::from_timeline(&SceneTimeline::from_payload(&payload, 0).unwrap(), 64, 10)
+                .unwrap();
+        for event in &metadata.events {
+            assert_eq!(event.trim_bypass, Some(event.id == 11));
+        }
     }
 
     #[test]

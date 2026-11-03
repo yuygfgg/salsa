@@ -185,7 +185,7 @@ Both decoders handle flushing seeks and reset their codec/DSP state on `FLUSH_ST
 
 #### `salsaoar` (Speaker Renderer)
 
-Sample-accurate equal-power panning to standard speaker layouts (`2.0`, `3.1`, `4.0`, `5.1`, `7.1`, `5.1.2`, `5.1.4`, `7.1.2`, `7.1.4`, `9.1.4`, `9.1.6`), passing LFE straight through.
+Sample-accurate equal-power panning to standard speaker layouts (`2.0`, `3.1`, `4.0`, `5.1`, `7.1`, `5.1.2`, `5.1.4`, `7.1.2`, `7.1.4`, `9.1.4`, `9.1.6`), passing LFE straight through. Programme OAMD trim, warp 0/1 and warp 2/3 surround folding follow the source calibration; wider layouts use disabled trim.
 
 - **Sink caps**: `audio/x-raw` F32LE interleaved, `rate=32000..48000`, `channels=1..1024`, `channel-mask=0`, with `meta:ObjectAudioMeta` (also accepted with `memory:SystemMemory`). Plain raw and `meta:DlbObjectAudioMeta` are not advertised; Dolby streams must pass through `salsaobjectaudioadapt`.
 - **Src caps**: `audio/x-raw` F32LE interleaved, one structure per supported layout with the layout's channel count and GStreamer channel mask, same rate as the sink.

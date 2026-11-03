@@ -12,8 +12,8 @@ use gst_base::subclass::base_transform::GenerateOutputSuccess;
 use gst_base::subclass::prelude::*;
 
 use objectaudio_render::{
-    BLOCK_SAMPLES, SpeakerChannel, SpeakerLayout, SpeakerRenderer, layout_by_channel_count,
-    layout_by_name, layouts,
+    BLOCK_SAMPLES, SpeakerChannel, SpeakerControls, SpeakerLayout, SpeakerRenderer,
+    layout_by_channel_count, layout_by_name, layouts,
 };
 
 const DEFAULT_LAYOUT: &str = "5.1";
@@ -635,7 +635,10 @@ impl State {
                 render_samples,
                 &mut rendered,
             ),
-            None => renderer.process(input, render_samples, &[], &mut rendered),
+            None => {
+                let controls = SpeakerControls::default_for(renderer.layout());
+                renderer.process(input, render_samples, &[], &controls, &mut rendered)
+            }
         };
         result.map_err(|error| {
             gst::error!(gst::CAT_RUST, "salsaoar: render failed: {error}");

@@ -117,6 +117,9 @@ impl SpatialDecoder for TrueHdDecoder {
             let base = if saw_oamd { self.oamd_base_offset } else { 0 };
             oamd.map_to_ir_with_bed(base, &bed_positions)
         });
+        let calibration = mapping
+            .as_ref()
+            .and_then(|mapping| mapping.calibration.clone());
         let dynamic_count = mapping
             .as_ref()
             .map_or(declared_objects, |mapping| mapping.dynamic_count);
@@ -180,6 +183,9 @@ impl SpatialDecoder for TrueHdDecoder {
         let pcm = PcmBuffer::from_planar(planes)?;
         let sample_rate = decoded.sampling_frequency;
         let mut spatial = SpatialFrame::new(sample_rate, frames, objects, events, pcm)?;
+        if let Some(calibration) = calibration {
+            spatial = spatial.with_calibration(calibration);
+        }
         if saw_oamd && let Some(mapping) = &mapping {
             spatial = spatial
                 .with_snapshot_ramp(mapping.snapshot_ramp_samples)

@@ -5,7 +5,7 @@ use crate::error::{DamfError, Result};
 use crate::manifest::Manifest;
 use crate::metadata::Metadata;
 use crate::scene::{Consumer, DamfScene, ObjectTrack};
-use objectaudio_ir::{ObjectState, SpatialPayload};
+use objectaudio_ir::{ObjectState, ProgramCalibration, SpatialPayload};
 use std::path::Path;
 
 /// One source object after the manifest's bed/object layout has been flattened.
@@ -205,7 +205,19 @@ impl DamfSource {
             .flat_map(|(index, track)| track.events(start, frames, index as u32 + 1))
             .collect::<Vec<_>>();
         events.sort_by_key(|event| event.offset);
-        let payload = SpatialPayload::new(self.info.sample_rate, objects, events);
+        // DAMF carries per-object trimBypass but no programme warp/trim/balance;
+        // the IR calibration keeps the bypass flags and leaves the rest at the
+        // automatic defaults.
+        let calibration = ProgramCalibration {
+            bypass: self
+                .tracks
+                .iter()
+                .map(|track| track.metadata_at(start).trim_bypass)
+                .collect(),
+            ..ProgramCalibration::default()
+        };
+        let payload = SpatialPayload::new(self.info.sample_rate, objects, events)
+            .with_calibration(calibration);
         self.next_sample = start + frames as u64;
 
         Ok(Some(DamfBlock {
@@ -362,6 +374,33 @@ events:
         assert_eq!(third.payload.objects[0].position, [0.0, 1.0, 0.0]);
         assert!(source.read_block(4).unwrap().is_none());
 
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn block_carries_the_per_object_trim_bypass() {
+        let dir = unique_dir("trim-bypass");
+        let manifest = write_manifest(&dir, "LFE", &[10]);
+        write_caf(&dir.join("master.atmos.audio"), 2, 4, &[0.0; 8]);
+        let mut metadata = std::fs::File::create(dir.join("master.atmos.metadata")).unwrap();
+        metadata
+            .write_all(
+                br#"sampleRate: 48000
+events:
+  - ID: 10
+    samplePos: 0
+    pos: [-1, 0, 0]
+    trimBypass: true
+"#,
+            )
+            .unwrap();
+
+        let mut source = DamfSource::open(&manifest).unwrap();
+        let block = source.read_block(4).unwrap().unwrap();
+        let calibration = block.payload.calibration.expect("calibration");
+        assert_eq!(calibration.bypass, vec![true]);
+        assert_eq!(calibration.warp_mode, 0);
+        assert_eq!(calibration.global_trim_mode, 0);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -156,7 +156,9 @@ fn inspect(report: &mut ConversionReport, state: &ResolvedMetadata, consumer: Co
     unsupported("snap", *snap);
     unsupported("elevation", !*elevation);
     unsupported("decorr", *decorr != 0);
-    unsupported("trimBypass", *trim_bypass);
+    if matches!(consumer, Consumer::Cluster) {
+        unsupported("trimBypass", *trim_bypass);
+    }
     unsupported("screenFactor", *screen_factor != 0.0);
     unsupported("depthFactor", *depth_factor != 0.25);
     unsupported("headTrackMode", head_track_mode != "undefined");

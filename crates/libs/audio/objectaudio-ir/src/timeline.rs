@@ -3,7 +3,9 @@
 //! Tracks keep absolute sample times. Buffer sizes, display refresh rates, and
 //! renderer control grids do not define the authored trajectory.
 
-use crate::{IrError, ObjectEvent, ObjectState, Snapshot, SpatialPayload, Transition};
+use crate::{
+    IrError, ObjectEvent, ObjectState, ProgramCalibration, Snapshot, SpatialPayload, Transition,
+};
 
 /// Evaluated states precede transition targets at the same sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -205,6 +207,9 @@ fn interpolate(
 pub struct SceneTimeline {
     sample_rate: u32,
     tracks: Vec<StateTrack>,
+    /// Programme calibration changes. A payload without a calibration element
+    /// leaves the most recent value in force.
+    calibrations: Vec<(i64, ProgramCalibration)>,
 }
 
 impl SceneTimeline {
@@ -226,8 +231,14 @@ impl SceneTimeline {
                     })
                 })
                 .collect(),
+            calibrations: Vec::new(),
         };
         scene.submit(payload, buffer_start)?;
+        // The reference seeds the initial controls from the leading frames, so
+        // the first trim element is in force before its own event arrives.
+        if let Some(calibration) = &payload.calibration {
+            scene.set_calibration(buffer_start, calibration.clone());
+        }
         Ok(scene)
     }
 
@@ -248,7 +259,34 @@ impl SceneTimeline {
                 event.transition,
             );
         }
+        if let Some(calibration) = &payload.calibration {
+            self.set_calibration(sample, calibration.clone());
+        }
         Ok(())
+    }
+
+    fn set_calibration(&mut self, sample: i64, calibration: ProgramCalibration) {
+        let index = self
+            .calibrations
+            .partition_point(|(existing, _)| *existing < sample);
+        if self
+            .calibrations
+            .get(index)
+            .is_some_and(|(existing, _)| *existing == sample)
+        {
+            self.calibrations[index] = (sample, calibration);
+        } else {
+            self.calibrations.insert(index, (sample, calibration));
+        }
+    }
+
+    /// Programme calibration in force at `sample`, or `None` before the first
+    /// payload that carried one.
+    pub fn calibration_at(&self, sample: i64) -> Option<&ProgramCalibration> {
+        let end = self
+            .calibrations
+            .partition_point(|(existing, _)| *existing <= sample);
+        end.checked_sub(1).map(|index| &self.calibrations[index].1)
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -278,6 +316,15 @@ impl SceneTimeline {
         for track in &mut self.tracks {
             track.discard_before(sample);
         }
+        // Keep the last calibration at or before the cutoff, plus any future
+        // changes; calibration is programme-wide, not per-object history.
+        let keep_from = self
+            .calibrations
+            .partition_point(|(existing, _)| *existing <= sample)
+            .saturating_sub(1);
+        if keep_from > 0 {
+            self.calibrations.drain(..keep_from);
+        }
     }
 
     pub fn payload(&self, start: i64, frames: usize) -> SpatialPayload {
@@ -287,7 +334,11 @@ impl SceneTimeline {
             .flat_map(|track| track.events(start, frames))
             .collect();
         events.sort_by_key(|event| event.offset);
-        SpatialPayload::new(self.sample_rate, self.states_at(start), events)
+        let payload = SpatialPayload::new(self.sample_rate, self.states_at(start), events);
+        match self.calibration_at(start) {
+            Some(calibration) => payload.with_calibration(calibration.clone()),
+            None => payload,
+        }
     }
 }
 
@@ -355,5 +406,46 @@ mod tests {
         scene.discard_before(80);
         scene.submit(&suffix, 64).unwrap();
         assert!((scene.state_at(0, 96).position[0]).abs() < 1e-5);
+    }
+    #[test]
+    fn calibration_stays_in_force_until_a_new_element_arrives() {
+        let calibration = ProgramCalibration {
+            warp_mode: 1,
+            ..ProgramCalibration::default()
+        };
+        let initial = SpatialPayload::new(
+            48_000,
+            vec![ObjectState::new(1, [0.0, 0.5, 0.0])],
+            Vec::new(),
+        )
+        .with_calibration(calibration.clone());
+        let mut scene = SceneTimeline::from_payload(&initial, 0).unwrap();
+        assert_eq!(scene.calibration_at(0), Some(&calibration));
+        assert_eq!(scene.calibration_at(-1), None);
+
+        let quiet = SpatialPayload::new(
+            48_000,
+            vec![ObjectState::new(1, [0.0, 0.5, 0.0])],
+            Vec::new(),
+        );
+        scene.submit(&quiet, 100).unwrap();
+        assert_eq!(scene.calibration_at(100), Some(&calibration));
+
+        let mut updated = calibration.clone();
+        updated.warp_mode = 2;
+        let change = SpatialPayload::new(
+            48_000,
+            vec![ObjectState::new(1, [0.0, 0.5, 0.0])],
+            Vec::new(),
+        )
+        .with_calibration(updated.clone());
+        scene.submit(&change, 200).unwrap();
+        assert_eq!(scene.calibration_at(199), Some(&calibration));
+        assert_eq!(scene.calibration_at(200), Some(&updated));
+
+        let exported = scene.payload(150, 64);
+        assert_eq!(exported.calibration, Some(calibration.clone()));
+        scene.discard_before(250);
+        assert_eq!(scene.calibration_at(250), Some(&updated));
     }
 }

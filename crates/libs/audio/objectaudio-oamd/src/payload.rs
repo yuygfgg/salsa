@@ -908,7 +908,7 @@ impl ObjectRenderInfo {
     }
 }
 
-pub const NUM_TRIM_CONFIGS: usize = 9;
+pub const NUM_TRIM_CONFIGS: usize = objectaudio_ir::TRIM_CONFIG_COUNT;
 
 /// Maps a 4-bit distance_factor_idx to object distance in metres.
 #[rustfmt::skip]
@@ -921,7 +921,6 @@ pub const TRIM_LUT: [f64; 16] = [
     6.0, 3.0, 1.5, 0.75, -0.75, -1.5, -3.0, -4.5, -6.0, -7.5, -9.0, -10.5, -12.0, -13.5, -15.0, -36.0,
 ];
 
-// TODO: TrimElement & ExtendObjectElement
 /// One object's headphone rendering intent at one block, from `oa_element_id` 3.
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
@@ -1211,7 +1210,7 @@ impl BedObjectElement {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 #[repr(C)]
 pub struct TrimElement {
     pub warp_mode: u8,
@@ -1222,7 +1221,7 @@ pub struct TrimElement {
     pub b_disable_trim: Vec<bool>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Trim {
     pub b_default_trim: bool,

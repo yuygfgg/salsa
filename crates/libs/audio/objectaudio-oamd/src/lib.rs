@@ -11,9 +11,7 @@ mod payload;
 pub use bed::{BED_CHANNEL_COUNT, BED_CHANNELS, BedChannel, BedLayout};
 pub use encode::{EncodingProfile, encode, encode_with_profile};
 pub use error::OamdError;
-pub use frame::{
-    BedPolicy, OamdFrame, OamdLimits, OamdMapping, OamdObject, OamdProgram, oamd_to_ir_events,
-};
+pub use frame::{BedPolicy, OamdFrame, OamdLimits, OamdMapping, OamdObject, OamdProgram};
 pub use objectaudio_ir::SpeakerPosition;
 
 /// EMDF payload id carried by an OAMD update.
@@ -174,6 +172,110 @@ mod tests {
             assert_eq!(event.offset, 320);
             assert_eq!(event.transition.samples(), 512);
             assert!(!event.state.enabled);
+        }
+    }
+
+    fn from_hex(text: &str) -> Vec<u8> {
+        let digit = |c: u8| -> u8 {
+            match c {
+                b'0'..=b'9' => c - b'0',
+                b'a'..=b'f' => c - b'a' + 10,
+                b'A'..=b'F' => c - b'A' + 10,
+                _ => panic!("invalid hex digit"),
+            }
+        };
+        let bytes = text.as_bytes();
+        bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| (digit(pair[0]) << 4) | digit(pair[1]))
+            .collect()
+    }
+
+    #[test]
+    fn parses_the_reference_trim_payloads() {
+        let payload =
+            ObjectAudioMetadataPayload::read(&from_hex("1f049c8a9f0eff9ffa2000")).unwrap();
+        let trim = payload.trim_element.expect("trim element");
+        assert_eq!(trim.warp_mode, 2);
+        assert_eq!(trim.global_trim_mode, 2);
+        assert_eq!(trim.trims[0], Some(crate::payload::Trim::default()));
+        assert!(trim.trims[1].as_ref().is_some_and(|t| t.b_disable_trim));
+        let explicit = trim.trims[2].as_ref().expect("explicit record");
+        assert!(!explicit.b_default_trim);
+        assert!(!explicit.b_disable_trim);
+        assert_eq!(explicit.trim_centre, Some(6.0));
+        assert_eq!(explicit.trim_surround, Some(-15.0));
+        assert_eq!(explicit.trim_height, Some(-36.0));
+        assert_eq!(explicit.bal3d_y_tb, Some(1.0));
+        assert_eq!(explicit.bal3d_y_lis, Some(-0.5));
+        assert!(trim.b_disable_trim_per_obj);
+        assert_eq!(trim.b_disable_trim.len(), 16);
+        assert!(trim.b_disable_trim[1]);
+        assert!(trim.b_disable_trim[5]);
+        assert!(!trim.b_disable_trim[0]);
+
+        let payload = ObjectAudioMetadataPayload::read(&from_hex("1f048040")).unwrap();
+        let trim = payload.trim_element.expect("trim element");
+        assert_eq!(trim.warp_mode, 1);
+        assert_eq!(trim.global_trim_mode, 0);
+        assert!(trim.trims.iter().all(Option::is_none));
+        assert!(!trim.b_disable_trim_per_obj);
+        assert!(trim.b_disable_trim.is_empty());
+    }
+
+    #[test]
+    fn maps_trim_bypass_onto_ir_object_indices() {
+        let mut frame = parse(EXAMPLE_DATA).unwrap();
+        let trim = crate::payload::TrimElement {
+            warp_mode: 1,
+            b_disable_trim_per_obj: true,
+            b_disable_trim: (0..frame.object_count)
+                .map(|slot| slot == 1 || slot == 5)
+                .collect(),
+            ..crate::payload::TrimElement::default()
+        };
+        frame.trim = Some(trim);
+        let mapping = frame.map_to_ir(0, BedPolicy::Ignore);
+        let calibration = mapping.calibration.expect("calibration");
+        assert_eq!(calibration.warp_mode, 1);
+        assert!(calibration.is_bypassed(0));
+        assert!(!calibration.is_bypassed(1));
+        assert!(calibration.is_bypassed(4));
+    }
+
+    #[test]
+    fn encoder_roundtrips_programme_calibration() {
+        let mut calibration = objectaudio_ir::ProgramCalibration {
+            warp_mode: 2,
+            global_trim_mode: 2,
+            ..objectaudio_ir::ProgramCalibration::default()
+        };
+        for record in &mut calibration.configs {
+            *record = objectaudio_ir::TrimRecord::default_trim();
+        }
+        calibration.configs[0] = objectaudio_ir::TrimRecord::default_trim();
+        calibration.configs[1] = objectaudio_ir::TrimRecord::disabled();
+        calibration.configs[2] = objectaudio_ir::TrimRecord::explicit(
+            Some(6.0),
+            Some(-15.0),
+            Some(-36.0),
+            Some(-0.5),
+            Some(1.0),
+        );
+        calibration.bypass = vec![true];
+        let mut source = SpatialPayload::new(
+            48_000,
+            vec![objectaudio_ir::ObjectState::new(1, [0.0, 1.0, 0.0])],
+            Vec::new(),
+        );
+        source.calibration = Some(calibration.clone());
+        for profile in [EncodingProfile::Eac3Joc, EncodingProfile::ObjectAudio] {
+            let bytes = encode_with_profile(&source, profile).unwrap();
+            let frame = parse(&bytes).unwrap();
+            let round = frame.map_to_ir(0, BedPolicy::Ignore).calibration.unwrap();
+            assert_eq!(round, calibration);
         }
     }
 

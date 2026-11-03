@@ -247,7 +247,20 @@ pub fn encode(atmos: &Path, out: &Path, options: &EncodeOptions) -> Result<()> {
                 z: position[2],
             })
             .collect();
-        let oamd = emdf::encode_oamd(&objects)?;
+        let bypass: Vec<bool> = scene
+            .objects
+            .iter()
+            .map(|object| object.track.metadata_at(end).trim_bypass)
+            .collect();
+        let calibration =
+            bypass
+                .iter()
+                .any(|bypass| *bypass)
+                .then(|| objectaudio_ir::ProgramCalibration {
+                    bypass,
+                    ..objectaudio_ir::ProgramCalibration::default()
+                });
+        let oamd = emdf::encode_oamd(&objects, calibration)?;
         let matrices = analyzer
             .matrices_for_frame(start, end)
             .map_err(|error| anyhow::anyhow!("JOC band analysis at frame {frame_index}: {error}"))?

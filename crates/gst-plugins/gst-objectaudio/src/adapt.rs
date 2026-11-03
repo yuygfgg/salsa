@@ -548,10 +548,13 @@ impl BaseTransformImpl for ObjectAudioAdapt {
                     })?;
                     let mapping =
                         frame.map_to_ir(offset as u32, objectaudio_oamd::BedPolicy::Expand);
-                    let payload =
+                    let mut payload =
                         objectaudio_ir::SpatialPayload::new(rate, mapping.objects, mapping.events)
                             .with_snapshot_ramp(mapping.snapshot_ramp_samples)
                             .with_snapshot_offset(i64::from(mapping.snapshot_offset));
+                    if let Some(calibration) = mapping.calibration {
+                        payload = payload.with_calibration(calibration);
+                    }
                     objectaudio_meta::add_spatial(buffer, &payload, bpf).map_err(|error| {
                         gst::error!(gst::CAT_RUST, "cannot add SpatialPayload: {error}");
                         gst::FlowError::Error

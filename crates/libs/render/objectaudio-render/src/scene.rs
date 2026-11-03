@@ -2,7 +2,10 @@
 
 use objectaudio_ir::{SceneTimeline, adm_to_q15};
 
-use crate::{BLOCK_SAMPLES, RenderError, SpeakerMetadata, SpeakerRenderer};
+use crate::{
+    BLOCK_SAMPLES, RenderError, SpeakerControls, SpeakerMetadata, SpeakerRenderer,
+    controls_from_calibration,
+};
 
 /// Evaluate source amplitude at audio rate and position at control-block
 /// endpoints. The low-level renderer interpolates speaker gains inside each
@@ -60,5 +63,41 @@ pub fn render_scene(
             )
         })
         .collect();
-    renderer.process(&effective, samples, &metadata, output)
+    let controls = match scene.calibration_at(start) {
+        Some(calibration) => controls_from_calibration(calibration, renderer.layout())?,
+        None => SpeakerControls::default_for(renderer.layout()),
+    };
+    renderer.process(&effective, samples, &metadata, &controls, output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout_by_name;
+    use crate::{SpeakerRenderer, render_scene};
+    use objectaudio_ir::{ObjectState, ProgramCalibration, SceneTimeline, SpatialPayload};
+
+    #[test]
+    fn applies_the_scene_calibration_to_speaker_rendering() {
+        let payload = SpatialPayload::new(
+            48_000,
+            vec![ObjectState::new(1, [-1.0, 0.75, 0.0])],
+            Vec::new(),
+        )
+        .with_calibration(ProgramCalibration {
+            warp_mode: 1,
+            ..ProgramCalibration::default()
+        });
+        let scene = SceneTimeline::from_payload(&payload, 0).unwrap();
+        let layout = layout_by_name("5.1").unwrap();
+        let mut renderer = SpeakerRenderer::new(layout, 1);
+        let mut input = vec![0.0f32; BLOCK_SAMPLES * 2];
+        for sample in 0..BLOCK_SAMPLES {
+            input[sample * 2 + 1] = 1.0;
+        }
+        let mut output = vec![0.0; BLOCK_SAMPLES * layout.channel_count()];
+        render_scene(&mut renderer, &scene, &input, 0, BLOCK_SAMPLES, &mut output).unwrap();
+        assert!((output[0] - 0.859_732_194_193_924_4).abs() <= 1e-13);
+        assert!((output[4] - 0.356_124_806_249_951_6).abs() <= 1e-13);
+    }
 }

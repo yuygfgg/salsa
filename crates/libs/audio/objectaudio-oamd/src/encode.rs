@@ -8,7 +8,10 @@
 use std::collections::BTreeMap;
 
 use bitstream_io::{BigEndian, BitWrite, BitWriter};
-use objectaudio_ir::{METADATA_BLOCK_SAMPLES, Snapshot, SpatialPayload, align_sample};
+use objectaudio_ir::{
+    METADATA_BLOCK_SAMPLES, ProgramCalibration, Snapshot, SpatialPayload, TrimRecord,
+    TrimRecordKind, align_sample,
+};
 
 use crate::OamdError;
 
@@ -70,34 +73,153 @@ pub fn encode_with_profile(
     };
     write(&mut out, 2, 0)?; // oamd_version
     write_object_count(&mut out, object_count)?;
+    let has_trim = profile == EncodingProfile::Eac3Joc || payload.calibration.is_some();
     out.write_bit(true)
         .map_err(|error| OamdError::Encode(error.to_string()))?; // b_dyn_object_only_program
     out.write_bit(true)
         .map_err(|error| OamdError::Encode(error.to_string()))?; // b_lfe_present
     out.write_bit(false)
         .map_err(|error| OamdError::Encode(error.to_string()))?; // b_alternate_object_data_present
-    write(
-        &mut out,
-        4,
-        if profile == EncodingProfile::Eac3Joc {
-            2
-        } else {
-            1
-        },
-    )?;
+    write(&mut out, 4, if has_trim { 2 } else { 1 })?;
 
     write(&mut out, 4, 1)?; // oa_element_id_idx = object
     write_variable(&mut out, (body.len() - 1) as u32)?;
     out.write_bytes(&body)
         .map_err(|error| OamdError::Encode(error.to_string()))?;
-    if profile == EncodingProfile::Eac3Joc {
-        write(&mut out, 4, 2)?; // trim element
-        write_variable(&mut out, 0)?; // one byte
-        write(&mut out, 8, 0b0010_0000)?; // warp mode 1; default global trim
+    if has_trim {
+        // E-AC-3 always carries a trim element; the default is warp 0 with
+        // automatic trim and no bypass. The object-audio profile only adds one
+        // when the payload has calibration to preserve.
+        let default = ProgramCalibration::default();
+        let calibration = payload.calibration.as_ref().unwrap_or(&default);
+        write_trim_element(&mut out, calibration, object_count)?;
     }
     out.byte_align()
         .map_err(|error| OamdError::Encode(error.to_string()))?;
     Ok(out.into_writer())
+}
+
+fn write_trim_element(
+    out: &mut BitWriter<Vec<u8>, BigEndian>,
+    calibration: &ProgramCalibration,
+    object_count: usize,
+) -> Result<(), OamdError> {
+    let mut body = BitWriter::new(Vec::new());
+    body.write_bit(false)
+        .map_err(|error| OamdError::Encode(error.to_string()))?; // b_discard_unknown_element
+    write_bits(&mut body, 2, u32::from(calibration.warp_mode))?;
+    write_bits(&mut body, 2, 0)?; // reserved
+    write_bits(&mut body, 2, u32::from(calibration.global_trim_mode))?;
+    if calibration.global_trim_mode == 2 {
+        for record in &calibration.configs {
+            write_trim_record(&mut body, record)?;
+        }
+    }
+    let bypass_any = calibration.bypass.iter().any(|bypass| *bypass);
+    body.write_bit(bypass_any)
+        .map_err(|error| OamdError::Encode(error.to_string()))?;
+    if bypass_any {
+        // Slot 0 is the LFE; IR object 0 is OAMD slot 1.
+        body.write_bit(false)
+            .map_err(|error| OamdError::Encode(error.to_string()))?;
+        for object in 0..object_count.saturating_sub(1) {
+            let bypass = calibration.bypass.get(object).copied().unwrap_or(false);
+            body.write_bit(bypass)
+                .map_err(|error| OamdError::Encode(error.to_string()))?;
+        }
+    }
+    body.byte_align()
+        .map_err(|error| OamdError::Encode(error.to_string()))?;
+    let body = body.into_writer();
+    write_bits(out, 4, 2)?; // trim element
+    write_variable(out, (body.len() - 1) as u32)?;
+    out.write_bytes(&body)
+        .map_err(|error| OamdError::Encode(error.to_string()))?;
+    Ok(())
+}
+
+fn write_trim_record(
+    out: &mut BitWriter<Vec<u8>, BigEndian>,
+    record: &TrimRecord,
+) -> Result<(), OamdError> {
+    match record.kind {
+        TrimRecordKind::Absent | TrimRecordKind::Default => {
+            out.write_bit(true)
+                .map_err(|error| OamdError::Encode(error.to_string()))?;
+        }
+        TrimRecordKind::Disabled => {
+            out.write_bit(false)
+                .map_err(|error| OamdError::Encode(error.to_string()))?;
+            out.write_bit(true)
+                .map_err(|error| OamdError::Encode(error.to_string()))?;
+        }
+        TrimRecordKind::Explicit => {
+            out.write_bit(false)
+                .map_err(|error| OamdError::Encode(error.to_string()))?;
+            out.write_bit(false)
+                .map_err(|error| OamdError::Encode(error.to_string()))?;
+            let present = [
+                record.centre_db.is_some(),
+                record.surround_db.is_some(),
+                record.height_db.is_some(),
+                record.overhead_balance.is_some(),
+                record.listener_balance.is_some(),
+            ];
+            let mut presence = 0u32;
+            for (index, present) in present.iter().enumerate() {
+                if *present {
+                    presence |= 1 << index;
+                }
+            }
+            write_bits(out, 5, presence)?;
+            if present[0] {
+                write_bits(out, 4, trim_code(record.centre_db()))?;
+            }
+            if present[1] {
+                write_bits(out, 4, trim_code(record.surround_db()))?;
+            }
+            if present[2] {
+                write_bits(out, 4, trim_code(record.height_db()))?;
+            }
+            if present[3] {
+                write_balance(out, record.overhead_balance())?;
+            }
+            if present[4] {
+                write_balance(out, record.listener_balance())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_balance(out: &mut BitWriter<Vec<u8>, BigEndian>, balance: f64) -> Result<(), OamdError> {
+    out.write_bit(balance >= 0.0)
+        .map_err(|error| OamdError::Encode(error.to_string()))?;
+    let code = (balance.abs() * 16.0).round_ties_even().clamp(1.0, 16.0) as u32 - 1;
+    write_bits(out, 4, code)
+}
+
+/// Nearest OAMD trim level code for a value from outside the OAMD parser.
+fn trim_code(value: f64) -> u32 {
+    let mut best = 0usize;
+    let mut best_distance = f64::INFINITY;
+    for (index, level) in crate::payload::TRIM_LUT.iter().enumerate() {
+        let distance = (value - level).abs();
+        if distance < best_distance {
+            best = index;
+            best_distance = distance;
+        }
+    }
+    best as u32
+}
+
+fn write_bits(
+    out: &mut BitWriter<Vec<u8>, BigEndian>,
+    bits: u32,
+    value: u32,
+) -> Result<(), OamdError> {
+    out.write_var::<u32>(bits, value)
+        .map_err(|error| OamdError::Encode(error.to_string()))
 }
 
 fn write_object_count(

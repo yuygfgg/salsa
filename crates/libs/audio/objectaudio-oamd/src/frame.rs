@@ -1,5 +1,7 @@
-use crate::payload::ObjectAudioMetadataPayload;
-use objectaudio_ir::{ConversionReport, ObjectEvent, ObjectState, SpatialPayload};
+use crate::payload::{ObjectAudioMetadataPayload, Trim, TrimElement};
+use objectaudio_ir::{
+    ConversionReport, ObjectEvent, ObjectState, ProgramCalibration, SpatialPayload, TrimRecord,
+};
 
 use crate::bed::BedLayout;
 use objectaudio_ir::SpeakerPosition;
@@ -117,6 +119,8 @@ pub struct OamdFrame {
     pub sample_offset: u32,
     /// Ramp duration of the first position block, in samples.
     pub ramp_samples: u32,
+    /// Programme trim element, when this payload carried one.
+    pub trim: Option<TrimElement>,
 }
 
 /// How the OAMD bed is treated when mapping to the object-only IR.
@@ -142,14 +146,9 @@ pub struct OamdMapping {
     pub snapshot_offset: u32,
     /// Ramp duration of the first object-info block, in samples.
     pub snapshot_ramp_samples: u32,
-}
-
-/// Map the events of `frame` onto the IR timeline with a single base offset.
-///
-/// The rule is `base_offset + OAMD block offset`; callers must not add the base
-/// themselves.
-pub fn oamd_to_ir_events(frame: &OamdFrame, base_offset: u32) -> Vec<ObjectEvent> {
-    frame.map_to_ir(base_offset, BedPolicy::Ignore).events
+    /// Programme calibration derived from the trim element, with bypass flags
+    /// already rebased to IR object indices.
+    pub calibration: Option<ProgramCalibration>,
 }
 
 impl OamdFrame {
@@ -318,6 +317,7 @@ impl OamdFrame {
             events,
             sample_offset,
             ramp_samples,
+            trim: payload.trim_element.clone(),
         })
     }
 
@@ -330,12 +330,17 @@ impl OamdFrame {
     ///
     /// Dynamic objects keep their OAMD order and are rebased to ids `1..=N`.
     /// `BedPolicy::Expand` appends the non-LFE declared bed channels as
-    /// fixed-position objects; `Ignore` leaves the bed to the caller.
+    /// fixed-position objects; `Ignore` leaves the bed to the caller. A trim
+    /// element becomes the payload's programme calibration.
     pub fn to_spatial_payload(&self, sample_rate: u32, bed: BedPolicy) -> SpatialPayload {
         let mapping = self.map_to_ir(0, bed);
-        SpatialPayload::new(sample_rate, mapping.objects, mapping.events)
+        let payload = SpatialPayload::new(sample_rate, mapping.objects, mapping.events)
             .with_snapshot_ramp(mapping.snapshot_ramp_samples)
-            .with_snapshot_offset(i64::from(mapping.snapshot_offset))
+            .with_snapshot_offset(i64::from(mapping.snapshot_offset));
+        match mapping.calibration {
+            Some(calibration) => payload.with_calibration(calibration),
+            None => payload,
+        }
     }
 
     /// Map the payload onto the IR with an explicit base sample offset.
@@ -387,6 +392,20 @@ impl OamdFrame {
             });
         }
         events.sort_by_key(|event| event.offset);
+        let calibration = self.trim.as_ref().map(|trim| {
+            let mut bypass = vec![false; objects.len()];
+            for (slot, id) in &slot_to_id {
+                if let Some(disabled) = trim.b_disable_trim.get(*slot as usize) {
+                    bypass[*id as usize - 1] = *disabled;
+                }
+            }
+            ProgramCalibration {
+                warp_mode: trim.warp_mode,
+                global_trim_mode: trim.global_trim_mode,
+                configs: std::array::from_fn(|index| trim_record(trim.trims[index].as_ref())),
+                bypass,
+            }
+        });
         OamdMapping {
             report: self.report.clone(),
             objects,
@@ -394,11 +413,27 @@ impl OamdFrame {
             dynamic_count: dynamic.len(),
             snapshot_offset: self.sample_offset.saturating_add(base_offset),
             snapshot_ramp_samples: self.ramp_samples,
+            calibration,
         }
     }
 
     pub fn dynamic_objects(&self) -> impl Iterator<Item = &OamdObject> + '_ {
         self.objects.iter().filter(|object| !object.in_bed_or_isf)
+    }
+}
+
+fn trim_record(trim: Option<&Trim>) -> TrimRecord {
+    match trim {
+        None => TrimRecord::default(),
+        Some(trim) if trim.b_default_trim => TrimRecord::default_trim(),
+        Some(trim) if trim.b_disable_trim => TrimRecord::disabled(),
+        Some(trim) => TrimRecord::explicit(
+            trim.trim_centre,
+            trim.trim_surround,
+            trim.trim_height,
+            trim.bal3d_y_lis,
+            trim.bal3d_y_tb,
+        ),
     }
 }
 
@@ -502,10 +537,6 @@ mod tests {
         assert_eq!(mapping.snapshot_offset, 1_007);
         assert_eq!(mapping.snapshot_ramp_samples, frame.ramp_samples);
         assert_eq!(mapping.events.last().unwrap().offset, 1_100);
-        assert_eq!(
-            oamd_to_ir_events(&frame, 1_000).last().unwrap().offset,
-            1_100
-        );
     }
 
     #[test]

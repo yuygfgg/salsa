@@ -60,6 +60,50 @@ impl SpeakerLayout {
         self.speaker_bitfield & 0x4 != 0
     }
 
+    /// Ls/Rs/Lrs/Rrs, the labels the OAMD trim configuration index counts.
+    pub fn surround_channels(&self) -> u32 {
+        self.channels
+            .iter()
+            .filter(|channel| {
+                matches!(
+                    channel,
+                    SpeakerChannel::LeftSurround
+                        | SpeakerChannel::RightSurround
+                        | SpeakerChannel::LeftRearSurround
+                        | SpeakerChannel::RightRearSurround
+                )
+            })
+            .count() as u32
+    }
+
+    /// Ltf/Rtf/Ltm/Rtm/Ltr/Rtr, the labels the OAMD trim configuration index
+    /// counts.
+    pub fn height_channels(&self) -> u32 {
+        self.channels
+            .iter()
+            .filter(|channel| {
+                matches!(
+                    channel,
+                    SpeakerChannel::TopFrontLeft
+                        | SpeakerChannel::TopFrontRight
+                        | SpeakerChannel::TopSideLeft
+                        | SpeakerChannel::TopSideRight
+                        | SpeakerChannel::TopBackLeft
+                        | SpeakerChannel::TopBackRight
+                )
+            })
+            .count() as u32
+    }
+
+    /// One of the seven layouts that carry OAMD trim and front-back balance
+    /// semantics; wider layouts leave the programme untrimmed.
+    pub fn carries_trim(&self) -> bool {
+        matches!(
+            self.name,
+            "2.0" | "3.1" | "4.0" | "5.1" | "7.1" | "5.1.2" | "5.1.4"
+        )
+    }
+
     /// Index of `channel` in the standard output order.
     pub fn standard_index(&self, channel: SpeakerChannel) -> Option<usize> {
         self.channels

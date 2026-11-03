@@ -25,6 +25,34 @@ headphone renderer. Both read the salsa `SpatialPayload` from
 Each layout carries Q15 speaker points, axis groups, the attenuation table and
 the mapping between internal and standard channel order.
 
+## Programme speaker controls
+
+OAMD trim elements travel through the IR as `SpatialPayload::calibration`
+(`ProgramCalibration`): warp mode, the nine layout configurations and the
+per-object bypass flags. The renderer selects the configuration for its target
+layout, so a stream can switch between 5.1 and 7.1 without re-decoding.
+
+- `warp 0`: floor Y unchanged; `warp 1`: `clamp(2Y, 0, 1)`. The height layer is
+  never warped.
+- `warp 2` / `warp 3` render 5.1/5.1.2/5.1.4 through the matching 7.1.x layout
+  and fold the rear pair into the target surround pair with PLIIx or Lo/Ro
+  coefficients. 4.0 adds a rear pair from the 7.1 geometry; layouts with both
+  surround pairs, or none, render directly.
+- Trim is automatic (layout position compensation), disabled (unity), or
+  explicit (centre/surround/height levels). Balance is applied only with an
+  explicit configuration. Per-object bypass keeps warp and folding but drops
+  balance and trim.
+- Only 2.0, 3.1, 4.0, 5.1, 7.1, 5.1.2 and 5.1.4 carry trim; wider layouts use
+  disabled trim.
+- A payload without a trim element keeps the previous controls. The first
+  calibration is seeded at the scene start, matching the reference.
+- `salsahrtfrender` ignores calibration; binaural rendering never applies these
+  controls.
+
+`SpeakerRenderer::process` takes the selected `SpeakerControls`; streaming uses
+`controls_from_calibration` on the `SceneTimeline` calibration and callers with
+no calibration use `SpeakerControls::default_for(layout)`.
+
 ## Speaker renderer
 
 `SpeakerRenderer` accepts interleaved `f32` `[samples][LFE + objects]` and

@@ -3,10 +3,18 @@
 //! Set `SALSA_SPEAKER_REFERENCE` to a reference dump file. The format is
 //! intentionally simple so the test has no third-party binary dependency in the
 //! default `cargo test` run.
+//!
+//! The dump must come from a reference renderer with the same programme-control
+//! model: warp 0 leaves the floor Y alone, warp 1 doubles it, and layouts
+//! without OAMD trim semantics use disabled trim. The per-layout control
+//! golden values live in the `objectaudio-render` unit tests; this file only
+//! exercises the default controls.
 
 use std::fs;
 
-use objectaudio_render::{SpeakerMetadata, SpeakerRenderer, layout_by_speaker_bitfield};
+use objectaudio_render::{
+    SpeakerControls, SpeakerMetadata, SpeakerRenderer, layout_by_speaker_bitfield,
+};
 
 /// The reference dump uses a 15-object layout.
 const REFERENCE_OBJECTS: usize = 15;
@@ -80,8 +88,9 @@ fn matches_reference_speaker_renderer() {
             }
             let expected: Vec<f32> = (0..samples * channels).map(|_| reader.f32()).collect();
             let metadata = SpeakerMetadata::new(offset, ramp_samples, &positions);
+            let controls = SpeakerControls::default_for(layout);
             renderer
-                .process(&input, samples, &[metadata], &mut output)
+                .process(&input, samples, &[metadata], &controls, &mut output)
                 .expect("renderer process");
 
             let mut max_error = 0.0f64;

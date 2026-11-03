@@ -24,7 +24,12 @@ pub struct ObjectPos {
 
 /// E-AC-3 samples targets at frame end and emits a full-frame transition.
 /// The OAMD schema and coordinate quantization live in the shared writer.
-pub fn encode_oamd(objects: &[ObjectPos]) -> Result<Vec<u8>, objectaudio_oamd::OamdError> {
+/// `calibration` carries DAMF's per-object trimBypass; `None` writes the
+/// default warp-0 automatic trim element.
+pub fn encode_oamd(
+    objects: &[ObjectPos],
+    calibration: Option<objectaudio_ir::ProgramCalibration>,
+) -> Result<Vec<u8>, objectaudio_oamd::OamdError> {
     let states = objects
         .iter()
         .enumerate()
@@ -32,8 +37,11 @@ pub fn encode_oamd(objects: &[ObjectPos]) -> Result<Vec<u8>, objectaudio_oamd::O
             objectaudio_ir::ObjectState::new(index as u32 + 1, [object.x, object.y, object.z])
         })
         .collect();
-    let payload =
+    let mut payload =
         objectaudio_ir::SpatialPayload::new(48_000, states, Vec::new()).with_snapshot_ramp(1536);
+    if let Some(calibration) = calibration {
+        payload = payload.with_calibration(calibration);
+    }
     objectaudio_oamd::encode_with_profile(&payload, objectaudio_oamd::EncodingProfile::Eac3Joc)
 }
 
@@ -504,4 +512,57 @@ pub(crate) fn field_offsets(aligned: &[u8]) -> Option<EmdfFieldOffsets> {
         prim_bits,
         sec_bits,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writes_the_per_object_trim_bypass() {
+        let calibration = objectaudio_ir::ProgramCalibration {
+            bypass: vec![true, false],
+            ..objectaudio_ir::ProgramCalibration::default()
+        };
+        let objects = [
+            ObjectPos {
+                x: -1.0,
+                y: 1.0,
+                z: 0.0,
+            },
+            ObjectPos {
+                x: 1.0,
+                y: 1.0,
+                z: 0.0,
+            },
+        ];
+        let bytes = encode_oamd(&objects, Some(calibration)).unwrap();
+        let frame = objectaudio_oamd::parse(&bytes).unwrap();
+        let round = frame
+            .map_to_ir(0, objectaudio_oamd::BedPolicy::Ignore)
+            .calibration
+            .unwrap();
+        assert_eq!(round.bypass, vec![true, false]);
+    }
+
+    #[test]
+    fn omitting_calibration_writes_the_default_trim_element() {
+        let objects = [ObjectPos {
+            x: 0.0,
+            y: 1.0,
+            z: 0.0,
+        }];
+        let bytes = encode_oamd(&objects, None).unwrap();
+        let frame = objectaudio_oamd::parse(&bytes).unwrap();
+        assert!(frame.trim.is_some());
+        assert_eq!(frame.trim.as_ref().unwrap().warp_mode, 0);
+        assert_eq!(frame.trim.as_ref().unwrap().reserved, 0);
+        assert_eq!(frame.trim.as_ref().unwrap().global_trim_mode, 0);
+        assert!(
+            frame
+                .map_to_ir(0, objectaudio_oamd::BedPolicy::Ignore)
+                .calibration
+                .is_some()
+        );
+    }
 }

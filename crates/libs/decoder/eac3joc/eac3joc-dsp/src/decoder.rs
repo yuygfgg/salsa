@@ -194,6 +194,9 @@ impl SpatialDecoder for Eac3JocDecoder {
             .oamd
             .as_ref()
             .map(|oamd| oamd.map_to_ir(u32::from(frame.oamd_sample_offset), BedPolicy::Ignore));
+        let calibration = mapping
+            .as_ref()
+            .and_then(|mapping| mapping.calibration.clone());
         let mut events = mapping
             .as_ref()
             .map(|mapping| mapping.events.clone())
@@ -218,6 +221,9 @@ impl SpatialDecoder for Eac3JocDecoder {
         }
 
         let mut spatial = SpatialFrame::new(sample_rate, FRAME_SAMPLES, objects, events, pcm)?;
+        if let Some(calibration) = calibration {
+            spatial = spatial.with_calibration(calibration);
+        }
         if let Some((offset, ramp)) = snapshot {
             spatial = spatial
                 .with_snapshot_ramp(ramp)

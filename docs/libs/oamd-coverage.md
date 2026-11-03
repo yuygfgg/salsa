@@ -22,6 +22,7 @@ parser and the writer and maps the parse into the salsa IR. Codec decoders and
 | extended-precision position element | folded into the position by `ObjectAudioMetadataPayload::get_damf_pos` |
 | `distance_factor`, `object_size`, `b_object_snap` | `OamdObject` |
 | `b_object_in_bed_or_isf` | `OamdObject::in_bed_or_isf`; dynamic objects feed `object_states()` |
+| trim element | `ProgramCalibration` on `SpatialPayload` / `SpatialFrame`: warp mode, nine records, per-object bypass rebased to IR indices |
 
 ## Gaps and deliberate differences
 
@@ -35,9 +36,9 @@ parser and the writer and maps the parse into the salsa IR. Codec decoders and
   `b_standard_chan_assign` bit.
 - **Positions are floats, not Q15.** The adapter keeps the normalized `f32` from
   the parser. The renderers derive Q15 coordinates where they need them.
-- **Trim, headphone, object-description and bed-object elements are parsed but not
-  mapped.** They are not needed by the object-audio IR. Trim belongs with renderer
-  work; the other elements are not in the streaming path.
+- **Headphone, object-description and bed-object elements are parsed but not
+  mapped.** They are not in the streaming path. The trim element now maps to
+  `ProgramCalibration`; the renderer selects the record for its target layout.
 - **Trailing padding is not validated as zero.** The upstream parser skips element
   padding but does not enforce that the remaining payload bits are zero.
 - **Duplicate object elements are rejected.** The upstream parser keeps the last
@@ -57,7 +58,9 @@ program with one LFE channel and one object element:
 - one object element with 1–8 blocks, 32-sample block offsets, and a ramp
   duration selected from the standard codes (otherwise 11-bit raw);
 - object gain (integer dB, or -inf), priority, 6/6/4-bit absolute position,
-  zone/elevation, uniform object size, snap, and active flag.
+  zone/elevation, uniform object size, snap, and active flag;
+- a trim element when `SpatialPayload::calibration` is present, including the
+  nine records and per-object bypass.
 
 Non-LFE beds are not rebuilt: the adapter intentionally emits every object as
 dynamic. The writer is the inverse of the subset the parser accepts; positions

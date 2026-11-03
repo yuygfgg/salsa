@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{IrError, ObjectEvent, ObjectState, PayloadError, Transition};
+use crate::{IrError, ObjectEvent, ObjectState, PayloadError, ProgramCalibration, Transition};
 
 /// Current `SpatialPayload` wire version.
-pub const PAYLOAD_VERSION: u16 = 2;
+pub const PAYLOAD_VERSION: u16 = 3;
 
 /// A resolved state and a new transition target are different operations.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -13,11 +13,6 @@ pub enum Snapshot {
     /// Keep the previous stream state; `objects` only declares the layout.
     Continue,
     Target(Transition),
-}
-
-/// The version of [`SpatialPayload`] in this build.
-pub fn payload_version() -> u16 {
-    PAYLOAD_VERSION
 }
 
 /// Metadata carried by `ObjectAudioMeta`.
@@ -36,6 +31,9 @@ pub struct SpatialPayload {
     pub events: Vec<ObjectEvent>,
     pub snapshot: Snapshot,
     pub snapshot_offset: i64,
+    /// Programme calibration carried by the payload that declared it. A
+    /// payload without it keeps the stream's previous controls.
+    pub calibration: Option<ProgramCalibration>,
 }
 
 impl SpatialPayload {
@@ -49,7 +47,14 @@ impl SpatialPayload {
             events,
             snapshot: Snapshot::State,
             snapshot_offset: 0,
+            calibration: None,
         }
+    }
+
+    /// Attach programme speaker calibration to this payload.
+    pub fn with_calibration(mut self, calibration: ProgramCalibration) -> Self {
+        self.calibration = Some(calibration);
+        self
     }
 
     /// Mark the snapshot as an OAMD-style transition target.
@@ -77,7 +82,12 @@ impl SpatialPayload {
     /// targets or durations. Target snapshots still require stream history.
     pub fn slice(&self, start: i64, frames: usize) -> Option<Self> {
         let end = start + frames as i64;
-        if self.snapshot_offset >= end && self.events.iter().all(|event| event.offset >= end) {
+        // Programme calibration is not sample-positioned, so a calibration-only
+        // payload still belongs to every slice of the stream.
+        if self.calibration.is_none()
+            && self.snapshot_offset >= end
+            && self.events.iter().all(|event| event.offset >= end)
+        {
             return None;
         }
         let mut result = self.clone();
@@ -96,6 +106,9 @@ impl SpatialPayload {
         }
         if self.sample_rate == 0 {
             return Err(IrError::ZeroSampleRate);
+        }
+        if let Some(calibration) = &self.calibration {
+            calibration.validate()?;
         }
         for (index, object) in self.objects.iter().enumerate() {
             let expected = index as u32 + 1;
@@ -242,5 +255,37 @@ mod tests {
         fn arbitrary_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..512)) {
             let _ = SpatialPayload::decode(&bytes);
         }
+    }
+    #[test]
+    fn calibration_roundtrips_and_is_validated() {
+        let mut calibration = ProgramCalibration {
+            warp_mode: 2,
+            global_trim_mode: 2,
+            ..ProgramCalibration::default()
+        };
+        calibration.configs[4] =
+            crate::TrimRecord::explicit(Some(1.5), Some(-6.0), None, Some(-0.5), Some(0.25));
+        calibration.bypass = vec![false, true];
+        let mut source = payload(2, 0);
+        source.calibration = Some(calibration.clone());
+        let bytes = source.encode().unwrap();
+        let decoded = SpatialPayload::decode(&bytes).unwrap();
+        assert_eq!(decoded.calibration, Some(calibration.clone()));
+        assert_eq!(decoded.version, SpatialPayload::VERSION);
+
+        let mut invalid = calibration.clone();
+        invalid.warp_mode = 4;
+        source.calibration = Some(invalid);
+        assert!(source.encode().is_err());
+    }
+
+    #[test]
+    fn slicing_keeps_programme_calibration() {
+        let mut source = payload(1, 0).with_snapshot_offset(128);
+        source.calibration = Some(ProgramCalibration::default());
+        let sliced = source
+            .slice(0, 32)
+            .expect("calibration is not sample-positioned");
+        assert!(sliced.calibration.is_some());
     }
 }
