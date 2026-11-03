@@ -362,6 +362,7 @@ impl OamdFrame {
     pub fn map_to_ir_with_bed(&self, base_offset: u32, bed: &[SpeakerPosition]) -> OamdMapping {
         let dynamic: Vec<&OamdObject> = self.dynamic_objects().collect();
         let mut objects = Vec::with_capacity(dynamic.len() + bed.len());
+        let mut source_slots = Vec::with_capacity(dynamic.len() + bed.len());
         let mut slot_to_id = std::collections::HashMap::new();
         for (index, object) in dynamic.iter().enumerate() {
             let id = index as u32 + 1;
@@ -369,6 +370,7 @@ impl OamdFrame {
             let mut state = object.to_state();
             state.id = id;
             objects.push(state);
+            source_slots.push(Some(object.slot));
         }
         for channel in bed {
             if channel.is_lfe() {
@@ -376,6 +378,14 @@ impl OamdFrame {
             }
             let id = objects.len() as u32 + 1;
             objects.push(ObjectState::new(id, channel.adm_position()));
+            // The declared slot order includes LFE. The presentation bed can
+            // omit or reorder channels, so match speakers before copying trim.
+            source_slots.push(
+                crate::bed::BED_CHANNELS
+                    .iter()
+                    .filter(|speaker| self.bed.contains(**speaker))
+                    .position(|speaker| speaker == channel),
+            );
         }
 
         let mut events = Vec::new();
@@ -393,12 +403,14 @@ impl OamdFrame {
         }
         events.sort_by_key(|event| event.offset);
         let calibration = self.trim.as_ref().map(|trim| {
-            let mut bypass = vec![false; objects.len()];
-            for (slot, id) in &slot_to_id {
-                if let Some(disabled) = trim.b_disable_trim.get(*slot as usize) {
-                    bypass[*id as usize - 1] = *disabled;
-                }
-            }
+            let bypass = source_slots
+                .iter()
+                .map(|slot| {
+                    slot.and_then(|slot| trim.b_disable_trim.get(slot))
+                        .copied()
+                        .unwrap_or(false)
+                })
+                .collect();
             ProgramCalibration {
                 warp_mode: trim.warp_mode,
                 global_trim_mode: trim.global_trim_mode,
@@ -523,6 +535,69 @@ fn adm_position(position: [f64; 3]) -> [f32; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expanded_bed_bypass_uses_declared_slots_including_lfe() {
+        use crate::payload::{BedAssignment, ProgramAssignment};
+        use SpeakerPosition::{Left, LeftSurround, Lfe, RightSurround};
+        for speakers in [
+            vec![Lfe, LeftSurround],
+            vec![Left, Lfe, LeftSurround, RightSurround],
+        ] {
+            let mask = speakers
+                .iter()
+                .fold(0, |mask, speaker| mask | speaker.bed_bit());
+            let declared: Vec<_> = crate::bed::BED_CHANNELS
+                .iter()
+                .filter(|speaker| mask & speaker.bed_bit() != 0)
+                .copied()
+                .collect();
+            let payload = ObjectAudioMetadataPayload {
+                object_count: declared.len(),
+                program_assignment: ProgramAssignment {
+                    num_bed_objects: declared.len(),
+                    bed_assignment: vec![BedAssignment::from_non_std(mask)],
+                    ..ProgramAssignment::default()
+                },
+                trim_element: Some(TrimElement {
+                    b_disable_trim_per_obj: true,
+                    b_disable_trim: declared
+                        .iter()
+                        .map(|speaker| *speaker == LeftSurround)
+                        .collect(),
+                    ..TrimElement::default()
+                }),
+                ..ObjectAudioMetadataPayload::default()
+            };
+            let frame = OamdFrame::from_payload(&payload, OamdLimits::default()).unwrap();
+            let expanded = frame.to_spatial_payload(48_000, BedPolicy::Expand);
+            let expected: Vec<_> = declared
+                .iter()
+                .filter(|speaker| !speaker.is_lfe())
+                .map(|speaker| *speaker == LeftSurround)
+                .collect();
+            assert_eq!(expanded.calibration.unwrap().bypass, expected);
+            // Presentation channels can be reordered or absent from the OAMD bed.
+            let mapping = frame.map_to_ir_with_bed(
+                0,
+                &[
+                    RightSurround,
+                    Lfe,
+                    LeftSurround,
+                    SpeakerPosition::TopSideLeft,
+                ],
+            );
+            assert_eq!(mapping.calibration.unwrap().bypass, [false, true, false]);
+            assert!(
+                frame
+                    .map_to_ir(0, BedPolicy::Ignore)
+                    .calibration
+                    .unwrap()
+                    .bypass
+                    .is_empty()
+            );
+        }
+    }
 
     #[test]
     fn mapping_applies_the_base_offset_once() {

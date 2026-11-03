@@ -12,7 +12,9 @@ mod pipeline;
 mod speaker;
 mod timeline;
 
-pub use calibration::{ProgramCalibration, TRIM_CONFIG_COUNT, TrimRecord, TrimRecordKind};
+pub use calibration::{
+    CalibrationEvent, ProgramCalibration, TRIM_CONFIG_COUNT, TrimRecord, TrimRecordKind,
+};
 pub use conversion::ConversionReport;
 pub use error::{IrError, PayloadError};
 pub use frame::SpatialFrame;

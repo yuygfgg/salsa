@@ -440,9 +440,14 @@ mod tests {
             Err(MetaError::InvalidBpf)
         );
         assert!(matches!(
-            add_spatial_bytes(buffer.get_mut().unwrap(), b"not a payload", 4),
+            add_spatial_bytes(
+                buffer.get_mut().unwrap(),
+                &[SpatialPayload::VERSION as u8],
+                4
+            ),
             Err(MetaError::Payload(PayloadError::Decode(_)))
         ));
+        assert!(add_spatial_bytes(buffer.get_mut().unwrap(), b"not a payload", 4).is_err());
     }
 
     #[test]
@@ -473,6 +478,46 @@ mod tests {
             )
             .unwrap();
         assert!(get(&copy).is_none());
+    }
+
+    #[test]
+    fn region_copy_keeps_calibration_history_and_interior_updates() {
+        use objectaudio_ir::{CalibrationEvent, ProgramCalibration, SceneTimeline};
+        let mut buffer = buffer(256 * 8);
+        let initial = payload().with_calibration(ProgramCalibration::default());
+        let mut change =
+            initial
+                .clone()
+                .with_snapshot_offset(64)
+                .with_calibration(ProgramCalibration {
+                    bypass: vec![true],
+                    ..ProgramCalibration::default()
+                });
+        change.calibration_events.push(CalibrationEvent {
+            offset: 160,
+            calibration: ProgramCalibration::default(),
+        });
+        add_spatial(buffer.get_mut().unwrap(), &initial, 8).unwrap();
+        add_spatial(buffer.get_mut().unwrap(), &change, 8).unwrap();
+        let copy = buffer
+            .copy_region(
+                gst::BufferCopyFlags::META | gst::BufferCopyFlags::MEMORY,
+                128 * 8..192 * 8,
+            )
+            .unwrap();
+        let snapshots = iter_spatial(&copy);
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots[0].payload.snapshot_offset, -128);
+        assert_eq!(snapshots[1].payload.snapshot_offset, -64);
+        assert_eq!(snapshots[1].payload.calibration_events[0].offset, 32);
+        let mut scene = SceneTimeline::from_payload(&snapshots[0].payload, 0).unwrap();
+        scene.submit(&snapshots[1].payload, 0).unwrap();
+        for sample in 0..64 {
+            assert_eq!(
+                scene.calibration_at(sample).unwrap().is_bypassed(0),
+                sample < 32
+            );
+        }
     }
 
     #[test]

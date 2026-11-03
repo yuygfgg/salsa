@@ -194,12 +194,22 @@ impl ObjectTrack {
         events.sort_by_key(|event| event.sample_pos);
         let mut state = ResolvedMetadata::default();
         let mut keys = BTreeMap::new();
+        let mut spatial_keys = BTreeMap::new();
         for event in events {
             state.apply(event);
             if let Some(position) = fixed {
                 state.position = position;
             }
             keys.insert(event.sample_pos, state.clone());
+            // A metadata-only patch must not restart an inherited position ramp.
+            if event.position.is_some()
+                || event.gain.is_some()
+                || event.active.is_some()
+                || event.size.is_some()
+                || event.ramp_length.is_some()
+            {
+                spatial_keys.insert(event.sample_pos, (state.spatial(), state.ramp_length));
+            }
         }
         if keys.is_empty() {
             if let Some(position) = fixed {
@@ -209,12 +219,8 @@ impl ObjectTrack {
         }
         let metadata: Vec<_> = keys.into_iter().collect();
         let mut spatial = StateTrack::new(metadata[0].1.spatial());
-        for (sample, state) in &metadata {
-            spatial.set_target(
-                *sample as i64,
-                state.spatial(),
-                Transition::Position(state.ramp_length),
-            );
+        for (sample, (state, ramp)) in spatial_keys {
+            spatial.set_target(sample as i64, state, Transition::Position(ramp));
         }
         Self { spatial, metadata }
     }
@@ -225,6 +231,19 @@ impl ObjectTrack {
             .partition_point(|(at, _)| *at <= sample)
             .saturating_sub(1);
         &self.metadata[index].1
+    }
+
+    /// Changes to the discrete bypass state strictly inside `(start, end)`.
+    pub fn bypass_changes(&self, start: u64, end: u64) -> impl Iterator<Item = (u64, bool)> + '_ {
+        let first = self
+            .metadata
+            .partition_point(|(sample, _)| *sample <= start)
+            .saturating_sub(1);
+        self.metadata[first..]
+            .windows(2)
+            .take_while(move |pair| pair[1].0 < end)
+            .filter(move |pair| pair[1].0 > start && pair[0].1.trim_bypass != pair[1].1.trim_bypass)
+            .map(|pair| (pair[1].0, pair[1].1.trim_bypass))
     }
 
     pub fn state_at(&self, sample: u64) -> ObjectState {

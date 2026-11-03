@@ -279,6 +279,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn encoder_rejects_unsplit_calibration_updates() {
+        let mut payload = SpatialPayload::new(
+            48_000,
+            vec![objectaudio_ir::ObjectState::new(1, [0.0; 3])],
+            vec![],
+        );
+        payload
+            .calibration_events
+            .push(objectaudio_ir::CalibrationEvent {
+                offset: 64,
+                calibration: objectaudio_ir::ProgramCalibration::default(),
+            });
+        assert!(
+            encode(&payload)
+                .unwrap_err()
+                .to_string()
+                .contains("split the scene")
+        );
+    }
+
     proptest! {
         #[test]
         fn arbitrary_payloads_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..512)) {

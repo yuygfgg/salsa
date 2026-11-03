@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{IrError, ObjectEvent, ObjectState, PayloadError, ProgramCalibration, Transition};
+use crate::{
+    CalibrationEvent, IrError, ObjectEvent, ObjectState, PayloadError, ProgramCalibration,
+    Transition,
+};
 
 /// Current `SpatialPayload` wire version.
-pub const PAYLOAD_VERSION: u16 = 3;
+pub const PAYLOAD_VERSION: u16 = 4;
 
 /// A resolved state and a new transition target are different operations.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,9 +34,11 @@ pub struct SpatialPayload {
     pub events: Vec<ObjectEvent>,
     pub snapshot: Snapshot,
     pub snapshot_offset: i64,
-    /// Programme calibration carried by the payload that declared it. A
-    /// payload without it keeps the stream's previous controls.
+    /// Programme calibration at `snapshot_offset`. Without an update, the
+    /// stream keeps its previous controls.
     pub calibration: Option<ProgramCalibration>,
+    /// Discrete updates with buffer-relative offsets, including signed history.
+    pub calibration_events: Vec<CalibrationEvent>,
 }
 
 impl SpatialPayload {
@@ -48,6 +53,7 @@ impl SpatialPayload {
             snapshot: Snapshot::State,
             snapshot_offset: 0,
             calibration: None,
+            calibration_events: Vec::new(),
         }
     }
 
@@ -68,11 +74,14 @@ impl SpatialPayload {
         self
     }
 
-    /// Move this payload to another buffer origin. Both timestamp kinds move
+    /// Move this payload to another buffer origin. All timestamp kinds move
     /// exactly once; a snapshot offset never changes event offsets.
     pub fn rebase(&mut self, samples: i64) {
         self.snapshot_offset += samples;
         for event in &mut self.events {
+            event.offset += samples;
+        }
+        for event in &mut self.calibration_events {
             event.offset += samples;
         }
     }
@@ -82,16 +91,21 @@ impl SpatialPayload {
     /// targets or durations. Target snapshots still require stream history.
     pub fn slice(&self, start: i64, frames: usize) -> Option<Self> {
         let end = start + frames as i64;
-        // Programme calibration is not sample-positioned, so a calibration-only
-        // payload still belongs to every slice of the stream.
+        // Keep a leading calibration snapshot for initial control seeding,
+        // even when its object target is beyond this slice.
         if self.calibration.is_none()
             && self.snapshot_offset >= end
             && self.events.iter().all(|event| event.offset >= end)
+            && self
+                .calibration_events
+                .iter()
+                .all(|event| event.offset >= end)
         {
             return None;
         }
         let mut result = self.clone();
         result.events.retain(|event| event.offset < end);
+        result.calibration_events.retain(|event| event.offset < end);
         result.rebase(-start);
         Some(result)
     }
@@ -109,6 +123,9 @@ impl SpatialPayload {
         }
         if let Some(calibration) = &self.calibration {
             calibration.validate()?;
+        }
+        for event in &self.calibration_events {
+            event.calibration.validate()?;
         }
         for (index, object) in self.objects.iter().enumerate() {
             let expected = index as u32 + 1;
@@ -192,14 +209,16 @@ impl SpatialPayload {
 
     /// Decode `ObjectAudioMeta` bytes and reject unknown versions.
     pub fn decode(bytes: &[u8]) -> Result<Self, PayloadError> {
-        let payload: Self =
-            postcard::from_bytes(bytes).map_err(|error| PayloadError::Decode(error.to_string()))?;
-        if payload.version != Self::VERSION {
+        let (version, _) = postcard::take_from_bytes::<u16>(bytes)
+            .map_err(|error| PayloadError::Decode(error.to_string()))?;
+        if version != Self::VERSION {
             return Err(PayloadError::UnsupportedVersion {
-                version: payload.version,
+                version,
                 supported: Self::VERSION,
             });
         }
+        let payload: Self =
+            postcard::from_bytes(bytes).map_err(|error| PayloadError::Decode(error.to_string()))?;
         payload
             .validate()
             .map_err(|error| PayloadError::Decode(error.to_string()))?;
@@ -285,7 +304,50 @@ mod tests {
         source.calibration = Some(ProgramCalibration::default());
         let sliced = source
             .slice(0, 32)
-            .expect("calibration is not sample-positioned");
+            .expect("keep the leading calibration for initial seeding");
         assert!(sliced.calibration.is_some());
+    }
+
+    #[test]
+    fn calibration_events_survive_serialization_and_slice_history() {
+        let mut source = payload(1, 0).with_calibration(ProgramCalibration::default());
+        source.calibration_events = [32, 64, 96]
+            .into_iter()
+            .map(|offset| CalibrationEvent {
+                offset,
+                calibration: ProgramCalibration {
+                    bypass: vec![offset == 64],
+                    ..ProgramCalibration::default()
+                },
+            })
+            .collect();
+        let sliced = source.slice(48, 48).unwrap();
+        assert_eq!(sliced.snapshot_offset, -48);
+        assert_eq!(
+            sliced
+                .calibration_events
+                .iter()
+                .map(|event| event.offset)
+                .collect::<Vec<_>>(),
+            [-16, 16]
+        );
+        assert_eq!(
+            SpatialPayload::decode(&sliced.encode().unwrap()).unwrap(),
+            sliced
+        );
+        source.calibration_events[0].calibration.warp_mode = 4;
+        assert!(source.validate().is_err());
+    }
+
+    #[test]
+    fn old_wire_version_is_rejected_before_reading_new_fields() {
+        let bytes = postcard::to_allocvec(&3u16).unwrap();
+        assert_eq!(
+            SpatialPayload::decode(&bytes),
+            Err(PayloadError::UnsupportedVersion {
+                version: 3,
+                supported: SpatialPayload::VERSION,
+            })
+        );
     }
 }

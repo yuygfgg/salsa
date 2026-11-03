@@ -62,6 +62,28 @@ fn export_track(
     for event in track.events(0, end as usize) {
         updates.insert(event.offset, event);
     }
+    let mut bypass = bypass_at(0);
+    for (sample, calibration) in timeline.calibration_changes(0, end) {
+        let next_bypass = calibration.is_bypassed(index);
+        if next_bypass != bypass {
+            updates.entry(sample).or_insert_with(|| {
+                // Resume any active ramp at the calibration boundary. A
+                // resolved step here would stop the object's motion early.
+                let mut event = track
+                    .events(sample, 1)
+                    .into_iter()
+                    .next()
+                    .unwrap_or(ObjectEvent {
+                        offset: 0,
+                        transition: Transition::Step,
+                        state: track.state_at(sample),
+                    });
+                event.offset = sample;
+                event
+            });
+            bypass = next_bypass;
+        }
+    }
     let mut updates = updates.into_values().peekable();
     let mut output = TrackExport {
         id,
@@ -171,6 +193,13 @@ mod tests {
             assert!(events.iter().all(|event| event.sample_pos < frames as u64));
             let actual = ObjectTrack::dynamic(&events);
             for sample in 0..frames {
+                assert_eq!(
+                    actual.metadata_at(sample as u64).trim_bypass,
+                    timeline
+                        .calibration_at(sample as i64)
+                        .is_some_and(|calibration| calibration.is_bypassed(index)),
+                    "bypass at sample {sample}"
+                );
                 let actual = actual.state_at(sample as u64);
                 let expected = expected.state_at(sample as i64);
                 assert_eq!(actual.enabled, expected.enabled, "sample {sample}");
@@ -186,6 +215,52 @@ mod tests {
             }
         }
         metadata
+    }
+
+    #[test]
+    fn exports_bypass_only_changes_without_interrupting_ramps() {
+        for transition in [
+            Transition::Step,
+            Transition::Position(96),
+            Transition::All(96),
+        ] {
+            let mut initial = SpatialPayload::new(
+                48_000,
+                vec![ObjectState::new(1, [-1.0, 0.0, 0.0])],
+                vec![ObjectEvent {
+                    offset: 16,
+                    transition,
+                    state: ObjectState {
+                        gain: 0.5,
+                        size: Some(0.5),
+                        ..ObjectState::new(1, [1.0, 0.0, 0.0])
+                    },
+                }],
+            );
+            let mut timeline = SceneTimeline::from_payload(&initial, 0).unwrap();
+            initial.snapshot = objectaudio_ir::Snapshot::Continue;
+            initial.events.clear();
+            for (sample, bypass) in [(64, true), (80, false), (128, true)] {
+                initial.calibration = Some(objectaudio_ir::ProgramCalibration {
+                    bypass: vec![bypass],
+                    ..objectaudio_ir::ProgramCalibration::default()
+                });
+                timeline.submit(&initial, sample).unwrap();
+            }
+            let metadata = assert_roundtrip(&timeline, 128);
+            assert!(
+                metadata
+                    .events
+                    .iter()
+                    .any(|event| event.sample_pos == 64 && event.trim_bypass == Some(true))
+            );
+            assert!(
+                metadata
+                    .events
+                    .iter()
+                    .any(|event| event.sample_pos == 80 && event.trim_bypass == Some(false))
+            );
+        }
     }
 
     #[test]

@@ -40,6 +40,11 @@ pub fn encode_with_profile(
     payload
         .validate()
         .map_err(|error| OamdError::Encode(error.to_string()))?;
+    if !payload.calibration_events.is_empty() {
+        return Err(OamdError::Encode(
+            "split the scene at calibration changes before encoding OAMD".into(),
+        ));
+    }
     if payload
         .objects
         .iter()

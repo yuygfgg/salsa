@@ -28,6 +28,13 @@ pub fn render_scene(
     if input.len() != samples * channels {
         return Err(RenderError::InputSize);
     }
+    if !samples.is_multiple_of(BLOCK_SAMPLES) {
+        return Err(RenderError::BlockAlignment);
+    }
+    let output_channels = renderer.layout().channel_count();
+    if output.len() < samples * output_channels {
+        return Err(RenderError::OutputSize(output_channels));
+    }
     let mut effective = input.to_vec();
     for (offset, row) in effective.chunks_exact_mut(channels).enumerate() {
         for (object, value) in row[1..].iter_mut().enumerate() {
@@ -36,38 +43,34 @@ pub fn render_scene(
                 .effective_gain();
         }
     }
-    let positions: Vec<_> = (0..samples)
-        .step_by(BLOCK_SAMPLES)
-        .flat_map(|offset| {
-            [offset, offset + BLOCK_SAMPLES - 1].map(|sample| {
-                scene
-                    .states_at(start + sample as i64)
-                    .into_iter()
-                    .map(|state| adm_to_q15(state.position))
-                    .collect::<Vec<_>>()
-            })
-        })
-        .collect();
-    let metadata: Vec<_> = positions
-        .iter()
-        .enumerate()
-        .map(|(index, positions)| {
-            SpeakerMetadata::new(
-                (index / 2 * BLOCK_SAMPLES) as u32,
-                if index % 2 == 0 {
-                    0
-                } else {
-                    BLOCK_SAMPLES as u32
-                },
-                positions,
-            )
-        })
-        .collect();
-    let controls = match scene.calibration_at(start) {
-        Some(calibration) => controls_from_calibration(calibration, renderer.layout())?,
-        None => SpeakerControls::default_for(renderer.layout()),
-    };
-    renderer.process(&effective, samples, &metadata, &controls, output)
+    for offset in (0..samples).step_by(BLOCK_SAMPLES) {
+        let sample = start + offset as i64;
+        let positions = [sample, sample + BLOCK_SAMPLES as i64 - 1].map(|sample| {
+            scene
+                .states_at(sample)
+                .into_iter()
+                .map(|state| adm_to_q15(state.position))
+                .collect::<Vec<_>>()
+        });
+        let metadata = [
+            SpeakerMetadata::new(0, 0, &positions[0]),
+            SpeakerMetadata::new(0, BLOCK_SAMPLES as u32, &positions[1]),
+        ];
+        // Calibration is discrete. Sample it at each control-block start;
+        // neither position interpolation nor input buffering retimes it.
+        let controls = match scene.calibration_at(sample) {
+            Some(calibration) => controls_from_calibration(calibration, renderer.layout())?,
+            None => SpeakerControls::default_for(renderer.layout()),
+        };
+        renderer.process(
+            &effective[offset * channels..(offset + BLOCK_SAMPLES) * channels],
+            BLOCK_SAMPLES,
+            &metadata,
+            &controls,
+            &mut output[offset * output_channels..(offset + BLOCK_SAMPLES) * output_channels],
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -76,6 +79,77 @@ mod tests {
     use crate::layout_by_name;
     use crate::{SpeakerRenderer, render_scene};
     use objectaudio_ir::{ObjectState, ProgramCalibration, SceneTimeline, SpatialPayload};
+
+    #[test]
+    fn calibration_updates_do_not_depend_on_render_buffer_size() {
+        let layout = layout_by_name("5.1").unwrap();
+        let mut payload =
+            SpatialPayload::new(48_000, vec![ObjectState::new(1, [-1.0, -1.0, 0.0])], vec![])
+                .with_calibration(ProgramCalibration::default());
+        let mut scene = SceneTimeline::from_payload(&payload, 0).unwrap();
+        payload.snapshot = objectaudio_ir::Snapshot::Continue;
+        let mut trimmed = ProgramCalibration {
+            warp_mode: 1,
+            global_trim_mode: 2,
+            ..ProgramCalibration::default()
+        };
+        trimmed.configs.fill(objectaudio_ir::TrimRecord::explicit(
+            None,
+            Some(-6.0),
+            None,
+            None,
+            None,
+        ));
+        for (at, calibration) in [
+            (
+                64,
+                ProgramCalibration {
+                    bypass: vec![true],
+                    ..ProgramCalibration::default()
+                },
+            ),
+            (96, trimmed),
+            (129, ProgramCalibration::default()),
+        ] {
+            payload.calibration = Some(calibration);
+            scene.submit(&payload, at).unwrap();
+        }
+        let samples = 192;
+        let input = [0.0, 1.0].repeat(samples);
+        let mut whole = vec![0.0; samples * layout.channel_count()];
+        render_scene(
+            &mut SpeakerRenderer::new(layout, 1),
+            &scene,
+            &input,
+            0,
+            samples,
+            &mut whole,
+        )
+        .unwrap();
+        for block in [32, 64, 96] {
+            let mut renderer = SpeakerRenderer::new(layout, 1);
+            let mut split = vec![0.0; whole.len()];
+            for start in (0..samples).step_by(block) {
+                render_scene(
+                    &mut renderer,
+                    &scene,
+                    &input[start * 2..(start + block) * 2],
+                    start as i64,
+                    block,
+                    &mut split
+                        [start * layout.channel_count()..(start + block) * layout.channel_count()],
+                )
+                .unwrap();
+            }
+            assert_eq!(whole, split, "buffer size {block}");
+        }
+        let surround = |sample| whole[sample * layout.channel_count() + 4];
+        assert!((surround(63) - 10.0f64.powf(-3.0 / 20.0)).abs() < 1e-6);
+        assert_eq!(surround(64), 1.0);
+        assert!((surround(96) - 10.0f64.powf(-6.0 / 20.0)).abs() < 1e-6);
+        assert_eq!(surround(129), surround(128));
+        assert!((surround(160) - surround(63)).abs() < 1e-6);
+    }
 
     #[test]
     fn applies_the_scene_calibration_to_speaker_rendering() {

@@ -100,7 +100,7 @@ All Salsa elements exchange a unified raw object stream:
 
 - **PCM Format**: `audio/x-raw, format=F32LE, layout=interleaved, channel-mask=0` (the Dolby bridge additionally accepts `S32LE` and can convert it).
 - **Channel Mapping**: Channel `0` is LFE; channels `1..N` are dynamic point objects (`channels - 1` = object count). Decoders emit `1 + object_count` channels at 32/44.1/48 kHz for E-AC-3 JOC and up to 192 kHz for TrueHD; the renderers accept up to 1024 channels. Non-LFE beds are expanded into fixed-position objects by the TrueHD decoder or by `salsaobjectaudioadapt`; the E-AC-3 JOC decoder emits its JOC objects only.
-- **Metadata (`meta:ObjectAudioMeta`)**: Carries a versioned, postcard-serialized `SpatialPayload` with snapshot and intra-buffer event sample offsets, plus an optional `snapshot_ramp_samples` for OAMD's first object-info block. Decoders and DAMF sources advertise (and attach) it when downstream negotiates the caps feature, falling back to plain raw otherwise; `salsaoar` and `salsahrtfrender` require it, and Dolby `meta:DlbObjectAudioMeta` must be converted first by `salsaobjectaudioadapt`.
+- **Metadata (`meta:ObjectAudioMeta`)**: Carries a versioned, postcard-serialized `SpatialPayload` with signed sample offsets for snapshots, object events, and calibration events. Target snapshots specify the transition type and duration. Version 4 adds calibration events so slicing and reblocking preserve changes inside a buffer. Rebuild producers and consumers together; older payload versions are rejected. Decoders and DAMF sources attach metadata when downstream negotiates the caps feature. `salsaoar` and `salsahrtfrender` require it. Use `salsaobjectaudioadapt` to convert Dolby `meta:DlbObjectAudioMeta` first.
 
 ### Element Reference
 
@@ -270,6 +270,11 @@ Masters outside this shape, for example **more than 15 objects**, a non-LFE bed,
 or more than one bed channel, will fail validation or fail to produce a valid
 JOC stream. Use `salsa-cluster` to cluster the master into at most 15 objects
 and produce a compatible DAMF first.
+
+The encoder writes one OAMD calibration per 1536-sample frame. It reads
+`trimBypass` at the frame start and position targets at the frame end. Bypass
+changes must fall on frame boundaries. The encoder rejects changes inside a
+frame before it creates the output file.
 
 #### reac3e core parameters
 

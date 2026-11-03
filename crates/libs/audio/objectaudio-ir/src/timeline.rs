@@ -4,7 +4,8 @@
 //! renderer control grids do not define the authored trajectory.
 
 use crate::{
-    IrError, ObjectEvent, ObjectState, ProgramCalibration, Snapshot, SpatialPayload, Transition,
+    CalibrationEvent, IrError, ObjectEvent, ObjectState, ProgramCalibration, Snapshot,
+    SpatialPayload, Transition,
 };
 
 /// Evaluated states precede transition targets at the same sample.
@@ -236,7 +237,10 @@ impl SceneTimeline {
         scene.submit(payload, buffer_start)?;
         // The reference seeds the initial controls from the leading frames, so
         // the first trim element is in force before its own event arrives.
-        if let Some(calibration) = &payload.calibration {
+        if payload.snapshot_offset > 0
+            && scene.calibration_at(buffer_start).is_none()
+            && let Some(calibration) = &payload.calibration
+        {
             scene.set_calibration(buffer_start, calibration.clone());
         }
         Ok(scene)
@@ -261,6 +265,9 @@ impl SceneTimeline {
         }
         if let Some(calibration) = &payload.calibration {
             self.set_calibration(sample, calibration.clone());
+        }
+        for event in &payload.calibration_events {
+            self.set_calibration(buffer_start + event.offset, event.calibration.clone());
         }
         Ok(())
     }
@@ -287,6 +294,22 @@ impl SceneTimeline {
             .calibrations
             .partition_point(|(existing, _)| *existing <= sample);
         end.checked_sub(1).map(|index| &self.calibrations[index].1)
+    }
+
+    /// Calibration updates strictly after `start` and before `end`.
+    /// Use `calibration_at(start)` for the state at the left edge.
+    pub fn calibration_changes(
+        &self,
+        start: i64,
+        end: i64,
+    ) -> impl Iterator<Item = (i64, &ProgramCalibration)> {
+        let first = self
+            .calibrations
+            .partition_point(|(sample, _)| *sample <= start);
+        self.calibrations[first..]
+            .iter()
+            .take_while(move |(sample, _)| *sample < end)
+            .map(|(sample, calibration)| (*sample, calibration))
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -334,11 +357,16 @@ impl SceneTimeline {
             .flat_map(|track| track.events(start, frames))
             .collect();
         events.sort_by_key(|event| event.offset);
-        let payload = SpatialPayload::new(self.sample_rate, self.states_at(start), events);
-        match self.calibration_at(start) {
-            Some(calibration) => payload.with_calibration(calibration.clone()),
-            None => payload,
-        }
+        let mut payload = SpatialPayload::new(self.sample_rate, self.states_at(start), events);
+        payload.calibration = self.calibration_at(start).cloned();
+        payload.calibration_events = self
+            .calibration_changes(start, start + frames as i64)
+            .map(|(sample, calibration)| CalibrationEvent {
+                offset: sample - start,
+                calibration: calibration.clone(),
+            })
+            .collect();
+        payload
     }
 }
 
@@ -352,6 +380,83 @@ pub fn align_sample(sample: i64, grid: u32) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn calibration(warp_mode: u8, bypass: bool) -> ProgramCalibration {
+        ProgramCalibration {
+            warp_mode,
+            bypass: vec![bypass],
+            ..ProgramCalibration::default()
+        }
+    }
+
+    #[test]
+    fn exported_calibration_keeps_all_changes_and_half_open_bounds() {
+        let initial = SpatialPayload::new(48_000, vec![ObjectState::new(1, [0.0; 3])], vec![]);
+        for initial_calibration in [None, Some(calibration(0, false))] {
+            let mut initial = initial.clone();
+            initial.calibration = initial_calibration;
+            let mut scene = SceneTimeline::from_payload(&initial, 0).unwrap();
+            for (sample, warp, bypass) in [(64, 1, true), (96, 2, false), (128, 3, true)] {
+                let mut change = initial.clone().with_calibration(calibration(warp, bypass));
+                change.snapshot = Snapshot::Continue;
+                scene.submit(&change, sample).unwrap();
+            }
+            for start in [0, 32, 64, 65, 96] {
+                let payload = scene.payload(start, (128 - start) as usize);
+                assert!(
+                    payload
+                        .calibration_events
+                        .iter()
+                        .all(|event| event.offset < 128 - start)
+                );
+                let bytes = payload.encode().unwrap();
+                let replay =
+                    SceneTimeline::from_payload(&SpatialPayload::decode(&bytes).unwrap(), start)
+                        .unwrap();
+                for sample in start..128 {
+                    assert_eq!(
+                        replay.calibration_at(sample),
+                        scene.calibration_at(sample),
+                        "sample {sample}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn historical_calibration_is_not_retimed_to_the_slice_start() {
+        let initial = SpatialPayload::new(48_000, vec![ObjectState::new(1, [0.0; 3])], vec![])
+            .with_snapshot_offset(-128)
+            .with_calibration(calibration(1, false));
+        let newer = initial
+            .clone()
+            .with_snapshot_offset(-64)
+            .with_calibration(calibration(2, true));
+        let mut scene = SceneTimeline::from_payload(&initial, 0).unwrap();
+        scene.submit(&newer, 0).unwrap();
+        assert_eq!(scene.calibration_at(-65), initial.calibration.as_ref());
+        assert_eq!(scene.calibration_at(0), newer.calibration.as_ref());
+        scene.discard_before(0);
+        scene.submit(&initial, 0).unwrap();
+        assert_eq!(scene.calibration_at(0), newer.calibration.as_ref());
+    }
+
+    #[test]
+    fn only_a_future_initial_snapshot_seeds_controls_early() {
+        let mut payload = SpatialPayload::new(48_000, vec![], vec![])
+            .with_snapshot_offset(64)
+            .with_calibration(calibration(1, false));
+        let scene = SceneTimeline::from_payload(&payload, 100).unwrap();
+        assert_eq!(scene.calibration_at(100), payload.calibration.as_ref());
+        payload.calibration_events.push(CalibrationEvent {
+            offset: -32,
+            calibration: calibration(2, true),
+        });
+        let scene = SceneTimeline::from_payload(&payload, 100).unwrap();
+        assert_eq!(scene.calibration_at(100), Some(&calibration(2, true)));
+        assert_eq!(scene.calibration_at(164), payload.calibration.as_ref());
+    }
 
     #[test]
     fn holds_then_interrupts_from_the_current_position() {

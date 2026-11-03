@@ -3,11 +3,18 @@
 //! The model mirrors the OAMD trim element without depending on the OAMD wire
 //! format: the renderer chooses the record for its target layout, so the
 //! payload must carry all nine configurations. Layout-independent code (the
-//! binaural renderer, DAMF export) simply ignores it.
+//! binaural renderer) can ignore it. DAMF retains the per-object bypass flags.
 
 use serde::{Deserialize, Serialize};
 
 use crate::IrError;
+
+/// A discrete calibration update relative to the containing buffer's start.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CalibrationEvent {
+    pub offset: i64,
+    pub calibration: ProgramCalibration,
+}
 
 /// Number of layout classes the OAMD trim element defines.
 pub const TRIM_CONFIG_COUNT: usize = 9;

@@ -5,7 +5,8 @@ use crate::error::{DamfError, Result};
 use crate::manifest::Manifest;
 use crate::metadata::Metadata;
 use crate::scene::{Consumer, DamfScene, ObjectTrack};
-use objectaudio_ir::{ObjectState, ProgramCalibration, SpatialPayload};
+use objectaudio_ir::{CalibrationEvent, ObjectState, ProgramCalibration, SpatialPayload};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// One source object after the manifest's bed/object layout has been flattened.
@@ -208,16 +209,29 @@ impl DamfSource {
         // DAMF carries per-object trimBypass but no programme warp/trim/balance;
         // the IR calibration keeps the bypass flags and leaves the rest at the
         // automatic defaults.
-        let calibration = ProgramCalibration {
+        let calibration_at = |sample| ProgramCalibration {
             bypass: self
                 .tracks
                 .iter()
-                .map(|track| track.metadata_at(start).trim_bypass)
+                .map(|track| track.metadata_at(sample).trim_bypass)
                 .collect(),
             ..ProgramCalibration::default()
         };
-        let payload = SpatialPayload::new(self.info.sample_rate, objects, events)
-            .with_calibration(calibration);
+        let mut payload = SpatialPayload::new(self.info.sample_rate, objects, events)
+            .with_calibration(calibration_at(start));
+        let changes: BTreeSet<_> = self
+            .tracks
+            .iter()
+            .flat_map(|track| track.bypass_changes(start, start + frames as u64))
+            .map(|(sample, _)| sample)
+            .collect();
+        payload.calibration_events = changes
+            .into_iter()
+            .map(|sample| CalibrationEvent {
+                offset: (sample - start) as i64,
+                calibration: calibration_at(sample),
+            })
+            .collect();
         self.next_sample = start + frames as u64;
 
         Ok(Some(DamfBlock {
@@ -401,6 +415,79 @@ events:
         assert_eq!(calibration.bypass, vec![true]);
         assert_eq!(calibration.warp_mode, 0);
         assert_eq!(calibration.global_trim_mode, 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn block_and_seek_keep_multiple_bypass_changes() {
+        let dir = unique_dir("bypass-changes");
+        let manifest = write_manifest(&dir, "Ls", &[10]);
+        write_caf(&dir.join("master.atmos.audio"), 2, 160, &vec![0.0; 320]);
+        std::fs::write(
+            dir.join("master.atmos.metadata"),
+            br#"sampleRate: 48000
+events:
+  - ID: 3
+    samplePos: 0
+    trimBypass: false
+  - ID: 10
+    samplePos: 0
+    pos: [-1, 0, 0]
+    trimBypass: false
+  - ID: 10
+    samplePos: 32
+    pos: [1, 0, 0]
+    rampLength: 96
+  - ID: 3
+    samplePos: 64
+    trimBypass: true
+  - ID: 10
+    samplePos: 64
+    trimBypass: true
+  - ID: 10
+    samplePos: 96
+    trimBypass: false
+  - ID: 3
+    samplePos: 128
+    trimBypass: false
+"#,
+        )
+        .unwrap();
+        let mut source = DamfSource::open(&manifest).unwrap();
+        let block = source.read_block(128).unwrap().unwrap();
+        assert_eq!(block.frames, 128);
+        assert_eq!(
+            block
+                .payload
+                .calibration_events
+                .iter()
+                .map(|event| event.offset)
+                .collect::<Vec<_>>(),
+            [64, 96]
+        );
+        let reference = objectaudio_ir::SceneTimeline::from_payload(&block.payload, 0).unwrap();
+        for sample in 0..128 {
+            assert_eq!(
+                reference.calibration_at(sample).unwrap().bypass,
+                [sample >= 64, (64..96).contains(&sample)]
+            );
+            let expected_x = -1.0 + 2.0 * ((sample - 32) as f32 / 96.0).clamp(0.0, 1.0);
+            assert!((reference.state_at(1, sample).position[0] - expected_x).abs() < 1e-6);
+        }
+        for start in [0, 32, 64, 80, 96] {
+            source.seek(start).unwrap();
+            let block = source.read_block((128 - start) as usize).unwrap().unwrap();
+            let actual =
+                objectaudio_ir::SceneTimeline::from_payload(&block.payload, start as i64).unwrap();
+            for sample in start as i64..128 {
+                assert_eq!(
+                    actual.calibration_at(sample),
+                    reference.calibration_at(sample)
+                );
+            }
+        }
+        let last = source.read_block(32).unwrap().unwrap();
+        assert_eq!(last.payload.calibration.unwrap().bypass, [false, false]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

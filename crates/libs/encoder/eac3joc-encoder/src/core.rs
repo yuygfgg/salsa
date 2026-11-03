@@ -7,7 +7,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
-use objectaudio_damf::{Manifest, Metadata};
+use objectaudio_damf::{DamfScene, Manifest, Metadata};
 use reac3e::{
     Acmod, BsiMetadata, ChannelLayout, ChannelOrder, Coupling, EncoderConfig, FrameEdits,
     FrameEncoder, PlanarFrame, SkipMetadata,
@@ -155,6 +155,7 @@ pub fn encode(atmos: &Path, out: &Path, options: &EncodeOptions) -> Result<()> {
     )?;
     let info = downmix.info();
     ensure!(info.frames > 0, "DAMF essence has no audio frames");
+    validate_calibration_timing(&scene, info.frames, spf as u64)?;
     log::info!(
         "downmix: {} frames at {} Hz, {} dynamic objects",
         info.frames,
@@ -239,28 +240,7 @@ pub fn encode(atmos: &Path, out: &Path, options: &EncodeOptions) -> Result<()> {
 
         let start = offset;
         let end = start + spf as u64;
-        let objects: Vec<ObjectPos> = render::positions_at(&scene, end)
-            .into_iter()
-            .map(|position| ObjectPos {
-                x: position[0],
-                y: position[1],
-                z: position[2],
-            })
-            .collect();
-        let bypass: Vec<bool> = scene
-            .objects
-            .iter()
-            .map(|object| object.track.metadata_at(end).trim_bypass)
-            .collect();
-        let calibration =
-            bypass
-                .iter()
-                .any(|bypass| *bypass)
-                .then(|| objectaudio_ir::ProgramCalibration {
-                    bypass,
-                    ..objectaudio_ir::ProgramCalibration::default()
-                });
-        let oamd = emdf::encode_oamd(&objects, calibration)?;
+        let oamd = encode_frame_oamd(&scene, start, end)?;
         let matrices = analyzer
             .matrices_for_frame(start, end)
             .map_err(|error| anyhow::anyhow!("JOC band analysis at frame {frame_index}: {error}"))?
@@ -380,6 +360,46 @@ fn build_core(options: &CoreOptions) -> Result<(FrameEncoder, usize)> {
         spf
     );
     Ok((encoder, spf))
+}
+
+// This encoder emits one OAMD payload per codec frame. Reject unrepresentable
+// discrete changes before creating the output instead of silently retiming them.
+fn validate_calibration_timing(
+    scene: &DamfScene,
+    frames: u64,
+    samples_per_frame: u64,
+) -> Result<()> {
+    for object in &scene.objects {
+        for (sample, _) in object.track.bypass_changes(0, frames) {
+            ensure!(
+                sample.is_multiple_of(samples_per_frame),
+                "object {} changes trimBypass at sample {sample} inside a {samples_per_frame}-sample frame; intra-frame calibration is not supported",
+                object.obj_id
+            );
+        }
+    }
+    Ok(())
+}
+
+fn encode_frame_oamd(scene: &DamfScene, start: u64, end: u64) -> Result<Vec<u8>> {
+    // Positions are ramp targets; bypass is a step at the current frame start.
+    let objects: Vec<ObjectPos> = render::positions_at(scene, end)
+        .into_iter()
+        .map(|position| ObjectPos {
+            x: position[0],
+            y: position[1],
+            z: position[2],
+        })
+        .collect();
+    let calibration = objectaudio_ir::ProgramCalibration {
+        bypass: scene
+            .objects
+            .iter()
+            .map(|object| object.track.metadata_at(start).trim_bypass)
+            .collect(),
+        ..objectaudio_ir::ProgramCalibration::default()
+    };
+    Ok(emdf::encode_oamd(&objects, Some(calibration))?)
 }
 
 /// Choose a fine/coarse/broadband JOC payload that fits the skip-field budget.
@@ -553,4 +573,204 @@ fn excluded_ranges(
     }
     ranges.push((edits.audio_end_bit, edits.frame_size * 8));
     ranges
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use objectaudio_damf::{ObjectTrack, ResolvedObject};
+    use objectaudio_ir::{ObjectState, SceneTimeline, SpatialPayload};
+
+    fn bypass_scene(keys: &[(u64, bool)]) -> DamfScene {
+        let initial = SpatialPayload::new(48_000, vec![ObjectState::new(1, [0.0; 3])], vec![]);
+        let metadata =
+            Metadata::from_timeline(&SceneTimeline::from_payload(&initial, 0).unwrap(), 1, 10)
+                .unwrap();
+        let events: Vec<_> = keys
+            .iter()
+            .map(|&(sample, bypass)| {
+                let mut event = metadata.events[0].clone();
+                event.sample_pos = sample;
+                event.trim_bypass = Some(bypass);
+                event.position = Some([sample as f32 / 4608.0, 0.0, 0.0]);
+                event
+            })
+            .collect();
+        DamfScene {
+            objects: vec![ResolvedObject {
+                obj_id: 10,
+                channel: 1,
+                name: "Object 10".into(),
+                fixed_pos: None,
+                track: ObjectTrack::dynamic(&events.iter().collect::<Vec<_>>()),
+            }],
+            lfe: None,
+            source_channels: 2,
+            warnings: vec![],
+        }
+    }
+
+    #[test]
+    fn encoded_bypass_uses_frame_start_while_positions_use_frame_end() {
+        let scene = bypass_scene(&[(0, false), (1536, true), (3072, false)]);
+        validate_calibration_timing(&scene, 4608, 1536).unwrap();
+        let mut bypass = Vec::new();
+        for start in [0, 1536, 3072] {
+            let bytes = encode_frame_oamd(&scene, start, start + 1536).unwrap();
+            let frame = objectaudio_oamd::parse(&bytes).unwrap();
+            let mapped = frame.map_to_ir(0, objectaudio_oamd::BedPolicy::Ignore);
+            assert_eq!(mapped.snapshot_offset, 0);
+            assert_eq!(mapped.snapshot_ramp_samples, 1536);
+            bypass.push(mapped.calibration.unwrap().is_bypassed(0));
+            let expected = scene.objects[0].track.position_at(start + 1536);
+            assert!((mapped.objects[0].position[0] - expected[0]).abs() <= 2.0 / 63.0);
+        }
+        assert_eq!(bypass, [false, true, false]);
+    }
+
+    #[test]
+    fn rejects_intra_frame_bypass_changes_including_a_return_to_the_initial_value() {
+        let scene = bypass_scene(&[(0, false), (64, true), (96, false)]);
+        let error = validate_calibration_timing(&scene, 1536, 1536)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("sample 64"));
+        let unchanged = bypass_scene(&[(0, false), (64, false)]);
+        validate_calibration_timing(&unchanged, 1536, 1536).unwrap();
+        validate_calibration_timing(&scene, 64, 1536).unwrap();
+    }
+
+    #[test]
+    fn damf_encode_preserves_three_frame_bypass_sequence() {
+        // Give the codec's fixed analysis arrays enough stack space.
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(check_encoded_bypass_sequence)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    fn check_encoded_bypass_sequence() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "salsa-encode-bypass-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("master.atmos");
+        std::fs::write(
+            &manifest,
+            "version: 0.5.1
+presentations:
+  - audio: master.audio
+    metadata: master.metadata
+    bedInstances:
+      - channels:
+          - channel: LFE
+            ID: 3
+    objects:
+      - ID: 10
+",
+        )
+        .unwrap();
+        let metadata = "sampleRate: 48000
+events:
+  - ID: 10
+    samplePos: 0
+    pos: [-1, -1, 0]
+    trimBypass: false
+  - ID: 10
+    samplePos: 1536
+    trimBypass: true
+  - ID: 10
+    samplePos: 3072
+    trimBypass: false
+";
+        std::fs::write(dir.join("master.metadata"), metadata).unwrap();
+        let mut caf =
+            objectaudio_damf::CafWriter::create(dir.join("master.audio"), 48_000, 2, 4608, false)
+                .unwrap();
+        let pcm: Vec<_> = (0..4608)
+            .flat_map(|sample| [0.0, 0.1 * (sample as f32 * 0.1).sin()])
+            .collect();
+        caf.write_frames(&pcm).unwrap();
+        caf.finish().unwrap();
+        let options = EncodeOptions {
+            pan: render::PanMode::Hard71,
+            gain_db: 0.0,
+            surround_phase_shift: false,
+            core: CoreOptions {
+                bitrate: 640_000,
+                dialnorm: -21,
+                coupling: Coupling::Off,
+                coupling_start: None,
+                stereo_rematrixing: true,
+                block_switch: true,
+                aht: false,
+                cutoff_hz: None,
+                metadata: BsiMetadata::default(),
+            },
+            joc: JocOptions {
+                lambda: 1e-3,
+                ridge: 1e-3,
+                emdf_budget: 511,
+                select: JocSelect::Knapsack,
+                mode: JocMode::Auto,
+                quant: JocQuant::Auto,
+                refine_rounds: 0,
+                rd_passes: 0,
+                smooth: 0.9,
+                power_gate: 1e-8,
+                target_block: 2,
+                addbsi_complexity: None,
+                dynrng_profile: 4,
+                compr_profile: 4,
+            },
+            emdf_key: None,
+            emdf_key_id: 0,
+        };
+        let output = dir.join("encoded.ec3");
+        encode(&manifest, &output, &options).unwrap();
+        let mut parser = eac3joc::Eac3JocParser::new();
+        let mut frames = parser.push_bytes(&std::fs::read(&output).unwrap()).unwrap();
+        frames.extend(parser.flush().unwrap());
+        let bypass: Vec<_> = frames
+            .iter()
+            .map(|frame| {
+                assert_eq!(frame.oamd_sample_offset, 0);
+                frame
+                    .oamd
+                    .as_ref()
+                    .unwrap()
+                    .map_to_ir(0, objectaudio_oamd::BedPolicy::Ignore)
+                    .calibration
+                    .unwrap()
+                    .is_bypassed(0)
+            })
+            .collect();
+        assert_eq!(bypass, [false, true, false]);
+
+        std::fs::write(
+            dir.join("master.metadata"),
+            metadata.replace("samplePos: 1536", "samplePos: 64"),
+        )
+        .unwrap();
+        let original = std::fs::read(&output).unwrap();
+        assert!(
+            encode(&manifest, &output, &options)
+                .unwrap_err()
+                .to_string()
+                .contains("sample 64")
+        );
+        assert_eq!(
+            std::fs::read(&output).unwrap(),
+            original,
+            "validation must precede output creation"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

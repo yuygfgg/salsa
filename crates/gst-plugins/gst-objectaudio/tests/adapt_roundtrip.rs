@@ -232,6 +232,50 @@ fn to_dolby_encodes_spatial_payload_as_oamd() {
 }
 
 #[test]
+fn to_dolby_preserves_calibration_boundaries_inside_a_buffer() {
+    init();
+    let mut source = payload().with_calibration(objectaudio_ir::ProgramCalibration::default());
+    source.calibration_events = [(64, true), (96, false)]
+        .into_iter()
+        .map(|(offset, bypass)| objectaudio_ir::CalibrationEvent {
+            offset,
+            calibration: objectaudio_ir::ProgramCalibration {
+                bypass: vec![bypass, false],
+                ..objectaudio_ir::ProgramCalibration::default()
+            },
+        })
+        .collect();
+    run(
+        "to-dolby",
+        objectaudio_meta::CAPS_FEATURE,
+        |buffer| add_spatial(buffer, &source, 12).unwrap(),
+        |buffer| {
+            let payloads = objectaudio_meta::dlb_payloads(buffer);
+            assert_eq!(
+                payloads
+                    .iter()
+                    .map(|payload| payload.offset)
+                    .collect::<Vec<_>>(),
+                [0, 64, 96]
+            );
+            let bypass: Vec<_> = payloads
+                .iter()
+                .map(|payload| {
+                    objectaudio_oamd::parse(payload.bytes)
+                        .unwrap()
+                        .map_to_ir(0, objectaudio_oamd::BedPolicy::Ignore)
+                        .calibration
+                        .unwrap()
+                        .is_bypassed(0)
+                })
+                .collect();
+            assert_eq!(bypass, [false, true, false]);
+            true
+        },
+    );
+}
+
+#[test]
 fn to_salsa_decodes_oamd_into_spatial_payload() {
     init();
     let bytes = objectaudio_oamd::encode(&payload()).unwrap();

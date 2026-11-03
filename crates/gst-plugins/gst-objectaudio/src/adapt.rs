@@ -508,8 +508,20 @@ impl BaseTransformImpl for ObjectAudioAdapt {
                 if let Some(scene) = &mut state.scene {
                     // OAMD offsets fit within a codec frame. Splitting here is
                     // a format decision; scene slicing owns all time semantics.
-                    for offset in (0..frames).step_by(1536) {
-                        let count = (frames - offset).min(1536);
+                    let mut boundaries: Vec<_> = (0..frames)
+                        .step_by(1536)
+                        .chain(
+                            scene
+                                .calibration_changes(start, start + frames as i64)
+                                .map(|(sample, _)| (sample - start) as usize),
+                        )
+                        .chain(std::iter::once(frames))
+                        .collect();
+                    boundaries.sort_unstable();
+                    boundaries.dedup();
+                    for interval in boundaries.windows(2) {
+                        let offset = interval[0];
+                        let count = interval[1] - offset;
                         let payload = scene.payload(start + offset as i64, count);
                         let bytes = objectaudio_oamd::encode(&payload).map_err(|error| {
                             gst::error!(gst::CAT_RUST, "cannot encode scene as OAMD: {error}");
