@@ -135,9 +135,8 @@ source resolves `presentations[0].audio` / `.metadata`, then the standard
   rate must be 1.0. The object timeline is stateless, so no decoder reset is
   needed.
 - **Ignored fields**: `importance`, `zones`, `dialog`, `music`, `screenFactor`,
-  `depthFactor`, `snap`, `elevation`, `trimBypass`, `headTrackMode` and
-  `binauralRenderMode` have no salsa IR representation yet. The adapter/OAMD
-  path remains the lossy Dolby boundary; DAMF input bypasses OAMD entirely.
+  `depthFactor`, `snap`, `elevation`, `headTrackMode` and `binauralRenderMode`
+  have no salsa IR representation yet.
 
 #### `salsadamfsink` (DAMF Sink)
 
