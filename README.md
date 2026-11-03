@@ -455,7 +455,8 @@ brew install pkg-config gstreamer ffmpeg
 
 # Debian / Ubuntu
 sudo apt-get install pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-  libavcodec-dev libavformat-dev libavutil-dev libswresample-dev
+  libavcodec-dev libavformat-dev libavutil-dev libswresample-dev \
+  libavfilter-dev libswscale-dev
 ```
 
 ```sh
