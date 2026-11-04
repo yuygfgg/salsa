@@ -1,6 +1,39 @@
-/target
-.DS_Store
+# Cargo / Rust build output
+target/
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+coverage/
+lcov.info
+*.dSYM/
+*.app/
+*.driver/
+
+# Test artifacts and local run output
 proptest-regressions/
+results/
+*.log
+*.out
+*.err
+*.wav
+*.f32
+*.pcm
+*.raw
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Python caches
 __pycache__/
 *.pyc
+
+# OS / editor state
+.DS_Store
+.idea/
+.vscode/
+
+# Local planning notes
 PLAN.md

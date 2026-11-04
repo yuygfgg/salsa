@@ -36,6 +36,7 @@ DAMF master
 | `eac3joc-core-decoder` | E-AC-3 core PCM through libavcodec with DRC disabled | no |
 | `eac3joc-dsp` | QMF analysis, object matrix, synthesis and LFE handling | no |
 | `truehd-atmos` | TrueHD Atmos parse/decode adapter producing the same IR | no |
+| `iec61937` | IEC 61937 carrier framing, E-AC-3 syncframes, TrueHD MAT extraction and relative timing | no |
 | `objectaudio-damf` | DAMF parser, inherited metadata resolver, shared channel layout, and CAF I/O | no |
 | `objectaudio-meta` | `ObjectAudioMeta` GstMeta (`SpatialPayload`), caps feature, C ABI and Dolby compatibility | yes |
 | `objectaudio-render` | speaker layout tables, speaker anchors and the object-to-speaker renderer | no |
@@ -46,6 +47,7 @@ DAMF master
 | `gst-damf` | `salsadamfsrc`, `salsadamfsink` | yes |
 | `eac3joc-encoder` | DAMF → LFE-filtered 5.1 downmix → reac3e core → OAMD/JOC/EMDF → E-AC-3 JOC (library) | no |
 | `salsa-eac3joc-encode` | CLI front-end for `eac3joc-encoder` | no |
+| `salsa-audiod` | virtual IEC 61937 service: carrier recovery, decode/render pipeline, bounded PCM output | yes |
 
 ## Intermediate representation
 

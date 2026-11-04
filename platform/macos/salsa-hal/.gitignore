@@ -1,0 +1,16 @@
+# Build bundles and probe binaries (build/, build-pcm-test/, ...)
+/build*/
+
+# Generated carrier fixtures
+/fixtures/
+
+# Local test output (captures, logs, JSON/CSV reports)
+/results/
+
+# Native debug symbols and driver bundles outside the build directories
+*.dSYM/
+*.driver/
+
+# Python caches
+__pycache__/
+*.pyc

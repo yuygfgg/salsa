@@ -9,6 +9,7 @@ members = [
     "crates/libs/decoder/truehd/truehd-atmos",
     "crates/libs/gst/objectaudio-meta",
     "crates/libs/gst/objectaudio-decode",
+    "crates/libs/io/iec61937",
     "crates/libs/io/objectaudio-damf",
     "crates/libs/render/objectaudio-render",
     "crates/libs/render/hrtf",
@@ -20,6 +21,7 @@ members = [
     "crates/libs/encoder/atmos-cluster",
     "crates/apps/salsa-eac3joc-encode",
     "crates/apps/salsa-cluster",
+    "crates/apps/salsa-audiod",
 ]
 
 [workspace.package]
@@ -36,6 +38,7 @@ atmos-cluster = { path = "crates/libs/encoder/atmos-cluster" }
 objectaudio-oamd = { path = "crates/libs/audio/objectaudio-oamd" }
 objectaudio-meta = { path = "crates/libs/gst/objectaudio-meta" }
 objectaudio-decode = { path = "crates/libs/gst/objectaudio-decode" }
+iec61937 = { path = "crates/libs/io/iec61937" }
 objectaudio-damf = { path = "crates/libs/io/objectaudio-damf" }
 objectaudio-render = { path = "crates/libs/render/objectaudio-render" }
 objectaudio-hrtf = { path = "crates/libs/render/hrtf" }
@@ -61,3 +64,4 @@ ffmpeg-next = { version = "9", default-features = false, features = ["codec", "f
 gstreamer = "0.24"
 gstreamer-base = "0.24"
 gstreamer-audio = { version = "0.24", features = ["v1_18"] }
+gstreamer-app = "0.24"

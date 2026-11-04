@@ -371,6 +371,144 @@ VAD uses the embedded Silero V6 model through `tract-onnx`; the master is
 resampled to 16 kHz internally, so any DAMF sample rate works. It adds one
 inference per source per frame, so it is opt-in.
 
+### Virtual IEC 61937 audio device (macOS)
+
+This lets an unmodified mpv play E-AC-3 JOC or TrueHD Atmos through Salsa. The
+HAL driver and the Salsa service are installed separately. Install one codec
+mode at a time.
+
+Requirements: macOS 12 or newer, Xcode command-line tools, Rust 1.91 or newer,
+GStreamer and FFmpeg (for example from Homebrew), and mpv 0.41 or newer.
+
+#### 1. Build
+
+```sh
+cargo build --release -p salsa-audiod
+```
+
+Build the driver for the codec you will play:
+
+```sh
+# E-AC-3
+MODE=eac3 ./platform/macos/salsa-hal/build.sh
+
+# or TrueHD
+MODE=truehd ./platform/macos/salsa-hal/build.sh
+```
+
+#### 2. Install the virtual audio device
+
+E-AC-3:
+
+```sh
+sudo ./platform/macos/salsa-hal/install.sh \
+  platform/macos/salsa-hal/build-eac3/SalsaHAL.driver
+```
+
+TrueHD:
+
+```sh
+sudo ./platform/macos/salsa-hal/install.sh \
+  platform/macos/salsa-hal/build-truehd/SalsaHAL.driver
+```
+
+#### 3. Install the Salsa service
+
+```sh
+./platform/macos/salsa-audiod/install.sh
+```
+
+#### 4. Choose where sound comes out
+
+```sh
+salsa-audiod configure
+```
+
+The command lists your physical outputs and prompts for the output device,
+render mode (speaker or binaural), and the speaker layout or binaural model
+path. Choose `0` to follow the macOS system output; then you can switch outputs
+in System Settings and start playback normally. This chooses where Salsa sends
+audio; it does not change the macOS system output.
+
+To follow the macOS system output:
+
+```sh
+salsa-audiod configure --device system --layout 7.1.4
+```
+
+For a fixed speaker layout without prompts:
+
+```sh
+salsa-audiod configure --device "MacBook Pro Speakers" --layout 7.1.4
+```
+
+For binaural output without prompts:
+
+```sh
+salsa-audiod configure \
+  --device "Airpods" \
+  --render binaural \
+  --binaural-model /path/to/model.personalized_headphone
+```
+
+#### 5. Start the service
+
+```sh
+launchctl bootstrap gui/$(id -u) \
+  "$HOME/Library/LaunchAgents/dev.salsa.audio.audiod.plist"
+```
+
+The service starts at login and is restarted automatically if it exits with an
+error. After changing settings later, apply them with:
+
+```sh
+salsa-audiod configure --restart
+```
+
+#### 6. Play with mpv
+
+E-AC-3:
+
+```sh
+mpv --ao=coreaudio_exclusive \
+    --audio-device=coreaudio_exclusive/salsa-atmos-eac3 \
+    --audio-spdif=eac3 \
+    movie.mkv
+```
+
+TrueHD:
+
+```sh
+mpv --ao=coreaudio_exclusive \
+    --audio-device=coreaudio_exclusive/salsa-atmos-truehd \
+    --audio-spdif=truehd \
+    movie.mkv
+```
+
+#### Change settings, stop, or uninstall
+
+Change the output or renderer and apply it:
+
+```sh
+salsa-audiod configure --restart
+```
+
+Stop the service:
+
+```sh
+launchctl bootout gui/$(id -u)/dev.salsa.audio.audiod
+```
+
+Uninstall:
+
+```sh
+./platform/macos/salsa-audiod/uninstall.sh
+sudo ./platform/macos/salsa-hal/uninstall.sh
+```
+
+To switch between E-AC-3 and TrueHD, uninstall the current driver, build and
+install the other variant, then use the matching mpv command above.
+
 ## Salsa Studio (GUI preview player)
 
 `crates/apps/salsa-gui/` is a small eframe/egui preview player built on the Salsa

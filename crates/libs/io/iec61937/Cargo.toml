@@ -1,0 +1,8 @@
+[package]
+name = "iec61937"
+description = "IEC 61937 carrier framing and Dolby E-AC-3 / TrueHD MAT extraction for salsa"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
