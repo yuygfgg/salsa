@@ -371,14 +371,14 @@ VAD uses the embedded Silero V6 model through `tract-onnx`; the master is
 resampled to 16 kHz internally, so any DAMF sample rate works. It adds one
 inference per source per frame, so it is opt-in.
 
-### Virtual IEC 61937 audio device (macOS)
+### Virtual IEC 61937 audio device (macOS, experimental)
 
 This lets an unmodified mpv play E-AC-3 JOC or TrueHD Atmos through Salsa. The
 HAL driver and the Salsa service are installed separately. Install one codec
 mode at a time.
 
 Requirements: macOS 12 or newer, Xcode command-line tools, Rust 1.91 or newer,
-GStreamer and FFmpeg (for example from Homebrew), and mpv 0.41 or newer.
+GStreamer and FFmpeg, and mpv 0.41 or newer.
 
 #### 1. Build
 

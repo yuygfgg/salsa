@@ -1,7 +1,7 @@
 //! Opt-in TrueHD Atmos pipeline checks.
 //!
-//! Set `SALSA_TEST_TRUEHD` to a `.mlp`/`.thd` file. The tests are skipped when
-//! the variable is unset so the default `cargo test` stays hermetic.
+//! Set `SALSA_TEST_TRUEHD` to a `.mlp`/`.thd` file. The real-stream tests are
+//! skipped when the variable is unset so the default `cargo test` stays hermetic.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -143,10 +143,14 @@ fn object_meta_reaches_the_sink() {
                 counters.0.fetch_add(1, Ordering::Relaxed);
                 if let Some(snapshot) = objectaudio_meta::get_spatial(buffer) {
                     counters.1.fetch_add(1, Ordering::Relaxed);
-                    if matches!(
-                        snapshot.payload.snapshot,
-                        objectaudio_ir::Snapshot::Target(_)
-                    ) {
+                    // Reblocked metadata carries the evaluated state at the
+                    // buffer start and keeps ramps in the transition events.
+                    if snapshot
+                        .payload
+                        .events
+                        .iter()
+                        .any(|event| event.transition.samples() > 0)
+                    {
                         counters.2.fetch_add(1, Ordering::Relaxed);
                     }
                 }
@@ -162,13 +166,54 @@ fn object_meta_reaches_the_sink() {
     assert!(metas.load(Ordering::Relaxed) > 0, "no OAMD metadata");
     assert!(
         ramps.load(Ordering::Relaxed) > 0,
-        "OAMD snapshot ramp was not carried into SpatialPayload"
+        "no OAMD transition events reached the sink"
     );
     assert_eq!(
         bad.load(Ordering::Relaxed),
         0,
         "every buffer must be a whole renderer block"
     );
+}
+
+#[test]
+fn reblocked_metadata_preserves_target_ramps() {
+    use objectaudio_ir::{ObjectState, SceneTimeline, SpatialPayload};
+
+    init();
+    let mut origin = ObjectState::new(1, [-1.0, 0.0, 0.0]);
+    origin.gain = 0.25;
+    let initial = SpatialPayload::new(48_000, vec![origin], vec![]);
+    let target = SpatialPayload::new(48_000, vec![ObjectState::new(1, [1.0, 0.0, 0.0])], vec![])
+        .with_snapshot_offset(64)
+        .with_snapshot_ramp(2432);
+    let mut scene = SceneTimeline::from_payload(&initial, 0).unwrap();
+    scene.submit(&target, 0).unwrap();
+
+    // Include the decoder's 1216-sample block and boundaries inside the ramp.
+    // Each buffer must describe the same authored trajectory independently.
+    for block in [32, 1216, 1536] {
+        for start in (0..3072).step_by(block) {
+            let frames = block.min(3072 - start);
+            let payload = scene.payload(start as i64, frames);
+            let mut buffer = gst::Buffer::with_size(frames * 2 * 4).unwrap();
+            objectaudio_meta::add_spatial(buffer.get_mut().unwrap(), &payload, 2 * 4).unwrap();
+            let snapshot = objectaudio_meta::get_spatial(&buffer).expect("spatial metadata");
+            let replay = SceneTimeline::from_payload(&snapshot.payload, start as i64).unwrap();
+
+            for sample in start..start + frames {
+                let amount = (sample as f32 - 64.0).clamp(0.0, 2432.0) / 2432.0;
+                let state = replay.state_at(0, sample as i64);
+                assert!(
+                    (state.position[0] - (-1.0 + 2.0 * amount)).abs() < 1e-6,
+                    "position changed at sample {sample} with block size {block}"
+                );
+                assert!(
+                    (state.gain - (0.25 + 0.75 * amount)).abs() < 1e-6,
+                    "gain changed at sample {sample} with block size {block}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

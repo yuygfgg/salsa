@@ -19,7 +19,7 @@ use serde::Serialize;
 use crate::carrier::{CarrierChunk, CarrierInput};
 use crate::clock::{CarrierClock, host_ticks_to_ns};
 use crate::ledger::DelayLedger;
-use crate::output::{self, OutputConfig, OutputSink, PcmChunk, RenderedPcm};
+use crate::output::{self, OutputConfig, OutputSink, PcmChunk, PcmSession, RenderedPcm};
 use crate::pipeline::{
     self, Codec, DecodeRenderPipeline, DirectPipeline, PipelineConfig, RenderMode,
 };
@@ -50,7 +50,7 @@ pub struct ServiceConfig {
     pub idle_timeout: Duration,
     /// Live output stall deadline before a deadline failure is counted.
     pub deadline_timeout: Duration,
-    /// Live output stall limit before the session is stopped explicitly.
+    /// Live output stall threshold for a recovery warning.
     pub hard_stall_timeout: Duration,
     /// Optional stop flag (SIGINT or tests).
     pub stop: Arc<AtomicBool>,
@@ -155,6 +155,12 @@ pub struct LifecycleReport {
     pub deadline_failures: u64,
     /// Longest observed output stall.
     pub max_output_stall_ms: f64,
+    /// Late buffers rebased instead of aborting playback.
+    pub scheduling_reanchors: u64,
+    /// Worst scheduling lateness observed.
+    pub max_scheduling_lateness_ms: f64,
+    /// Physical output stalls recovered by rebuilding the sink.
+    pub output_recoveries: u64,
     /// Carrier frames the HAL dropped because the ring was full.
     pub carrier_dropped_frames: u64,
     /// Ring slots the reader skipped after a producer reset/overflow.
@@ -375,6 +381,7 @@ fn spawn_stall_monitor(
         let interval = Duration::from_millis(100);
         let resume_after_idle = deadline.min(interval);
         let mut watch = StallWatch::new(Instant::now());
+        let mut warned = false;
         while !stop.load(Ordering::Relaxed) && !monitor_stop.load(Ordering::Relaxed) {
             thread::sleep(interval);
             let input = progress.input.load(Ordering::Relaxed);
@@ -391,15 +398,18 @@ fn spawn_stall_monitor(
                 let stall_ns = stall.as_nanos().min(u128::from(u64::MAX)) as u64;
                 progress.max_stall_ns.fetch_max(stall_ns, Ordering::Relaxed);
             }
-            if stall > hard {
-                progress.fail(
-                    anyhow::anyhow!(
-                        "physical output stalled for {:.1} s while carrier data was still arriving",
-                        stall.as_secs_f64()
-                    ),
-                    &stop,
+            if stall > hard && !warned {
+                // The output writer owns recovery: it bounds each appsrc push
+                // and rebuilds the sink on a stall. Do not kill the whole
+                // service (and its carrier ring position) here.
+                eprintln!(
+                    "salsa-audiod: physical output stalled for {:.1} s; waiting for recovery",
+                    stall.as_secs_f64()
                 );
-                break;
+                warned = true;
+            }
+            if stall <= deadline {
+                warned = false;
             }
         }
     })
@@ -424,22 +434,20 @@ impl PullSession {
     }
 }
 
-fn start_session(
-    config: &PipelineConfig,
+fn start_puller(
+    pipeline: &DecodeRenderPipeline,
     sender: mpsc::SyncSender<PcmChunk>,
     progress: Arc<Progress>,
     service: &ServiceConfig,
-    clock: Option<CarrierClock>,
-) -> Result<(DecodeRenderPipeline, PullSession)> {
-    let pipeline = DecodeRenderPipeline::with_stop(config, service.stop.clone())?;
-    pipeline.play()?;
+    session: PcmSession,
+) -> PullSession {
     let stop = Arc::new(AtomicBool::new(false));
     let appsink = pipeline.appsink().clone();
     let gst_pipeline = pipeline.pipeline().clone();
     let session_stop = stop.clone();
     let service_stop = service.stop.clone();
     let idle_timeout = service.idle_timeout;
-    let is_live = config.live;
+    let is_live = service.live();
     let handle = thread::spawn(move || {
         let result = output::pull_samples(
             &appsink,
@@ -448,7 +456,7 @@ fn start_session(
             is_live,
             idle_timeout,
             None,
-            clock,
+            session,
         );
         let result = progress.complete(result, &service_stop);
         if result.is_none() {
@@ -457,13 +465,10 @@ fn start_session(
         }
         result
     });
-    Ok((
-        pipeline,
-        PullSession {
-            stop,
-            handle: Some(handle),
-        },
-    ))
+    PullSession {
+        stop,
+        handle: Some(handle),
+    }
 }
 
 fn unit_codec(unit: &AccessUnit) -> Codec {
@@ -554,27 +559,45 @@ pub fn render(config: ServiceConfig) -> Result<RenderOutcome> {
         &config.output,
         config.stop.clone(),
         ledger.scheduling_allowance_ns,
+        config.deadline_timeout,
     )?;
     let (sender, receiver) = mpsc::sync_channel::<PcmChunk>(8);
     let progress = Arc::new(Progress::default());
     progress
         .input
         .store(sessions.input_chunks, Ordering::Relaxed);
-    let (mut pipeline, mut puller) = start_session(
-        &pipeline_config,
+    let session_epoch = Arc::new(AtomicU64::new(0));
+    let mut pipeline = DecodeRenderPipeline::with_stop(&pipeline_config, config.stop.clone())?;
+    pipeline.play()?;
+    let mut puller = start_puller(
+        &pipeline,
         sender.clone(),
         progress.clone(),
         &config,
-        timeline.clock,
-    )?;
+        PcmSession {
+            epoch: 0,
+            clock: timeline.clock,
+        },
+    );
 
     let writer_progress = progress.clone();
     let writer_stop = config.stop.clone();
+    let writer_epoch = session_epoch.clone();
     let writer = thread::spawn(move || {
         let result = (|| -> Result<output::OutputStats> {
+            let mut output_epoch = writer_epoch.load(Ordering::Relaxed);
             while !writer_stop.load(Ordering::Relaxed) {
                 match receiver.recv_timeout(Duration::from_millis(50)) {
                     Ok(chunk) => {
+                        let target = writer_epoch.load(Ordering::Relaxed);
+                        if target != output_epoch {
+                            output_epoch = target;
+                            sink.flush()?;
+                        }
+                        if chunk.epoch != target {
+                            // Pre-reset PCM still queued behind the reset.
+                            continue;
+                        }
                         sink.write(chunk)?;
                         writer_progress.output.fetch_add(1, Ordering::Relaxed);
                     }
@@ -606,12 +629,13 @@ pub fn render(config: ServiceConfig) -> Result<RenderOutcome> {
 
     let result = (|| -> Result<()> {
         for unit in units.drain(..) {
+            let discont = !pushed_any;
             let start = push_unit(
                 &mut pipeline,
                 &mut timeline,
                 config.sample_rate,
                 &unit,
-                !pushed_any,
+                discont,
             )?;
             source.observe(codec, start);
             pushed_any = true;
@@ -627,18 +651,44 @@ pub fn render(config: ServiceConfig) -> Result<RenderOutcome> {
             let (new_units, reset) =
                 feed_chunk(&mut depacketizer, &mut timeline, &mut sessions, chunk)?;
             if reset.is_reset() {
-                // Tear down the old decode/render pipeline so queued buffers
-                // from the previous session cannot reach the output.
+                // Retire the old consumer before flushing. Any sample it has
+                // already pulled keeps its immutable session identity, and it
+                // cannot consume PCM from the next session.
                 puller.stop();
                 puller.join()?;
-                pipeline.stop();
-                (pipeline, puller) = start_session(
-                    &pipeline_config,
+                let rendered_before = progress.output.load(Ordering::Relaxed) > 0;
+                let seeked = rendered_before
+                    && match pipeline.seek_to_start() {
+                        Ok(()) => true,
+                        Err(error) => {
+                            eprintln!(
+                                "salsa-audiod: decode/render seek failed ({error:#}); rebuilding"
+                            );
+                            false
+                        }
+                    };
+                if !seeked {
+                    // A seek during pipeline startup has no negotiated output
+                    // to flush and a native seek can race caps negotiation.
+                    // Rebuild only in this rare case; normal seeks stay native.
+                    pipeline.stop();
+                    pipeline =
+                        DecodeRenderPipeline::with_stop(&pipeline_config, config.stop.clone())?;
+                    pipeline.play()?;
+                }
+                let epoch = session_epoch
+                    .fetch_add(1, Ordering::Relaxed)
+                    .wrapping_add(1);
+                puller = start_puller(
+                    &pipeline,
                     sender.clone(),
                     progress.clone(),
                     &config,
-                    timeline.clock,
-                )?;
+                    PcmSession {
+                        epoch,
+                        clock: timeline.clock,
+                    },
+                );
                 pushed_any = false;
             }
             let mut discont = !pushed_any || reset.is_reset();
@@ -768,6 +818,9 @@ pub fn render(config: ServiceConfig) -> Result<RenderOutcome> {
                 output_discontinuities: stats.discontinuities,
                 deadline_failures: progress.deadline_failures.load(Ordering::Relaxed),
                 max_output_stall_ms: progress.max_stall_ns.load(Ordering::Relaxed) as f64 / 1e6,
+                scheduling_reanchors: stats.late_buffers,
+                max_scheduling_lateness_ms: stats.max_lateness_ns as f64 / 1e6,
+                output_recoveries: stats.recoveries,
                 carrier_dropped_frames,
                 skipped_slots,
             },
@@ -962,7 +1015,7 @@ pub fn render_direct(
         false,
         idle_timeout,
         None,
-        None,
+        PcmSession::default(),
     );
     source.stop();
     let stats = writer

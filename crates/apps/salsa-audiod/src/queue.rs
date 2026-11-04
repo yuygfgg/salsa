@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use gst::prelude::*;
@@ -59,6 +59,18 @@ impl BoundedAppSrc {
     }
 
     pub(crate) fn push(&mut self, buffer: gst::Buffer) -> Result<()> {
+        self.push_with_timeout(buffer, None)?;
+        Ok(())
+    }
+
+    /// Push without blocking forever. Returns `false` when the queue stayed
+    /// full for `timeout`, which the physical output uses to rebuild a stalled
+    /// device instead of exiting the service.
+    pub(crate) fn push_with_timeout(
+        &mut self,
+        buffer: gst::Buffer,
+        timeout: Option<Duration>,
+    ) -> Result<bool> {
         let bytes = buffer.size() as u64;
         if bytes > self.max_bytes {
             bail!(
@@ -66,14 +78,17 @@ impl BoundedAppSrc {
                 self.max_bytes
             );
         }
+        let deadline = timeout.and_then(|timeout| Instant::now().checked_add(timeout));
         loop {
             self.check()?;
             if self.source.current_level_bytes() <= self.max_bytes - bytes {
-                return self
-                    .source
+                self.source
                     .push_buffer(buffer)
-                    .map(|_| ())
-                    .context("appsrc rejected audio");
+                    .context("appsrc rejected audio")?;
+                return Ok(true);
+            }
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                return Ok(false);
             }
             thread::sleep(Duration::from_millis(5));
         }
@@ -116,6 +131,30 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("cancelled"));
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn full_queue_times_out_without_enqueueing() {
+        gst::init().unwrap();
+        let source = AppSrc::builder().build();
+        let pipeline = gst::Pipeline::new();
+        pipeline.add(&source).unwrap();
+        let mut queue = BoundedAppSrc::new(source.clone(), &pipeline, Arc::default(), 4096);
+        queue
+            .push_with_timeout(
+                gst::Buffer::with_size(4096).unwrap(),
+                Some(Duration::from_millis(10)),
+            )
+            .unwrap();
+        assert!(
+            !queue
+                .push_with_timeout(
+                    gst::Buffer::with_size(4096).unwrap(),
+                    Some(Duration::from_millis(20)),
+                )
+                .unwrap()
+        );
+        assert_eq!(source.current_level_bytes(), 4096);
     }
 
     #[test]

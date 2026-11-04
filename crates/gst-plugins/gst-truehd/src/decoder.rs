@@ -195,19 +195,18 @@ impl TrueHdAtmosDec {
     fn ensure_output_caps(&self, rate: i32, channels: i32) -> Result<(), gst::FlowError> {
         {
             let state = self.state.lock().unwrap();
+            if state.caps_set && state.rate == rate && state.channels == channels {
+                return Ok(());
+            }
             if state.caps_set {
-                if state.rate == rate && state.channels == channels {
-                    return Ok(());
-                }
-                gst::error!(
+                // A new HAL session may change the presentation/object count.
+                // Renegotiate the decoder output instead of terminating.
+                gst::debug!(
                     gst::CAT_RUST,
-                    "salsatruehdatmosdec: output format changed from {} Hz / {} ch to {} Hz / {} ch",
+                    "salsatruehdatmosdec: renegotiating {} Hz / {} ch -> {rate} Hz / {channels} ch",
                     state.rate,
-                    state.channels,
-                    rate,
-                    channels
+                    state.channels
                 );
-                return Err(gst::FlowError::NotNegotiated);
             }
         }
 
@@ -465,6 +464,20 @@ impl AudioDecoderImpl for TrueHdAtmosDec {
             self.drain()?;
             return Ok(gst::FlowSuccess::Ok);
         };
+        if buffer.flags().contains(gst::BufferFlags::DISCONT) {
+            // Reused after a live seek/session reset: drop the old decoder and
+            // scene state, but keep the negotiated output caps.
+            let mut state = self.state.lock().unwrap();
+            state.pending.clear();
+            state.scene = None;
+            state.received = 0;
+            state.emitted = 0;
+            if let Some(worker) = &state.worker
+                && let Err(error) = worker.reset()
+            {
+                gst::warning!(gst::CAT_RUST, "salsatruehdatmosdec: reset failed: {error}");
+            }
+        }
         let data = {
             let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
             map.to_vec()

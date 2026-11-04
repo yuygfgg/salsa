@@ -63,6 +63,10 @@ fn truehd_speaker_matches_direct_rendering() {
 }
 
 #[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "binaural rendering is extremely slow in debug; run this test with --release"
+)]
 fn eac3_binaural_matches_direct_rendering() {
     let Some(root) = fixtures() else {
         eprintln!("SALSA_TEST_SPDIF_FIXTURES is unset; skipping the E-AC-3 binaural check");
@@ -88,6 +92,10 @@ fn eac3_binaural_matches_direct_rendering() {
 }
 
 #[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "binaural rendering is extremely slow in debug; run this test with --release"
+)]
 fn truehd_binaural_matches_direct_rendering() {
     let Some(root) = fixtures() else {
         eprintln!("SALSA_TEST_SPDIF_FIXTURES is unset; skipping the TrueHD binaural check");

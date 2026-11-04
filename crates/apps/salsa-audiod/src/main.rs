@@ -88,7 +88,8 @@ struct RenderArgs {
     /// Live output stall deadline before a deadline failure is counted.
     #[arg(long, default_value_t = 2000.0)]
     deadline_timeout_ms: f64,
-    /// Live output stall limit before the session is stopped explicitly.
+    /// Live output stall warning threshold; the output sink recovers instead
+    /// of stopping the session.
     #[arg(long, default_value_t = 10000.0)]
     hard_stall_timeout_ms: f64,
 }

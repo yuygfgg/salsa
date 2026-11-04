@@ -8,7 +8,10 @@
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 use crate::clock::CarrierClock;
@@ -52,11 +55,30 @@ pub struct PcmChunk {
     pub duration: Option<gst::ClockTime>,
     pub data: Vec<u8>,
     pub discont: bool,
+    /// Service session epoch. Chunks from an older epoch are discarded.
+    pub epoch: u64,
 }
 
 impl PcmChunk {
     pub fn frames(&self) -> u64 {
         (self.data.len() / self.info.bytes_per_frame()) as u64
+    }
+}
+
+/// Immutable identity for one pull thread. Stop and join that thread before
+/// flushing the pipeline and starting a puller for the next session.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PcmSession {
+    pub epoch: u64,
+    pub clock: Option<CarrierClock>,
+}
+
+impl PcmSession {
+    fn chunk(self, sample: &gst::Sample) -> Result<PcmChunk> {
+        let mut chunk = sample_to_chunk(sample)?;
+        chunk.epoch = self.epoch;
+        chunk.clock = self.clock;
+        Ok(chunk)
     }
 }
 
@@ -81,6 +103,9 @@ pub struct OutputSink {
     caps: Option<gst::Caps>,
     frames: u64,
     discontinuity_count: u64,
+    recoveries: u64,
+    late_buffers: u64,
+    max_lateness_ns: u64,
     memory: Option<RenderedPcm>,
 }
 
@@ -94,13 +119,14 @@ enum Inner {
 
 impl OutputSink {
     pub fn new(config: &OutputConfig) -> Result<Self> {
-        Self::with_timing(config, Arc::default(), 50_000_000)
+        Self::with_timing(config, Arc::default(), 50_000_000, Duration::from_secs(2))
     }
 
     pub(crate) fn with_timing(
         config: &OutputConfig,
         stop: Arc<AtomicBool>,
         allowance_ns: u64,
+        push_timeout: Duration,
     ) -> Result<Self> {
         let inner = match config {
             OutputConfig::Wav(path) => Inner::Wav(WavWriter::create(path)?),
@@ -109,11 +135,16 @@ impl OutputSink {
             OutputConfig::CoreAudio { device } => {
                 #[cfg(target_os = "macos")]
                 {
-                    Inner::CoreAudio(CoreAudioWriter::new(device.clone(), stop, allowance_ns)?)
+                    Inner::CoreAudio(CoreAudioWriter::new(
+                        device.clone(),
+                        stop,
+                        allowance_ns,
+                        push_timeout,
+                    )?)
                 }
                 #[cfg(not(target_os = "macos"))]
                 {
-                    let _ = (device, stop, allowance_ns);
+                    let _ = (device, stop, allowance_ns, push_timeout);
                     bail!("the CoreAudio output is only available on macOS");
                 }
             }
@@ -124,6 +155,9 @@ impl OutputSink {
             caps: None,
             frames: 0,
             discontinuity_count: 0,
+            recoveries: 0,
+            late_buffers: 0,
+            max_lateness_ns: 0,
             memory: matches!(config, OutputConfig::Memory).then(RenderedPcm::default),
         })
     }
@@ -135,15 +169,9 @@ impl OutputSink {
         }
         if chunk.discont {
             self.discontinuity_count += 1;
-            #[cfg(target_os = "macos")]
-            if !format_changed && let Inner::CoreAudio(writer) = &mut self.inner {
-                // A new playback session may follow a system-output change or
-                // a removed device. Reopen the physical output so the service
-                // follows the current default and does not keep a dead sink.
-                writer.restart(&chunk.caps)?;
-            }
         }
         let frames = chunk.frames();
+        let mut written = true;
         match &mut self.inner {
             Inner::Wav(writer) => writer.write(&chunk.data)?,
             Inner::Null => {}
@@ -161,9 +189,37 @@ impl OutputSink {
                     .extend(samples.iter().map(|bytes| f32::from_le_bytes(*bytes)));
             }
             #[cfg(target_os = "macos")]
-            Inner::CoreAudio(writer) => writer.write(chunk)?,
+            Inner::CoreAudio(writer) => {
+                // A full output queue means the physical device stopped
+                // consuming. Rebuild the sink and drop the late buffer instead
+                // of exiting the service.
+                written = !writer.write(chunk)?;
+                if !written {
+                    self.recoveries += 1;
+                }
+            }
         }
-        self.frames += frames;
+        if written {
+            self.frames += frames;
+        }
+        Ok(())
+    }
+
+    /// Discard queued physical PCM and restart the output clock.
+    ///
+    /// The service calls this when the carrier session changes so pre-seek
+    /// audio cannot leak into the new timeline.
+    pub fn flush(&mut self) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        if let Inner::CoreAudio(writer) = &mut self.inner
+            && writer.configured
+        {
+            let caps = self
+                .caps
+                .clone()
+                .context("physical output has no negotiated caps")?;
+            writer.restart(&caps)?;
+        }
         Ok(())
     }
 
@@ -197,10 +253,19 @@ impl OutputSink {
             #[cfg(target_os = "macos")]
             Inner::CoreAudio(writer) => writer.finish()?,
         }
+        #[cfg(target_os = "macos")]
+        if let Inner::CoreAudio(writer) = &self.inner {
+            let (late_buffers, max_lateness_ns) = writer.clock_stats();
+            self.late_buffers = late_buffers;
+            self.max_lateness_ns = max_lateness_ns;
+        }
         Ok(OutputStats {
             frames: self.frames,
             info: self.info,
             discontinuities: self.discontinuity_count,
+            recoveries: self.recoveries,
+            late_buffers: self.late_buffers,
+            max_lateness_ns: self.max_lateness_ns,
             memory: self.memory,
         })
     }
@@ -211,6 +276,12 @@ pub struct OutputStats {
     pub info: Option<AudioInfo>,
     /// Number of rendered chunks that followed a session reset/discontinuity.
     pub discontinuities: u64,
+    /// Physical output stalls recovered by rebuilding the sink.
+    pub recoveries: u64,
+    /// Late buffers that were rebased instead of aborting playback.
+    pub late_buffers: u64,
+    /// Worst lateness observed by the output scheduler.
+    pub max_lateness_ns: u64,
     pub memory: Option<RenderedPcm>,
 }
 
@@ -285,6 +356,9 @@ struct CoreAudioWriter {
     clock: PlaybackClock,
     stop: Arc<AtomicBool>,
     allowance_ns: u64,
+    push_timeout: Duration,
+    accumulated_late_buffers: u64,
+    accumulated_max_lateness_ns: u64,
     configured: bool,
 }
 
@@ -339,7 +413,12 @@ impl CoreAudioWriter {
         Ok((pipeline, appsrc, filter))
     }
 
-    fn new(device: Option<String>, stop: Arc<AtomicBool>, allowance_ns: u64) -> Result<Self> {
+    fn new(
+        device: Option<String>,
+        stop: Arc<AtomicBool>,
+        allowance_ns: u64,
+        push_timeout: Duration,
+    ) -> Result<Self> {
         let (pipeline, appsrc, capsfilter) = Self::build(&device, stop.clone())?;
         Ok(Self {
             device,
@@ -349,11 +428,15 @@ impl CoreAudioWriter {
             clock: PlaybackClock::default(),
             stop,
             allowance_ns,
+            push_timeout,
+            accumulated_late_buffers: 0,
+            accumulated_max_lateness_ns: 0,
             configured: false,
         })
     }
 
     fn restart(&mut self, caps: &gst::Caps) -> Result<()> {
+        self.record_clock_stats();
         let _ = self.pipeline.set_state(gst::State::Null);
         let (pipeline, appsrc, capsfilter) = Self::build(&self.device, self.stop.clone())?;
         self.pipeline = pipeline;
@@ -374,11 +457,21 @@ impl CoreAudioWriter {
         Ok(())
     }
 
-    fn write(&mut self, chunk: PcmChunk) -> Result<()> {
+    fn write(&mut self, chunk: PcmChunk) -> Result<bool> {
         if !self.configured {
-            return Ok(());
+            return Ok(false);
         }
-        self.appsrc.check()?;
+        let caps = chunk.caps.clone();
+        if let Err(error) = self.appsrc.check() {
+            if self.stop.load(Ordering::Relaxed) {
+                return Err(error);
+            }
+            eprintln!("salsa-audiod: physical output failed ({error:#}); reinitialising the sink");
+            return match self.restart(&caps) {
+                Ok(()) => Ok(true),
+                Err(_) => Err(error),
+            };
+        }
         // Sample both clocks together. This also follows rate corrections made
         // by the device clock rather than assuming it runs at the host rate.
         let before = host_now_ns();
@@ -405,9 +498,43 @@ impl CoreAudioWriter {
                 buffer.set_flags(gst::BufferFlags::DISCONT);
             }
         }
-        self.appsrc
-            .push(buffer)
-            .context("CoreAudio output rejected PCM")
+        match self
+            .appsrc
+            .push_with_timeout(buffer, Some(self.push_timeout))
+        {
+            Ok(true) => Ok(false),
+            Ok(false) => {
+                eprintln!("salsa-audiod: physical output queue stalled; reinitialising the sink");
+                self.restart(&caps)?;
+                Ok(true)
+            }
+            Err(error) => {
+                if self.stop.load(Ordering::Relaxed) {
+                    return Err(error);
+                }
+                eprintln!(
+                    "salsa-audiod: physical output failed ({error:#}); reinitialising the sink"
+                );
+                match self.restart(&caps) {
+                    Ok(()) => Ok(true),
+                    Err(_) => Err(error),
+                }
+            }
+        }
+    }
+
+    fn record_clock_stats(&mut self) {
+        let (late, max) = self.clock.stats();
+        self.accumulated_late_buffers = self.accumulated_late_buffers.saturating_add(late);
+        self.accumulated_max_lateness_ns = self.accumulated_max_lateness_ns.max(max);
+    }
+
+    fn clock_stats(&self) -> (u64, u64) {
+        let (late, max) = self.clock.stats();
+        (
+            self.accumulated_late_buffers.saturating_add(late),
+            self.accumulated_max_lateness_ns.max(max),
+        )
     }
 
     fn finish(&mut self) -> Result<()> {
@@ -449,16 +576,15 @@ impl Drop for CoreAudioWriter {
 
 /// Pull rendered samples from an `appsink` until EOS/error and forward them to
 /// the writer thread through a bounded channel.
-pub fn pull_samples(
+pub(crate) fn pull_samples(
     appsink: &gstreamer_app::AppSink,
     sender: std::sync::mpsc::SyncSender<PcmChunk>,
     stopped: impl Fn() -> bool,
     is_live: bool,
     idle_timeout: Duration,
     progress: Option<&std::sync::atomic::AtomicU64>,
-    clock: Option<CarrierClock>,
+    session: PcmSession,
 ) -> Result<u64> {
-    use std::sync::atomic::Ordering;
     use std::sync::mpsc::TrySendError;
     let mut last_sample = std::time::Instant::now();
     let mut frames = 0u64;
@@ -469,8 +595,7 @@ pub fn pull_samples(
         match appsink.try_pull_sample(gst::ClockTime::from_mseconds(100)) {
             Some(sample) => {
                 last_sample = std::time::Instant::now();
-                let mut chunk = sample_to_chunk(&sample)?;
-                chunk.clock = clock;
+                let chunk = session.chunk(&sample)?;
                 frames += chunk.frames();
                 if let Some(progress) = progress {
                     progress.fetch_add(1, Ordering::Relaxed);
@@ -532,12 +657,203 @@ pub fn sample_to_chunk(sample: &gst::Sample) -> Result<PcmChunk> {
         duration: buffer.duration(),
         data: map.as_slice().to_vec(),
         discont: buffer.flags().contains(gst::BufferFlags::DISCONT),
+        epoch: 0,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gstreamer_app::AppSink;
+    use std::sync::{atomic::AtomicU64, mpsc};
+
+    struct PcmPipeline {
+        pipeline: gst::Pipeline,
+        source: AppSrc,
+        sink: AppSink,
+    }
+
+    impl PcmPipeline {
+        fn new() -> Self {
+            gst::init().unwrap();
+            let pipeline = gst::Pipeline::new();
+            let caps: gst::Caps =
+                "audio/x-raw,format=F32LE,layout=interleaved,channels=2,rate=48000"
+                    .parse()
+                    .unwrap();
+            let source = AppSrc::builder()
+                .format(gst::Format::Time)
+                .stream_type(gstreamer_app::AppStreamType::Seekable)
+                .caps(&caps)
+                .build();
+            source.set_callbacks(
+                gstreamer_app::AppSrcCallbacks::builder()
+                    .seek_data(|_, _| true)
+                    .build(),
+            );
+            let sink = AppSink::builder().sync(false).max_buffers(8).build();
+            pipeline
+                .add_many([source.upcast_ref::<gst::Element>(), sink.upcast_ref()])
+                .unwrap();
+            source.link(&sink).unwrap();
+            pipeline.set_state(gst::State::Playing).unwrap();
+            Self {
+                pipeline,
+                source,
+                sink,
+            }
+        }
+
+        fn push(&self, value: f32) {
+            let mut buffer = gst::Buffer::from_slice(value.to_le_bytes().repeat(64));
+            let data = buffer.get_mut().unwrap();
+            data.set_pts(gst::ClockTime::ZERO);
+            data.set_flags(gst::BufferFlags::DISCONT);
+            self.source.push_buffer(buffer).unwrap();
+        }
+
+        fn seek(&self) {
+            self.pipeline
+                .seek_simple(
+                    gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE,
+                    gst::ClockTime::ZERO,
+                )
+                .unwrap();
+        }
+    }
+
+    impl Drop for PcmPipeline {
+        fn drop(&mut self) {
+            let _ = self.pipeline.set_state(gst::State::Null);
+        }
+    }
+
+    #[test]
+    fn pulled_sample_keeps_its_identity_across_consecutive_seeks() {
+        let pipeline = PcmPipeline::new();
+        let old_session = PcmSession {
+            epoch: 1,
+            clock: Some(CarrierClock {
+                position: gst::ClockTime::ZERO,
+                host_ns: 111,
+            }),
+        };
+        pipeline.push(0.25);
+        let old_sample = pipeline
+            .sink
+            .try_pull_sample(gst::ClockTime::from_seconds(2))
+            .unwrap();
+        let (resume, paused) = mpsc::channel();
+        let old_puller = std::thread::spawn(move || {
+            // Hold the old sample outside appsink until both seeks finish.
+            paused.recv_timeout(Duration::from_secs(2)).unwrap();
+            old_session.chunk(&old_sample).unwrap()
+        });
+        pipeline.seek();
+        pipeline.seek();
+        let new_session = PcmSession {
+            epoch: 3,
+            clock: Some(CarrierClock {
+                position: gst::ClockTime::ZERO,
+                host_ns: 333,
+            }),
+        };
+        pipeline.push(0.75);
+        let sample = pipeline
+            .sink
+            .try_pull_sample(gst::ClockTime::from_seconds(2))
+            .unwrap();
+        let current = new_session.chunk(&sample).unwrap();
+        resume.send(()).unwrap();
+        let old = old_puller.join().unwrap();
+
+        assert_eq!(old.epoch, 1);
+        assert_eq!(old.clock.unwrap().host_ns, 111);
+        assert_eq!(f32::from_le_bytes(old.data[..4].try_into().unwrap()), 0.25);
+        assert_eq!(current.epoch, 3);
+        assert_eq!(current.clock.unwrap().host_ns, 333);
+        assert_eq!(
+            f32::from_le_bytes(current.data[..4].try_into().unwrap()),
+            0.75
+        );
+    }
+
+    #[test]
+    fn puller_handoff_cancels_output_backpressure_and_reuses_the_pipeline() {
+        let pipeline = PcmPipeline::new();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let stop = Arc::new(AtomicBool::new(false));
+        let progress = Arc::new(AtomicU64::new(0));
+        let worker_stop = stop.clone();
+        let worker_progress = progress.clone();
+        let sink = pipeline.sink.clone();
+        let old_sender = sender.clone();
+        let (done, completed) = mpsc::channel();
+        let old_puller = std::thread::spawn(move || {
+            let result = pull_samples(
+                &sink,
+                old_sender,
+                || worker_stop.load(Ordering::Relaxed),
+                false,
+                Duration::from_secs(2),
+                Some(&worker_progress),
+                PcmSession {
+                    epoch: 1,
+                    clock: None,
+                },
+            );
+            done.send(result).unwrap();
+        });
+        pipeline.push(0.25);
+        pipeline.push(0.5);
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while progress.load(Ordering::Relaxed) < 2 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "puller did not fill the queue"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // The second chunk cannot enter the full writer queue. Stopping the
+        // puller must still complete before the native seek starts.
+        stop.store(true, Ordering::Relaxed);
+        completed
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        old_puller.join().unwrap();
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(2)).unwrap().epoch,
+            1
+        );
+        assert!(receiver.try_recv().is_err());
+
+        pipeline.seek();
+        let sink = pipeline.sink.clone();
+        let new_puller = std::thread::spawn(move || {
+            pull_samples(
+                &sink,
+                sender,
+                || false,
+                false,
+                Duration::from_secs(2),
+                None,
+                PcmSession {
+                    epoch: 2,
+                    clock: None,
+                },
+            )
+        });
+        pipeline.push(0.75);
+        pipeline.source.end_of_stream().unwrap();
+        let current = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(current.epoch, 2);
+        assert_eq!(
+            f32::from_le_bytes(current.data[..4].try_into().unwrap()),
+            0.75
+        );
+        new_puller.join().unwrap().unwrap();
+    }
 
     #[test]
     fn pcm_chunk_preserves_the_channel_layout_caps() {
@@ -605,6 +921,9 @@ mod coreaudio_tests {
                 clock: PlaybackClock::default(),
                 stop,
                 allowance_ns: 50_000_000,
+                push_timeout: Duration::from_secs(2),
+                accumulated_late_buffers: 0,
+                accumulated_max_lateness_ns: 0,
                 configured: false,
             };
             writer.configure(&caps).unwrap();

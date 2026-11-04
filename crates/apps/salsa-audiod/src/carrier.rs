@@ -15,6 +15,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
+use crate::clock::{host_now_ns, host_ticks_to_ns};
+
 pub const SLOT_COUNT: usize = 16;
 pub const SLOT_BYTES: usize = 64 * 1024;
 pub const SHM_MAGIC: u32 = 0x5341_4c53;
@@ -22,6 +24,11 @@ pub const SHM_VERSION: u32 = 1;
 
 pub const FLAG_DISCONTINUITY: u32 = 1 << 0;
 pub const FLAG_DROPPED: u32 = 1 << 1;
+
+/// Slots older than this are leftovers from a paused/stopped producer. Playing
+/// them would anchor the service clock in the past and trigger a deadline miss
+/// on the very first output buffer.
+const MAX_SLOT_AGE: Duration = Duration::from_secs(2);
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -184,6 +191,8 @@ pub struct SharedInput {
     shared: *mut Shared,
     stop: Arc<AtomicBool>,
     skipped: u64,
+    max_slot_age: Duration,
+    pending_discontinuity: bool,
 }
 
 // SAFETY: `SharedInput` owns the mapping and is used by exactly one thread.
@@ -250,6 +259,8 @@ impl SharedInput {
             shared,
             stop,
             skipped: 0,
+            max_slot_age: MAX_SLOT_AGE,
+            pending_discontinuity: false,
         })
     }
 
@@ -289,6 +300,12 @@ impl SharedInput {
                 control.tail.store(tail + 1, Ordering::Release);
                 continue;
             }
+            if self.slot_is_stale(header.host_time) {
+                self.skipped += 1;
+                self.pending_discontinuity = true;
+                control.tail.store(tail + 1, Ordering::Release);
+                continue;
+            }
             let payload_bytes = (header.payload_bytes as usize).min(SLOT_BYTES);
             let frame_bytes = header.bytes_per_frame as usize;
             let expected = (header.frames as usize)
@@ -303,15 +320,38 @@ impl SharedInput {
                 self.skipped += 1;
                 continue;
             }
+            let flags = if self.pending_discontinuity {
+                self.pending_discontinuity = false;
+                header.flags | FLAG_DISCONTINUITY
+            } else {
+                header.flags
+            };
             return Ok(Some(CarrierChunk {
                 bytes,
                 start_sample: Some(header.start_sample),
                 host_time: Some(header.host_time),
                 bytes_per_frame: Some(header.bytes_per_frame),
                 generation: header.generation,
-                flags: header.flags,
+                flags,
             }));
         }
+    }
+
+    fn slot_is_stale(&self, host_time: u64) -> bool {
+        if self.max_slot_age == Duration::MAX {
+            return false;
+        }
+        let now = host_now_ns();
+        if now == 0 {
+            return false;
+        }
+        if host_time == 0 {
+            return true;
+        }
+        let host = host_ticks_to_ns(host_time);
+        let age = now.saturating_sub(host);
+        let limit = self.max_slot_age.as_nanos().min(u128::from(u64::MAX)) as u64;
+        age > limit
     }
 
     pub fn skipped_slots(&self) -> u64 {
@@ -384,6 +424,8 @@ mod tests {
             shared: pointer.cast(),
             stop: Arc::default(),
             skipped: 0,
+            max_slot_age: Duration::MAX,
+            pending_discontinuity: false,
         }
     }
 
@@ -450,6 +492,51 @@ mod tests {
     fn shared_struct_matches_c_header_constants() {
         assert_eq!(std::mem::size_of::<SlotHeader>(), 48);
         assert_eq!(SHM_MAGIC, 0x5341_4c53);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn dropped_stale_slot_marks_the_next_chunk_as_discontinuous() {
+        use crate::clock::host_now_ticks;
+
+        let mut input = memory_input();
+        input.max_slot_age = MAX_SLOT_AGE;
+        unsafe {
+            let shared = &mut *input.shared;
+            shared.control.generation.store(3, Ordering::Release);
+            let stale = &mut shared.slots[0];
+            stale.header = SlotHeader {
+                generation: 3,
+                start_sample: 100,
+                host_time: 0,
+                frames: 1,
+                channels: 2,
+                bytes_per_frame: 4,
+                payload_bytes: 4,
+                flags: 0,
+                reserved: 0,
+            };
+            stale.payload[..4].copy_from_slice(&[0x11; 4]);
+            let valid = &mut shared.slots[1];
+            valid.header = SlotHeader {
+                generation: 3,
+                start_sample: 200,
+                host_time: host_now_ticks(),
+                frames: 1,
+                channels: 2,
+                bytes_per_frame: 4,
+                payload_bytes: 4,
+                flags: 0,
+                reserved: 0,
+            };
+            valid.payload[..4].copy_from_slice(&[0x22; 4]);
+            shared.control.head.store(2, Ordering::Release);
+        }
+
+        let chunk = input.next_chunk().unwrap().unwrap();
+        assert_eq!(chunk.start_sample, Some(200));
+        assert_ne!(chunk.flags & FLAG_DISCONTINUITY, 0);
+        assert_eq!(input.skipped_slots(), 1);
     }
 
     #[test]

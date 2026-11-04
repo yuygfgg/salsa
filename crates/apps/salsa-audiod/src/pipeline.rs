@@ -170,7 +170,15 @@ impl DecodeRenderPipeline {
         appsrc.set_property("format", gst::Format::Time);
         appsrc.set_property("is-live", config.live);
         appsrc.set_property("do-timestamp", false);
-        appsrc.set_property("stream-type", gstreamer_app::AppStreamType::Stream);
+        // Use the native GStreamer seek path. The service calls
+        // `seek_to_start()` on a new carrier session; appsrc accepts the
+        // flushing seek and returns true from its seek_data callback.
+        appsrc.set_property("stream-type", gstreamer_app::AppStreamType::Seekable);
+        appsrc.set_callbacks(
+            gstreamer_app::AppSrcCallbacks::builder()
+                .seek_data(|_, _| true)
+                .build(),
+        );
         let caps: gst::Caps = config.codec.appsrc_caps().parse().unwrap();
         appsrc.set_property("caps", &caps);
 
@@ -278,6 +286,23 @@ impl DecodeRenderPipeline {
         self.appsrc
             .push(buffer)
             .context("appsrc rejected a codec access unit")
+    }
+
+    /// Perform a native flushing seek to the start of the new carrier
+    /// session. GStreamer flushes queued output and resets the parsers,
+    /// decoders and renderers; the service pushes the new access units after
+    /// the seek returns.
+    pub fn seek_to_start(&self) -> Result<()> {
+        self.pipeline
+            .seek(
+                1.0,
+                gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE,
+                gst::SeekType::Set,
+                gst::ClockTime::ZERO,
+                gst::SeekType::None,
+                gst::ClockTime::NONE,
+            )
+            .context("decode/render pipeline rejected the flushing seek")
     }
 
     pub fn end_of_stream(&self) -> Result<()> {

@@ -54,16 +54,17 @@ impl Eac3JocDec {
     fn ensure_output_caps(&self, channels: usize) -> Result<(), gst::FlowError> {
         let rate = {
             let state = self.state.lock().unwrap();
+            if state.caps_set && state.channels == channels {
+                return Ok(());
+            }
             if state.caps_set {
-                if state.channels == channels {
-                    return Ok(());
-                }
-                gst::error!(
+                // A new HAL session may carry a different object count on the
+                // same stream. Renegotiate instead of failing the pipeline.
+                gst::debug!(
                     gst::CAT_RUST,
-                    "salsaeac3jocdec: channel count changed from {} to {channels}",
+                    "salsaeac3jocdec: renegotiating {} -> {channels} channels",
                     state.channels
                 );
-                return Err(gst::FlowError::NotNegotiated);
             }
             state.rate
         };
@@ -271,6 +272,15 @@ impl AudioDecoderImpl for Eac3JocDec {
             self.drain()?;
             return Ok(gst::FlowSuccess::Ok);
         };
+        if buffer.flags().contains(gst::BufferFlags::DISCONT) {
+            // A live seek/session reset reuses this element. DISCARD the old
+            // codec and JOC state without waiting for a FLUSH_STOP.
+            let mut state = self.state.lock().unwrap();
+            state.parser = Eac3JocParser::new();
+            if let Some(decoder) = state.decoder.as_deref_mut() {
+                decoder.reset();
+            }
+        }
         let frames = {
             let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
             let mut state = self.state.lock().unwrap();

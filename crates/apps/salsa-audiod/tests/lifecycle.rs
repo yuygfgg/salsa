@@ -115,6 +115,49 @@ fn two_sessions_reset_and_stay_bounded() {
 }
 
 #[test]
+fn short_session_reset_keeps_the_new_session() {
+    let Some(root) = fixtures_dir() else {
+        eprintln!("SALSA_TEST_SPDIF_FIXTURES is unset; skipping the short reset check");
+        return;
+    };
+    let carrier = std::fs::read(root.join("eac3_20s.spdif")).expect("read carrier fixture");
+    // Two bursts are enough to start decoding but short enough that the reset
+    // can arrive while the first session's DISCONT output is still queued.
+    let short = &carrier[..2 * 24_576];
+
+    let mut chunks = scripted_chunks(short, 0, 0, false);
+    chunks.extend(scripted_chunks(&carrier, 1, 1_920_000, false));
+
+    let outcome = render(config(CarrierSource::Scripted(chunks))).expect("scripted render");
+    assert_eq!(outcome.report.lifecycle.sessions, 2);
+    assert_eq!(outcome.report.lifecycle.session_resets, 1);
+
+    let pcm = outcome.pcm.expect("memory output");
+    let discont = *pcm
+        .discontinuities
+        .last()
+        .expect("the second session must start a new output timeline");
+    assert!(pcm.frames() > discont);
+
+    let fresh = render(config(CarrierSource::File(root.join("eac3_20s.spdif"))))
+        .expect("fresh session render");
+    let fresh = fresh.pcm.expect("fresh memory output");
+    let channels = pcm.channels as usize;
+    let start = discont as usize * channels;
+    let compare = (pcm.samples.len() - start).min(fresh.samples.len());
+    assert!(compare > 100_000, "not enough post-reset audio to compare");
+    let max_diff = pcm.samples[start..start + compare]
+        .iter()
+        .zip(&fresh.samples[..compare])
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_diff <= 1e-5,
+        "post-reset audio differs from a fresh session: max diff {max_diff}"
+    );
+}
+
+#[test]
 fn truncated_carrier_fails_explicitly() {
     if fixtures_dir().is_none() {
         eprintln!("SALSA_TEST_SPDIF_FIXTURES is unset; skipping the truncated carrier check");

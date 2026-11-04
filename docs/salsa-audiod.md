@@ -109,7 +109,7 @@ System Settings → Sound for other players).
 | `--physical-latency-ms` | 0 | Measured latency of the physical output. |
 | `--declare-latency` | off | Publish the contract to the HAL control block. |
 | `--deadline-timeout-ms` | 2000 | Count a live output stall after this delay while carrier data is arriving. |
-| `--hard-stall-timeout-ms` | 10000 | Stop the session explicitly instead of holding a growing delay. |
+| `--hard-stall-timeout-ms` | 10000 | Log a recovery warning after a stall; the output sink is rebuilt instead of stopping the session. |
 
 ## Carrier input
 
@@ -126,22 +126,29 @@ session generation. A `DISCONTINUITY`/`DROPPED` slot flag also marks a break.
 On either event the service:
 
 1. resets the IEC 61937 depacketizer and the timestamp timeline;
-2. stops the old decode/render pipeline and its pull thread, discarding queued
-   decoded buffers from the previous session;
-3. starts a fresh decode/render pipeline and pushes the next access unit with
-   `DISCONT`;
-4. resets the CoreAudio output timestamp anchor. The output queue is bounded,
-   so any remaining old audio drains within the fixed scheduling allowance.
+2. stops and joins the PCM pull thread. Each puller keeps an immutable session
+   epoch and carrier clock, including for samples already taken from `appsink`;
+3. keeps the existing decode/render pipeline and performs a native GStreamer
+   flushing seek to the start of the new session. The seek flushes queued
+   output and resets the parser, decoder and renderer in place;
+4. increments the session epoch and starts a new PCM pull thread;
+5. flushes the physical output when the writer observes the new epoch. The
+   writer discards PCM from other epochs and resets its timestamp anchor.
 
-All queues remain bounded (`appsrc` 4 MiB, `appsink` 8 buffers, output channel
-8). A live-output stall is counted after the deadline allowance while carrier
-data is still arriving; a stall longer than the hard limit stops the session
-with an explicit error. Pause without carrier data is not a deadline failure.
+A seek during pipeline startup, before the first rendered buffer, rebuilds the
+pipeline once because a native seek can race caps negotiation. Normal seeks
+stay on the native path and do not reload the renderer. All queues remain
+bounded (`appsrc` 4 MiB, `appsink` 8 buffers, output channel 8). A late buffer
+is rebased onto the current host time and counted instead of aborting playback.
+A live-output stall is counted after the deadline allowance while carrier data
+is still arriving; the output writer bounds each `appsrc` push and rebuilds the
+stalled sink. Pause without carrier data is not a deadline failure.
 
 `RenderReport.lifecycle` reports input chunks, sessions, session resets,
 carrier discontinuities, output discontinuities (initial start and each reset),
-deadline failures, the longest output stall, HAL dropped carrier frames, and
-reader-skipped slots.
+deadline failures, the longest output stall, scheduling re-anchors, the worst
+lateness, output recoveries, HAL dropped carrier frames, and reader-skipped
+slots.
 
 ## Render verification
 
@@ -175,7 +182,9 @@ SALSA_TEST_SPDIF_FIXTURES="$PWD/platform/macos/salsa-hal/fixtures" \
 ```
 
 Without the environment variables the checks skip, so the default test matrix
-stays hermetic.
+stays hermetic. The two binaural render checks are ignored in debug builds:
+unoptimized HRTF convolution makes them take many minutes. Run them with
+`--release`.
 
 Physical seek, pause/resume, and device-change checks require hardware. Store
 captures in a temporary directory outside the repository.
@@ -203,8 +212,9 @@ For live playback, each session carries a host-time anchor from the HAL.
 The physical output adds the ledger's scheduling allowance to that timeline.
 The PCM already contains codec and renderer signal delay. The ledger adds those
 signal delays and the measured physical device latency once when it declares
-the HAL latency. A missed playback deadline returns an error instead of moving
-the timeline. File playback uses the first PCM timestamp as its anchor.
+the HAL latency. A missed playback deadline drops the late gap and re-anchors
+the scheduling timeline at the current host time; it no longer stops the
+service. File playback uses the first PCM timestamp as its anchor.
 
 ## Delay ledger
 
