@@ -37,6 +37,7 @@ impl BoundedAppSrc {
         }
     }
 
+    #[cfg(target_os = "macos")]
     pub(crate) fn source(&self) -> &AppSrc {
         &self.source
     }

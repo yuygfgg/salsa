@@ -17,10 +17,13 @@ use std::time::Duration;
 use crate::clock::CarrierClock;
 #[cfg(target_os = "macos")]
 use crate::clock::{PlaybackClock, host_now_ns};
+#[cfg(target_os = "macos")]
 use crate::queue::BoundedAppSrc;
 use anyhow::{Context, Result, bail};
+#[cfg(any(target_os = "macos", test))]
 use gst::prelude::*;
 use gstreamer as gst;
+#[cfg(any(target_os = "macos", test))]
 use gstreamer_app::AppSrc;
 
 #[derive(Debug, Clone)]
@@ -171,7 +174,6 @@ impl OutputSink {
             self.discontinuity_count += 1;
         }
         let frames = chunk.frames();
-        let mut written = true;
         match &mut self.inner {
             Inner::Wav(writer) => writer.write(&chunk.data)?,
             Inner::Null => {}
@@ -193,15 +195,13 @@ impl OutputSink {
                 // A full output queue means the physical device stopped
                 // consuming. Rebuild the sink and drop the late buffer instead
                 // of exiting the service.
-                written = !writer.write(chunk)?;
-                if !written {
+                if writer.write(chunk)? {
                     self.recoveries += 1;
+                    return Ok(());
                 }
             }
         }
-        if written {
-            self.frames += frames;
-        }
+        self.frames += frames;
         Ok(())
     }
 
