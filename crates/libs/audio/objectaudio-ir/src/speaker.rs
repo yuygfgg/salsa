@@ -70,6 +70,31 @@ pub const BED_CHANNELS: [SpeakerPosition; BED_CHANNEL_COUNT] = [
 ];
 
 impl SpeakerPosition {
+    /// Resolve a DAMF/OAMD bed name or a common speaker-name alias.
+    /// Names are case-insensitive. Codec wire indices are resolved separately.
+    pub fn from_bed_name(name: &str) -> Option<Self> {
+        Some(match name.trim().to_ascii_uppercase().as_str() {
+            "L" => Self::Left,
+            "R" => Self::Right,
+            "C" => Self::Center,
+            "LFE" => Self::Lfe,
+            "LSS" | "LS" => Self::LeftSurround,
+            "RSS" | "RS" => Self::RightSurround,
+            "LRS" | "LB" => Self::LeftRearSurround,
+            "RRS" | "RB" => Self::RightRearSurround,
+            "LFH" | "TFL" | "LTF" => Self::TopFrontLeft,
+            "RFH" | "TFR" | "RTF" => Self::TopFrontRight,
+            "LTS" | "TSL" | "LTM" => Self::TopSideLeft,
+            "RTS" | "TSR" | "RTM" => Self::TopSideRight,
+            "LRH" | "TBL" | "TRL" | "LTR" => Self::TopBackLeft,
+            "RRH" | "TBR" | "TRR" | "RTR" => Self::TopBackRight,
+            "LW" => Self::LeftWide,
+            "RW" => Self::RightWide,
+            "LFE2" => Self::Lfe2,
+            _ => return None,
+        })
+    }
+
     /// Wire index of an OAMD bed channel, or `None` for a non-bed position.
     pub const fn bed_index(self) -> Option<usize> {
         if (self as usize) < BED_CHANNEL_COUNT {
@@ -103,7 +128,10 @@ impl SpeakerPosition {
         matches!(self, Self::Lfe | Self::Lfe2)
     }
 
-    /// Fixed ADM normalized Cartesian position (x right, y forward, z up).
+    /// Source channel position for conversion to a fixed object.
+    /// Bed coordinates follow ETSI TS 103 420, Table B.10 (x right, y forward,
+    /// z up). These coordinates do not define output speaker geometry.
+    /// LFE channels use a separate signal path; their coordinates are placeholders.
     pub const fn adm_position(self) -> [f32; 3] {
         match self {
             Self::Left => [-1.0, 1.0, 0.0],
@@ -114,14 +142,14 @@ impl SpeakerPosition {
             Self::RightSurround => [1.0, 0.0, 0.0],
             Self::LeftRearSurround => [-1.0, -1.0, 0.0],
             Self::RightRearSurround => [1.0, -1.0, 0.0],
-            Self::TopFrontLeft => [-0.5, 0.5, 1.0],
-            Self::TopFrontRight => [0.5, 0.5, 1.0],
+            Self::TopFrontLeft => [-1.0, 1.0, 1.0],
+            Self::TopFrontRight => [1.0, 1.0, 1.0],
             Self::TopSideLeft => [-1.0, 0.0, 1.0],
             Self::TopSideRight => [1.0, 0.0, 1.0],
-            Self::TopBackLeft => [-0.5, -0.5, 1.0],
-            Self::TopBackRight => [0.5, -0.5, 1.0],
-            Self::LeftWide => [-1.0, 0.5, 0.0],
-            Self::RightWide => [1.0, 0.5, 0.0],
+            Self::TopBackLeft => [-1.0, -1.0, 1.0],
+            Self::TopBackRight => [1.0, -1.0, 1.0],
+            Self::LeftWide => [-1.0, 21.0 / 31.0, 0.0],
+            Self::RightWide => [1.0, 21.0 / 31.0, 0.0],
             Self::Lfe2 => [0.0, 0.0, 0.0],
             Self::CenterSurround => [0.0, -1.0, 0.0],
             Self::TopSurround => [0.0, 0.0, 1.0],
@@ -172,8 +200,8 @@ pub struct StandardLayout {
     pub channels: &'static [SpeakerPosition],
 }
 
-/// The single standard layout table. Both the OAMD bed declaration and the
-/// speaker renderer resolve names against this list.
+/// Standard channel sets for bed declarations. Renderers can support a subset
+/// and supply their own output geometry and PCM order.
 pub const STANDARD_LAYOUTS: &[StandardLayout] = &[
     StandardLayout {
         name: "2.0",
@@ -423,6 +451,52 @@ pub fn q15_to_adm(position: [u16; 3]) -> [f64; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bed_names_and_aliases_resolve_to_fixed_source_positions() {
+        use SpeakerPosition as S;
+        let cases: &[(S, &[&str], [f32; 3])] = &[
+            (S::Left, &["L"], [-1.0, 1.0, 0.0]),
+            (S::Right, &["R"], [1.0, 1.0, 0.0]),
+            (S::Center, &["C"], [0.0, 1.0, 0.0]),
+            (S::Lfe, &["LFE"], [0.0; 3]),
+            (S::LeftSurround, &["Lss", "Ls"], [-1.0, 0.0, 0.0]),
+            (S::RightSurround, &["Rss", "Rs"], [1.0, 0.0, 0.0]),
+            (S::LeftRearSurround, &["Lrs", "Lb"], [-1.0, -1.0, 0.0]),
+            (S::RightRearSurround, &["Rrs", "Rb"], [1.0, -1.0, 0.0]),
+            (S::TopFrontLeft, &["Lfh", "Tfl", "Ltf"], [-1.0, 1.0, 1.0]),
+            (S::TopFrontRight, &["Rfh", "Tfr", "Rtf"], [1.0, 1.0, 1.0]),
+            (S::TopSideLeft, &["Lts", "Tsl", "Ltm"], [-1.0, 0.0, 1.0]),
+            (S::TopSideRight, &["Rts", "Tsr", "Rtm"], [1.0, 0.0, 1.0]),
+            (
+                S::TopBackLeft,
+                &["Lrh", "Tbl", "Trl", "Ltr"],
+                [-1.0, -1.0, 1.0],
+            ),
+            (
+                S::TopBackRight,
+                &["Rrh", "Tbr", "Trr", "Rtr"],
+                [1.0, -1.0, 1.0],
+            ),
+            (S::LeftWide, &["Lw"], [-1.0, 21.0 / 31.0, 0.0]),
+            (S::RightWide, &["Rw"], [1.0, 21.0 / 31.0, 0.0]),
+            (S::Lfe2, &["LFE2"], [0.0; 3]),
+        ];
+        assert_eq!(cases.len(), BED_CHANNEL_COUNT);
+        for (channel, names, position) in cases {
+            assert_eq!(channel.adm_position(), *position);
+            for name in *names {
+                for spelling in [
+                    name.to_lowercase(),
+                    name.to_uppercase(),
+                    format!(" {name} "),
+                ] {
+                    assert_eq!(SpeakerPosition::from_bed_name(&spelling), Some(*channel));
+                }
+            }
+        }
+        assert_eq!(SpeakerPosition::from_bed_name("unknown"), None);
+    }
 
     #[test]
     fn every_bed_channel_round_trips_through_its_wire_index() {

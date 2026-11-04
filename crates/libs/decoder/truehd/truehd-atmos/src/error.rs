@@ -4,6 +4,9 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum TrueHdError {
+    #[error("unsupported TrueHD bed channel {0:?}")]
+    UnsupportedBedChannel(truehd::structs::channel::ChannelLabel),
+
     #[error("TrueHD access unit parse failed: {0}")]
     Parse(#[source] anyhow::Error),
 

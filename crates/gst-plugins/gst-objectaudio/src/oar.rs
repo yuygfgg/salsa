@@ -12,8 +12,8 @@ use gst_base::subclass::base_transform::GenerateOutputSuccess;
 use gst_base::subclass::prelude::*;
 
 use objectaudio_render::{
-    BLOCK_SAMPLES, SpeakerChannel, SpeakerControls, SpeakerLayout, SpeakerRenderer,
-    layout_by_channel_count, layout_by_name, layouts,
+    BLOCK_SAMPLES, SpeakerChannel, SpeakerControls, SpeakerLayout, SpeakerRenderer, layout_by_name,
+    layouts,
 };
 
 const DEFAULT_LAYOUT: &str = "5.1";
@@ -77,9 +77,15 @@ pub struct Oar {
 }
 
 impl Oar {
-    fn requested_layout(&self) -> Option<&'static SpeakerLayout> {
+    fn requested_layout(&self) -> Result<Option<&'static SpeakerLayout>, String> {
         let state = self.state.lock().unwrap();
-        layout_by_name(&state.layout)
+        if state.layout == "auto" {
+            Ok(None)
+        } else {
+            layout_by_name(&state.layout)
+                .map(Some)
+                .ok_or_else(|| format!("unsupported speaker layout {:?}", state.layout))
+        }
     }
 
     fn src_caps(
@@ -87,7 +93,13 @@ impl Oar {
         format: Option<&glib::SendValue>,
         rate: Option<&glib::SendValue>,
     ) -> gst::Caps {
-        let requested = self.requested_layout();
+        let requested = match self.requested_layout() {
+            Ok(requested) => requested,
+            Err(error) => {
+                gst::warning!(gst::CAT_RUST, "{error}");
+                return gst::Caps::new_empty();
+            }
+        };
         let mut ordered: Vec<&'static SpeakerLayout> = Vec::with_capacity(layouts().len());
         if let Some(requested) = requested {
             ordered.push(requested);
@@ -153,11 +165,7 @@ impl Oar {
 }
 
 fn layout_positions(layout: &SpeakerLayout) -> Vec<gst_audio::AudioChannelPosition> {
-    layout
-        .channels
-        .iter()
-        .map(|channel| gst_position(*channel))
-        .collect()
+    layout.output_channels().map(gst_position).collect()
 }
 
 fn gst_position(channel: SpeakerChannel) -> gst_audio::AudioChannelPosition {
@@ -207,17 +215,18 @@ fn layout_from_out_caps(
             let positions = layout_positions(layout);
             let candidate =
                 gst_audio::AudioChannelPosition::positions_to_mask(&positions, false).ok();
-            if candidate == Some(mask) {
+            if candidate == Some(mask) && layout.channel_count() == channels {
                 return Some(layout);
             }
         }
+        return None;
     }
     if let Some(requested) = requested
         && requested.channel_count() == channels
     {
         return Some(requested);
     }
-    layout_by_channel_count(channels)
+    None
 }
 
 fn copy_io_value(caps: &gst::Caps, field: &str) -> Option<glib::SendValue> {
@@ -366,6 +375,8 @@ impl BaseTransformImpl for Oar {
     const TRANSFORM_IP_ON_PASSTHROUGH: bool = false;
 
     fn start(&self) -> Result<(), gst::ErrorMessage> {
+        self.requested_layout()
+            .map_err(|error| gst::error_msg!(gst::CoreError::Negotiation, ["{error}"]))?;
         let mut state = self.state.lock().unwrap();
         state.renderer = None;
         state.runtime = RuntimeState::default();
@@ -432,7 +443,9 @@ impl BaseTransformImpl for Oar {
             ));
         }
 
-        let requested = self.requested_layout();
+        let requested = self
+            .requested_layout()
+            .map_err(|error| gst::loggable_error!(gst::CAT_RUST, "{error}"))?;
         let layout = layout_from_out_caps(outcaps, requested).ok_or_else(|| {
             gst::loggable_error!(
                 gst::CAT_RUST,
@@ -440,6 +453,16 @@ impl BaseTransformImpl for Oar {
                 outcaps
             )
         })?;
+        if let Some(requested) = requested
+            && requested.name != layout.name
+        {
+            gst::warning!(
+                gst::CAT_RUST,
+                "downstream caps select layout {} instead of requested {}",
+                layout.name,
+                requested.name
+            );
+        }
         if layout.channel_count() != out_info.channels() as usize {
             return Err(gst::loggable_error!(
                 gst::CAT_RUST,
@@ -697,4 +720,68 @@ impl State {
 
 fn sample_time(samples: u64, rate: u32) -> gst::ClockTime {
     gst::ClockTime::from_nseconds((u128::from(samples) * 1_000_000_000 / u128::from(rate)) as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn output_caps(channels: i32, mask: u64) -> gst::Caps {
+        gst::init().unwrap();
+        gst::Caps::builder("audio/x-raw")
+            .field("format", "F32LE")
+            .field("rate", 48_000i32)
+            .field("layout", "interleaved")
+            .field("channels", channels)
+            .field("channel-mask", gst::Bitmask(mask))
+            .build()
+    }
+
+    #[test]
+    fn unknown_masks_cannot_fall_back_to_channel_count() {
+        // Rear-only 5.1 is not the renderer's side-surround 5.1 layout.
+        for requested in [None, layout_by_name("5.1")] {
+            assert_eq!(layout_from_out_caps(&output_caps(6, 0x3f), requested), None);
+        }
+        assert_eq!(layout_from_out_caps(&output_caps(8, 0xc0f), None), None);
+    }
+
+    #[test]
+    fn unpositioned_caps_require_an_explicit_matching_layout() {
+        for channels in [4, 8, 10] {
+            assert_eq!(layout_from_out_caps(&output_caps(channels, 0), None), None);
+        }
+        let requested = layout_by_name("5.1.2");
+        assert_eq!(
+            layout_from_out_caps(&output_caps(8, 0), requested),
+            requested
+        );
+        assert_eq!(layout_from_out_caps(&output_caps(10, 0), requested), None);
+    }
+
+    #[test]
+    fn recognized_masks_override_same_count_layouts() {
+        assert_eq!(
+            layout_from_out_caps(&output_caps(8, 0xc3f), layout_by_name("5.1.2")),
+            layout_by_name("7.1")
+        );
+        assert_eq!(
+            layout_from_out_caps(&output_caps(4, 0x33), layout_by_name("3.1")),
+            layout_by_name("4.0")
+        );
+    }
+
+    #[test]
+    fn advertised_positions_match_gstreamer_pcm_order() {
+        gst::init().unwrap();
+        for layout in layouts() {
+            let positions = layout_positions(layout);
+            let mask = gst_audio::AudioChannelPosition::positions_to_mask(&positions, true)
+                .expect("output positions must be in GStreamer order");
+            let info =
+                gst_audio::AudioInfo::from_caps(&output_caps(layout.channel_count() as i32, mask))
+                    .unwrap();
+            assert_eq!(info.positions().unwrap(), positions, "{}", layout.name);
+        }
+    }
 }

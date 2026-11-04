@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::visual::{ObjectVisual, VisualSnapshot, VisualState};
 use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
-use objectaudio_ir::{STANDARD_LAYOUTS, StandardLayout};
+use objectaudio_render::{SpeakerLayout, layout_by_name};
 
 use crate::pipeline::OutputMode;
 
@@ -197,9 +197,7 @@ pub fn draw(
     scene_painter.extend(scene.into_iter().map(|(_, shape)| shape));
 
     // Speaker anchors remain reference outlines over the depth-sorted scene.
-    let layout = STANDARD_LAYOUTS
-        .iter()
-        .find(|layout| layout.name == layout_name);
+    let layout = layout_by_name(layout_name);
     if *mode == OutputMode::Speaker
         && let Some(layout) = layout
     {
@@ -291,15 +289,15 @@ fn draw_room(painter: &egui::Painter, project: &impl Fn([f32; 3]) -> Pos2) {
 fn draw_speakers(
     painter: &egui::Painter,
     project: &impl Fn([f32; 3]) -> Pos2,
-    layout: &StandardLayout,
+    layout: &SpeakerLayout,
     labels_enabled: bool,
     labels: &mut StageLabels,
 ) {
     for channel in layout.channels {
-        if channel.is_lfe() {
+        let Some(coordinate) = layout.speaker_position_q15(*channel) else {
             continue;
-        }
-        let position = project(channel.adm_position());
+        };
+        let position = project(objectaudio_ir::q15_to_adm(coordinate).map(|value| value as f32));
         let marker = Rect::from_center_size(position, Vec2::splat(14.0));
         for (width, color) in [(5.0_f32, STAGE_BACKGROUND), (2.0, SPEAKER_COLOR)] {
             painter.rect_stroke(
@@ -326,7 +324,7 @@ fn draw_lfe(
     painter: &egui::Painter,
     project: &impl Fn([f32; 3]) -> Pos2,
     mode: &OutputMode,
-    layout: Option<&StandardLayout>,
+    layout: Option<&SpeakerLayout>,
     snapshot: Option<&VisualSnapshot>,
     labels_enabled: bool,
     labels: &mut StageLabels,

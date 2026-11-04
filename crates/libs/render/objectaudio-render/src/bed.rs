@@ -1,9 +1,9 @@
-//! Fixed-position anchors for output-layout speakers.
+//! Source bed coordinates and output speaker anchors.
 
 use crate::layout::SpeakerLayout;
 use crate::speaker::SpeakerChannel;
 
-/// Q15 position of a standard speaker.
+/// Q15 source position of a bed channel converted to a fixed object.
 ///
 /// Uses the single ADM/Q15 conversion in `objectaudio-ir`.
 pub fn bed_channel_q15(channel: SpeakerChannel) -> Option<[u16; 3]> {
@@ -12,16 +12,7 @@ pub fn bed_channel_q15(channel: SpeakerChannel) -> Option<[u16; 3]> {
 
 /// Anchor a speaker label to the same-named speaker of `layout`.
 pub fn layout_bed_anchor(layout: &SpeakerLayout, channel: SpeakerChannel) -> Option<[u16; 3]> {
-    if channel.is_lfe() {
-        return None;
-    }
-    let standard = layout.standard_index(channel)?;
-    let internal = layout.standard_from_internal[standard];
-    let region = &layout.regions[0];
-    region.points[..usize::from(region.point_count)]
-        .iter()
-        .find(|point| point.speaker_id == internal)
-        .map(|point| point.coordinate_q15)
+    layout.speaker_position_q15(channel)
 }
 
 #[cfg(test)]
@@ -45,6 +36,10 @@ mod tests {
         let layout = layout_by_name("7.1.4").unwrap();
         assert_eq!(
             layout_bed_anchor(layout, SpeakerChannel::LeftRearSurround),
+            Some([0, 32767, 0])
+        );
+        assert_eq!(
+            layout_bed_anchor(layout, SpeakerChannel::LeftSurround),
             Some([0, 16384, 0])
         );
         assert_eq!(

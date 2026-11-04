@@ -44,9 +44,9 @@ pub struct SpeakerLayout {
     pub out_ch_config: u8,
     pub speaker_bitfield: u32,
     pub channel_count: u8,
-    /// Internal renderer channel -> standard output channel.
+    /// PCM output slot -> internal speaker id, in GStreamer channel order.
     pub standard_from_internal: [u8; 16],
-    /// Standard channels in output order.
+    /// Speaker labels indexed by internal geometry id, not PCM output slot.
     pub channels: &'static [SpeakerChannel],
     pub regions: [RegionGeometry; 7],
 }
@@ -104,11 +104,30 @@ impl SpeakerLayout {
         )
     }
 
-    /// Index of `channel` in the standard output order.
-    pub fn standard_index(&self, channel: SpeakerChannel) -> Option<usize> {
-        self.channels
+    /// Speaker labels in PCM output order.
+    pub fn output_channels(&self) -> impl Iterator<Item = SpeakerChannel> + '_ {
+        self.standard_from_internal[..self.channel_count()]
             .iter()
-            .position(|candidate| *candidate == channel)
+            .map(|index| self.channels[usize::from(*index)])
+    }
+
+    /// Output speaker geometry, independent of source bed coordinates.
+    pub fn speaker_position_q15(&self, channel: SpeakerChannel) -> Option<[u16; 3]> {
+        let internal = self
+            .channels
+            .iter()
+            .position(|candidate| *candidate == channel)?;
+        let region = &self.regions[0];
+        region.points[..usize::from(region.point_count)]
+            .iter()
+            .find(|point| usize::from(point.speaker_id) == internal)
+            .map(|point| point.coordinate_q15)
+    }
+
+    /// Index of `channel` in PCM output order.
+    pub fn standard_index(&self, channel: SpeakerChannel) -> Option<usize> {
+        self.output_channels()
+            .position(|candidate| candidate == channel)
     }
 }
 
@@ -182,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn standard_channel_orders_match_the_table() {
+    fn internal_channel_orders_match_the_table() {
         assert_eq!(
             layout_by_name("7.1.4").unwrap().channels,
             &[
@@ -209,6 +228,42 @@ mod tests {
                 SpeakerChannel::RightRearSurround,
             ]
         );
+    }
+
+    #[test]
+    fn output_order_places_rears_before_sides_and_wides_after_heights() {
+        use SpeakerChannel::*;
+        let layout = layout_by_name("9.1.6").unwrap();
+        assert_eq!(
+            layout.output_channels().collect::<Vec<_>>(),
+            [
+                Left,
+                Right,
+                Center,
+                Lfe,
+                LeftRearSurround,
+                RightRearSurround,
+                LeftSurround,
+                RightSurround,
+                TopFrontLeft,
+                TopFrontRight,
+                TopBackLeft,
+                TopBackRight,
+                TopSideLeft,
+                TopSideRight,
+                LeftWide,
+                RightWide,
+            ]
+        );
+        for layout in layouts() {
+            for (index, channel) in layout.output_channels().enumerate() {
+                assert_eq!(layout.standard_index(channel), Some(index));
+                assert_eq!(
+                    layout.speaker_position_q15(channel).is_some(),
+                    !channel.is_lfe()
+                );
+            }
+        }
     }
 
     #[test]

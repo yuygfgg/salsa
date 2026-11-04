@@ -118,8 +118,12 @@ source resolves `presentations[0].audio` / `.metadata`, then the standard
 - **PCM**: uncompressed CAF `lpcm`, including 16/24/32-bit integer and 32-bit
   float; 24-bit big-endian is the normal DAMF layout. Samples are reordered to
   `ch0 = LFE`, `ch1..N = objects`.
-- **Bed expansion**: non-LFE bed channels become fixed-position objects. 
+- **Bed expansion**: non-LFE bed channels become fixed-position objects.
   LFE stays channel 0. A DAMF without an LFE bed gets a silent LFE channel.
+  DAMF, OAMD and TrueHD use the same source bed positions from ETSI TS 103 420,
+  Table B.10.
+  DAMF accepts the canonical bed names and common aliases. Unknown names are errors.
+  LFE2 input is rejected by DAMF, OAMD and TrueHD conversion.
 - **Metadata**: `samplePos` is inherited by events that omit it (the group rule
   used by Dolby's writer). Object positions follow the encoder's `PosTimeline`
   semantics: hold the previous position until the event sample, then ramp to the
@@ -181,14 +185,17 @@ Both decoders handle flushing seeks and reset their codec/DSP state on `FLUSH_ST
   - Sink caps: `audio/x-true-hd` or `audio/x-truehd`, `framed=(boolean)true`, `alignment=(string)frame`, `rate=(int)[1,655350]`.
   - Src caps: `audio/x-raw`, F32LE, interleaved, `channels=1..16`, `rate={44100,48000,88200,96000,176400,192000}`, `channel-mask=0`, optionally with `meta:ObjectAudioMeta`.
   - Consumes the access-unit-per-buffer output of `salsatruehdparse`; unframed streams are not accepted. It accumulates 40-sample access units into 32-sample blocks and emits a buffer per 1216 samples or per OAMD update. Presentation bed channels are expanded into fixed-position objects.
+  - `Cb`, `Tc` and `Tfc` map to rear centre, top centre and top front centre.
+    `Lsc`, `Rsc`, `Lsd`, `Rsd` and `LFE2` return an unsupported-channel error.
 
 #### `salsaoar` (Speaker Renderer)
 
 Sample-accurate equal-power panning to standard speaker layouts (`2.0`, `3.1`, `4.0`, `5.1`, `7.1`, `5.1.2`, `5.1.4`, `7.1.2`, `7.1.4`, `9.1.4`, `9.1.6`), passing LFE straight through. Programme OAMD trim, warp 0/1 and warp 2/3 surround folding follow the source calibration; wider layouts use disabled trim.
 
 - **Sink caps**: `audio/x-raw` F32LE interleaved, `rate=32000..48000`, `channels=1..1024`, `channel-mask=0`, with `meta:ObjectAudioMeta` (also accepted with `memory:SystemMemory`). Plain raw and `meta:DlbObjectAudioMeta` are not advertised; Dolby streams must pass through `salsaobjectaudioadapt`.
-- **Src caps**: `audio/x-raw` F32LE interleaved, one structure per supported layout with the layout's channel count and GStreamer channel mask, same rate as the sink.
-- **Layout selection**: a recognized downstream `channel-mask` overrides `layout`; otherwise `layout` is used, falling back to inference by output channel count.
+- **Src caps**: `audio/x-raw` F32LE interleaved, one structure per supported layout with the layout's channel count and GStreamer channel mask, same rate as the sink. PCM follows GStreamer channel order: rear surrounds precede side surrounds, and wide channels follow height channels.
+- **Layout selection**: a recognized downstream `channel-mask` selects the output layout. If that layout differs from the requested layout, the renderer logs a warning. An unknown nonzero mask is an error. Caps without positions require an explicit layout with the same channel count; `auto` does not guess from channel count alone. Unsupported layout names are errors.
+- **GUI**: the layout menu uses the renderer's supported layouts. Speaker markers use output geometry; fixed source objects retain their source positions. The IR also defines `3.0`, `5.0`, `7.1.6` and `9.1.2` bed sets, but the renderer does not offer those output layouts.
 
 | Property          | Default | Description                                                                                          |
 | ----------------- | ------- | ---------------------------------------------------------------------------------------------------- |

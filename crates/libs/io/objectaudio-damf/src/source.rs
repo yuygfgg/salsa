@@ -246,29 +246,7 @@ impl DamfSource {
 
 /// ADM normalized position for a standard DAMF bed channel name.
 pub fn bed_position(name: &str) -> Option<[f32; 3]> {
-    let position = match name.trim().to_ascii_uppercase().as_str() {
-        "L" => [-1.0, 1.0, 0.0],
-        "R" => [1.0, 1.0, 0.0],
-        "C" => [0.0, 1.0, 0.0],
-        "LS" => [-1.0, -1.0, 0.0],
-        "RS" => [1.0, -1.0, 0.0],
-        "LB" => [-1.0, -1.0, 0.0],
-        "RB" => [1.0, -1.0, 0.0],
-        "LSS" => [-1.0, 0.0, 0.0],
-        "RSS" => [1.0, 0.0, 0.0],
-        "LRS" => [-1.0, -1.0, 0.0],
-        "RRS" => [1.0, -1.0, 0.0],
-        "LTS" => [-1.0, 0.0, 1.0],
-        "RTS" => [1.0, 0.0, 1.0],
-        "TFL" => [-1.0, 1.0, 1.0],
-        "TFR" => [1.0, 1.0, 1.0],
-        "TRL" => [-1.0, -1.0, 1.0],
-        "TRR" => [1.0, -1.0, 1.0],
-        "TSL" => [-1.0, -1.0, 1.0],
-        "TSR" => [1.0, -1.0, 1.0],
-        _ => return None,
-    };
-    Some(position)
+    objectaudio_ir::SpeakerPosition::from_bed_name(name).map(|channel| channel.adm_position())
 }
 
 #[cfg(test)]
@@ -585,6 +563,65 @@ events:
         }
         assert!(source.read_block(2).unwrap().is_none());
 
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn canonical_beds_preserve_pcm_identity_after_lfe_reordering() {
+        let dir = unique_dir("canonical-beds");
+        let names = [
+            "L", "R", "C", "LFE", "Lss", "Rss", "Lrs", "Rrs", "Lfh", "Rfh", "Lts", "Rts", "Lrh",
+            "Rrh", "Lw", "Rw",
+        ];
+        let path = dir.join("master.atmos");
+        let beds: Vec<_> = names
+            .iter()
+            .enumerate()
+            .map(|(id, name)| crate::BedEntry {
+                id: id as i64,
+                name: (*name).into(),
+            })
+            .collect();
+        crate::write_manifest(
+            &path,
+            &crate::ManifestSpec {
+                audio_name: "master.atmos.audio",
+                metadata_name: "master.atmos.metadata",
+                offset: 0.0,
+                fps: 24.0,
+                sc_bed_configuration: &[],
+                creation_tool: "channel-test",
+                creation_tool_version: "1",
+                beds: &beds,
+                objects: &[],
+            },
+        )
+        .unwrap();
+        Metadata {
+            sample_rate: 48_000,
+            events: vec![],
+        }
+        .save(dir.join("master.atmos.metadata"))
+        .unwrap();
+        let input: Vec<_> = (1..=16).map(|channel| channel as f32 / 32.0).collect();
+        write_caf(&dir.join("master.atmos.audio"), 16, 1, &input);
+        let mut source = DamfSource::open(&path).unwrap();
+        let block = source.read_block(1).unwrap().unwrap();
+        assert_eq!(block.pcm.len(), 16);
+        assert_eq!(block.payload.objects.len(), 15);
+        assert_eq!(block.pcm[0], input[3]);
+        for (object, source_channel) in block
+            .payload
+            .objects
+            .iter()
+            .zip((0..16).filter(|index| *index != 3))
+        {
+            assert_eq!(
+                object.position,
+                bed_position(names[source_channel]).unwrap()
+            );
+            assert_eq!(block.pcm[object.id as usize], input[source_channel]);
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 

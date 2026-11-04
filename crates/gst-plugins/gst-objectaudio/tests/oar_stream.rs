@@ -21,9 +21,14 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
+        Self::with_layout("5.1")
+    }
+
+    fn with_layout(layout: &str) -> Self {
         gst::init().unwrap();
         objectaudio_meta::init().unwrap();
         let renderer: Oar = gst::glib::Object::new();
+        renderer.set_property("layout", layout);
         let buffers = Arc::new(Mutex::new(Vec::new()));
         let captured = buffers.clone();
         let sink = gst::Pad::builder(gst::PadDirection::Sink)
@@ -176,6 +181,86 @@ fn pcm(buffers: &[gst::Buffer]) -> Vec<f32> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+#[test]
+fn every_speaker_signal_matches_the_negotiated_channel_label() {
+    use gstreamer_audio::{AudioChannelPosition as P, AudioInfo};
+    use objectaudio_ir::SpeakerPosition as S;
+    let labels = [
+        (S::Left, P::FrontLeft),
+        (S::Right, P::FrontRight),
+        (S::Center, P::FrontCenter),
+        (S::Lfe, P::Lfe1),
+        (S::LeftSurround, P::SideLeft),
+        (S::RightSurround, P::SideRight),
+        (S::LeftRearSurround, P::RearLeft),
+        (S::RightRearSurround, P::RearRight),
+        (S::TopFrontLeft, P::TopFrontLeft),
+        (S::TopFrontRight, P::TopFrontRight),
+        (S::TopSideLeft, P::TopSideLeft),
+        (S::TopSideRight, P::TopSideRight),
+        (S::TopBackLeft, P::TopRearLeft),
+        (S::TopBackRight, P::TopRearRight),
+        (S::LeftWide, P::WideLeft),
+        (S::RightWide, P::WideRight),
+    ];
+    for layout in objectaudio_render::layouts() {
+        for &(speaker, label) in &labels {
+            if !layout.channels.contains(&speaker) {
+                continue;
+            }
+            let harness = Harness::with_layout(layout.name);
+            let (position, gain, lfe) = if speaker.is_lfe() {
+                ([0.0; 3], 0.0, 1.0)
+            } else {
+                let point = layout.speaker_position_q15(speaker).unwrap();
+                (
+                    objectaudio_ir::q15_to_adm(point).map(|value| value as f32),
+                    1.0,
+                    0.0,
+                )
+            };
+            let mut buffer = input(0, 64, lfe);
+            add_metadata(&mut buffer, 0, object(position, gain), vec![]);
+            harness.push(buffer);
+            let rendered = pcm(&harness.finish());
+            let caps = harness
+                .renderer
+                .static_pad("src")
+                .unwrap()
+                .current_caps()
+                .unwrap();
+            let info = AudioInfo::from_caps(&caps).unwrap();
+            assert_eq!(
+                info.channels() as usize,
+                layout.channel_count(),
+                "{}",
+                layout.name
+            );
+            let last = rendered
+                .chunks_exact(layout.channel_count())
+                .last()
+                .unwrap();
+            let peak = last
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.abs().total_cmp(&b.abs()))
+                .unwrap()
+                .0;
+            assert!(
+                last[peak].abs() > 0.1,
+                "{} {speaker:?}: {last:?}",
+                layout.name
+            );
+            assert_eq!(
+                info.positions().unwrap()[peak],
+                label,
+                "{} {speaker:?}: {last:?}",
+                layout.name
+            );
+        }
+    }
 }
 
 fn assert_timeline(buffers: &[gst::Buffer], start: u64, total: usize) {

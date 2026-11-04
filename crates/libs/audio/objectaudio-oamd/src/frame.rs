@@ -214,6 +214,9 @@ impl OamdFrame {
             }
         }
         let bed = BedLayout::from_mask(bed_mask, bed_only);
+        if bed.contains(SpeakerPosition::Lfe2) {
+            return Err(OamdError::UnsupportedLfe2);
+        }
 
         let positions = payload.get_damf_pos();
         let object_data = object_element.map_or(&[][..], |element| &element.object_data[..]);
@@ -535,6 +538,52 @@ fn adm_position(position: [f64; 3]) -> [f32; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bed_payload(channels: &[SpeakerPosition]) -> ObjectAudioMetadataPayload {
+        use crate::payload::{BedAssignment, ProgramAssignment};
+        let mask = channels
+            .iter()
+            .fold(0, |mask, channel| mask | channel.bed_bit());
+        ObjectAudioMetadataPayload {
+            object_count: channels.len(),
+            program_assignment: ProgramAssignment {
+                num_bed_objects: channels.len(),
+                bed_assignment: vec![BedAssignment::from_non_std(mask)],
+                ..ProgramAssignment::default()
+            },
+            ..ObjectAudioMetadataPayload::default()
+        }
+    }
+
+    #[test]
+    fn expanded_beds_use_shared_source_positions_in_wire_order() {
+        let channels = &objectaudio_ir::BED_CHANNELS[..16];
+        let payload = bed_payload(channels);
+        let frame = OamdFrame::from_payload(&payload, OamdLimits::default()).unwrap();
+        let mapping = frame.map_to_ir(0, BedPolicy::Expand);
+        let expected: Vec<_> = channels
+            .iter()
+            .filter(|channel| !channel.is_lfe())
+            .collect();
+        assert_eq!(mapping.objects.len(), expected.len());
+        for (index, (object, channel)) in mapping.objects.iter().zip(expected).enumerate() {
+            assert_eq!(object.id, index as u32 + 1);
+            assert_eq!(object.position, channel.adm_position());
+        }
+    }
+
+    #[test]
+    fn second_lfe_is_rejected_before_bed_expansion() {
+        for channels in [
+            vec![SpeakerPosition::Lfe2],
+            vec![SpeakerPosition::Lfe, SpeakerPosition::Lfe2],
+        ] {
+            assert!(matches!(
+                OamdFrame::from_payload(&bed_payload(&channels), OamdLimits::default()),
+                Err(OamdError::UnsupportedLfe2)
+            ));
+        }
+    }
 
     #[test]
     fn expanded_bed_bypass_uses_declared_slots_including_lfe() {

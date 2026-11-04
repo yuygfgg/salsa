@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
-use objectaudio_ir::STANDARD_LAYOUTS;
+use objectaudio_render::{layout_by_name, layouts};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +111,8 @@ pub enum PipelineError {
     Io { path: PathBuf, reason: String },
     #[error("cannot detect a supported codec in {0}")]
     UnsupportedCodec(PathBuf),
+    #[error("unsupported speaker layout: {0}")]
+    UnsupportedLayout(String),
     #[error("GStreamer element '{factory}' is unavailable: {reason}")]
     MissingElement { factory: String, reason: String },
     #[error("binaural playback needs a Rosella .personalized_headphone model")]
@@ -231,14 +233,11 @@ fn max_channels_from_caps(caps: &gst::Caps) -> Option<u32> {
 }
 
 pub fn layout_channel_count(name: &str) -> Option<usize> {
-    STANDARD_LAYOUTS
-        .iter()
-        .find(|layout| layout.name == name)
-        .map(|layout| layout.channels.len())
+    layout_by_name(name).map(|layout| layout.channel_count())
 }
 
 pub fn layout_names() -> Vec<&'static str> {
-    STANDARD_LAYOUTS.iter().map(|layout| layout.name).collect()
+    layouts().iter().map(|layout| layout.name).collect()
 }
 
 /// Resolve the layout that the selected device can actually carry.
@@ -270,10 +269,13 @@ pub fn resolve_layout_for_channels(
     max_channels: Option<u32>,
 ) -> (String, Option<String>) {
     let Some(requested_channels) = layout_channel_count(requested) else {
-        return (
-            "7.1.4".to_string(),
-            Some(format!("Unknown layout '{requested}'; using 7.1.4.")),
-        );
+        let (fallback, device_warning) = resolve_layout_for_channels("7.1.4", max_channels);
+        let mut warning = format!("Unknown layout '{requested}'; using {fallback}.");
+        if let Some(device_warning) = device_warning {
+            warning.push(' ');
+            warning.push_str(&device_warning);
+        }
+        return (fallback, Some(warning));
     };
 
     let Some(max_channels) = max_channels else {
@@ -330,6 +332,11 @@ pub fn build_pipeline(
     config: &OutputConfig,
     devices: &[DeviceInfo],
 ) -> Result<PipelineParts, PipelineError> {
+    let output_channels = match config.mode {
+        OutputMode::Speaker => layout_channel_count(&config.layout)
+            .ok_or_else(|| PipelineError::UnsupportedLayout(config.layout.clone()))?,
+        OutputMode::Binaural => 2,
+    };
     let codec = detect_codec(path)?;
     let pipeline = gst::Pipeline::new();
 
@@ -383,21 +390,11 @@ pub fn build_pipeline(
     let convert = element("audioconvert")?;
     let resample = element("audioresample")?;
     let capsfilter = element("capsfilter")?;
-    let caps = match config.mode {
-        OutputMode::Speaker => {
-            let channels = layout_channel_count(&config.layout).unwrap_or(2);
-            gst::Caps::builder("audio/x-raw")
-                .field("format", "F32LE")
-                .field("layout", "interleaved")
-                .field("channels", channels as i32)
-                .build()
-        }
-        OutputMode::Binaural => gst::Caps::builder("audio/x-raw")
-            .field("format", "F32LE")
-            .field("layout", "interleaved")
-            .field("channels", 2i32)
-            .build(),
-    };
+    let caps = gst::Caps::builder("audio/x-raw")
+        .field("format", "F32LE")
+        .field("layout", "interleaved")
+        .field("channels", output_channels as i32)
+        .build();
     capsfilter.set_property("caps", caps);
 
     let volume = element("volume")?;
@@ -539,6 +536,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn menu_lists_only_renderable_layouts() {
+        assert_eq!(
+            layout_names(),
+            [
+                "2.0", "3.1", "4.0", "5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4", "9.1.4",
+                "9.1.6"
+            ]
+        );
+        for name in ["3.0", "5.0", "7.1.6", "9.1.2", "unknown"] {
+            assert_eq!(layout_channel_count(name), None);
+            let config = OutputConfig {
+                layout: name.into(),
+                ..OutputConfig::default()
+            };
+            assert!(
+                matches!(build_pipeline(Path::new("unused.atmos"), &config, &[]),
+                Err(PipelineError::UnsupportedLayout(layout)) if layout == name)
+            );
+        }
+    }
+
+    #[test]
     fn fits_without_a_warning_when_the_device_is_wide_enough() {
         assert_eq!(
             resolve_layout_for_channels("7.1.4", Some(12)),
@@ -569,6 +588,9 @@ mod tests {
     fn an_unknown_layout_uses_the_perspective_default() {
         let (layout, warning) = resolve_layout_for_channels("nope", Some(12));
         assert_eq!(layout, "7.1.4");
+        assert!(warning.unwrap().contains("Unknown layout"));
+        let (layout, warning) = resolve_layout_for_channels("7.1.6", Some(2));
+        assert_eq!(layout, "2.0");
         assert!(warning.unwrap().contains("Unknown layout"));
     }
 

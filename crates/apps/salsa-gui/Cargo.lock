@@ -2209,6 +2209,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "objectaudio-render"
+version = "0.1.0"
+dependencies = [
+ "objectaudio-ir",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2643,6 +2651,7 @@ dependencies = [
  "gstreamer-app",
  "objectaudio-ir",
  "objectaudio-meta",
+ "objectaudio-render",
  "rfd",
  "serde",
  "serde_json",

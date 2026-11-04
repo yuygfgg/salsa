@@ -110,8 +110,8 @@ impl SpatialDecoder for TrueHdDecoder {
             .take(label_count)
             .enumerate()
             .filter(|(index, _)| *index != lfe_label)
-            .map(|(_, label)| bed_position(*label))
-            .collect();
+            .map(|(_, label)| bed_channel(*label))
+            .collect::<Result<_, _>>()?;
 
         let mapping = self.oamd.as_ref().map(|oamd| {
             let base = if saw_oamd { self.oamd_base_offset } else { 0 };
@@ -207,13 +207,9 @@ fn plane(pcm_data: &[[i32; 16]], channel: usize, frames: usize) -> Vec<f32> {
     plane
 }
 
-fn bed_position(label: ChannelLabel) -> SpeakerPosition {
-    bed_channel(label).unwrap_or(SpeakerPosition::Center)
-}
-
-fn bed_channel(label: ChannelLabel) -> Option<SpeakerPosition> {
+fn bed_channel(label: ChannelLabel) -> Result<SpeakerPosition, TrueHdError> {
     use ChannelLabel as L;
-    Some(match label {
+    Ok(match label {
         L::L => SpeakerPosition::Left,
         L::R => SpeakerPosition::Right,
         L::C => SpeakerPosition::Center,
@@ -230,10 +226,12 @@ fn bed_channel(label: ChannelLabel) -> Option<SpeakerPosition> {
         L::Tbr => SpeakerPosition::TopBackRight,
         L::Lw => SpeakerPosition::LeftWide,
         L::Rw => SpeakerPosition::RightWide,
-        L::LFE2 => SpeakerPosition::Lfe2,
-        // Lsc/Rsc/Cb/Tc/Lsd/Rsd/Tfc have no canonical IR position; keep the
-        // PCM channel but place it at a neutral object position.
-        L::Lsc | L::Rsc | L::Cb | L::Tc | L::Lsd | L::Rsd | L::Tfc => return None,
+        L::Cb => SpeakerPosition::CenterSurround,
+        L::Tc => SpeakerPosition::TopSurround,
+        L::Tfc => SpeakerPosition::VerticalHeightCenter,
+        L::LFE2 | L::Lsc | L::Rsc | L::Lsd | L::Rsd => {
+            return Err(TrueHdError::UnsupportedBedChannel(label));
+        }
     })
 }
 
@@ -242,15 +240,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_bed_label_maps_or_is_explicit_aux() {
-        assert_eq!(bed_channel(ChannelLabel::L), Some(SpeakerPosition::Left));
-        assert_eq!(bed_channel(ChannelLabel::LFE), Some(SpeakerPosition::Lfe));
-        assert_eq!(
-            bed_channel(ChannelLabel::Tfl),
-            Some(SpeakerPosition::TopFrontLeft)
-        );
-        assert_eq!(bed_channel(ChannelLabel::Cb), None);
-        assert_eq!(bed_position(ChannelLabel::Cb), SpeakerPosition::Center);
+    fn supported_bed_labels_have_explicit_positions() {
+        use ChannelLabel as L;
+        use SpeakerPosition as S;
+        for (label, expected) in [
+            (L::L, S::Left),
+            (L::R, S::Right),
+            (L::C, S::Center),
+            (L::LFE, S::Lfe),
+            (L::Ls, S::LeftSurround),
+            (L::Rs, S::RightSurround),
+            (L::Lb, S::LeftRearSurround),
+            (L::Rb, S::RightRearSurround),
+            (L::Tfl, S::TopFrontLeft),
+            (L::Tfr, S::TopFrontRight),
+            (L::Tsl, S::TopSideLeft),
+            (L::Tsr, S::TopSideRight),
+            (L::Tbl, S::TopBackLeft),
+            (L::Tbr, S::TopBackRight),
+            (L::Lw, S::LeftWide),
+            (L::Rw, S::RightWide),
+            (L::Cb, S::CenterSurround),
+            (L::Tc, S::TopSurround),
+            (L::Tfc, S::VerticalHeightCenter),
+        ] {
+            assert_eq!(bed_channel(label).unwrap(), expected, "{label:?}");
+        }
+    }
+
+    #[test]
+    fn unsupported_labels_fail_instead_of_becoming_center_objects() {
+        use ChannelLabel as L;
+        for label in [L::LFE2, L::Lsc, L::Rsc, L::Lsd, L::Rsd] {
+            assert!(matches!(bed_channel(label),
+                Err(TrueHdError::UnsupportedBedChannel(actual)) if actual == label));
+        }
     }
 
     #[test]

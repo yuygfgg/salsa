@@ -146,7 +146,7 @@ fn object_nearest_listener(shapes: &[Shape]) -> &egui::epaint::CircleShape {
 
 #[test]
 fn speaker_labels_match_the_output_layout() {
-    for layout in STANDARD_LAYOUTS {
+    for layout in objectaudio_render::layouts() {
         let shapes = render(
             OutputMode::Speaker,
             layout.name,

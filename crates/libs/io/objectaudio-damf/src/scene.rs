@@ -2,9 +2,9 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use objectaudio_ir::{ObjectEvent, ObjectState, StateTrack, Transition};
+use objectaudio_ir::{ObjectEvent, ObjectState, SpeakerPosition, StateTrack, Transition};
 
-use crate::{DamfError, DamfEvent, Manifest, Metadata, Result, bed_position};
+use crate::{DamfError, DamfEvent, Manifest, Metadata, Result};
 
 /// Complete inherited DAMF properties. Format-only properties stay here until
 /// a consumer explicitly projects them into its supported subset.
@@ -321,17 +321,13 @@ impl DamfScene {
             warnings: Vec::new(),
         };
         for (channel, bed) in manifest.beds.iter().enumerate() {
-            let lfe = bed.name.eq_ignore_ascii_case("LFE");
-            let position = if lfe {
-                [0.0; 3]
-            } else {
-                bed_position(&bed.name).unwrap_or_else(|| {
-                    scene
-                        .warnings
-                        .push(format!("unknown bed {:?}; using centre", bed.name));
-                    [0.0; 3]
-                })
-            };
+            let speaker = SpeakerPosition::from_bed_name(&bed.name).ok_or_else(|| {
+                DamfError::Invalid(format!("unsupported bed channel {:?}", bed.name))
+            })?;
+            if speaker == SpeakerPosition::Lfe2 {
+                return Err(DamfError::Invalid("LFE2 bed is not supported".into()));
+            }
+            let position = speaker.adm_position();
             let object = ResolvedObject {
                 obj_id: bed.id,
                 channel,
@@ -342,7 +338,7 @@ impl DamfScene {
                     Some(position),
                 ),
             };
-            if lfe {
+            if speaker == SpeakerPosition::Lfe {
                 if scene.lfe.is_some() {
                     return Err(DamfError::Invalid("multiple LFE beds".into()));
                 }
@@ -376,5 +372,60 @@ impl DamfScene {
             }
         }
         report
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::BedEntry;
+
+    fn resolve_beds(names: &[&str]) -> Result<DamfScene> {
+        let manifest = Manifest {
+            path: "test.atmos".into(),
+            audio: "test.atmos.audio".into(),
+            metadata: "test.atmos.metadata".into(),
+            offset: 0.0,
+            fps: 24.0,
+            beds: names
+                .iter()
+                .enumerate()
+                .map(|(id, name)| BedEntry {
+                    id: id as i64,
+                    name: (*name).into(),
+                })
+                .collect(),
+            objects: vec![],
+        };
+        DamfScene::resolve(
+            &manifest,
+            &Metadata {
+                sample_rate: 48_000,
+                events: vec![],
+            },
+        )
+    }
+
+    #[test]
+    fn beds_keep_source_channels_and_use_shared_positions() {
+        let names = ["L", "LFE", "Ls", "Lrs", "Lfh", "Tsl", "Lrh", "Lw"];
+        let scene = resolve_beds(&names).unwrap();
+        assert_eq!(scene.source_channels, names.len());
+        assert_eq!(scene.lfe.unwrap().channel, 1);
+        assert_eq!(scene.objects.len(), names.len() - 1);
+        for object in scene.objects {
+            let expected = crate::bed_position(names[object.channel]).unwrap();
+            assert_eq!(object.fixed_pos, Some(expected.map(f64::from)));
+        }
+    }
+
+    #[test]
+    fn unknown_and_second_lfe_beds_fail_before_conversion() {
+        for name in ["unknown", "LFE2"] {
+            let error = resolve_beds(&["LFE", name]).unwrap_err();
+            assert!(error.to_string().contains(name), "{error}");
+        }
+        assert!(resolve_beds(&["LFE", " lfe "]).is_err());
+        assert!(resolve_beds(&[" lfe "]).unwrap().lfe.is_some());
     }
 }

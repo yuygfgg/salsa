@@ -4,6 +4,9 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum OamdError {
+    #[error("OAMD LFE2 bed is not supported")]
+    UnsupportedLfe2,
+
     #[error("failed to parse OAMD payload: {0}")]
     Parse(#[source] anyhow::Error),
 

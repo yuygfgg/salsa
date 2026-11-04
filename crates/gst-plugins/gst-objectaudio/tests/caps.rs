@@ -4,6 +4,21 @@ use gstreamer_base::prelude::*;
 use gstsalsaobjectaudio::Oar;
 
 #[test]
+fn unknown_layout_is_rejected_instead_of_enabling_auto() {
+    gst::init().unwrap();
+    for name in ["typo", "3.0", "5.0", "7.1.6", "9.1.2"] {
+        let oar: Oar = glib::Object::new();
+        oar.set_property("layout", name);
+        assert!(oar.set_state(gst::State::Paused).is_err(), "{name}");
+        oar.set_state(gst::State::Null).unwrap();
+    }
+    let oar: Oar = glib::Object::new();
+    oar.set_property("layout", "auto");
+    assert!(oar.set_state(gst::State::Paused).is_ok());
+    oar.set_state(gst::State::Null).unwrap();
+}
+
+#[test]
 fn sink_caps_intersect_object_raw() {
     let _ = gst::init();
     let oar: Oar = glib::Object::new();
