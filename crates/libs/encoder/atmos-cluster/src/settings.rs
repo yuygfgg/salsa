@@ -108,55 +108,55 @@ impl Default for ClusterSettings {
 }
 
 impl ClusterSettings {
-    pub fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(self.max_objects > 0, "max_objects must be positive");
-        anyhow::ensure!(self.hop > 0, "hop must be positive");
-        anyhow::ensure!(self.window_ms > 0.0, "window_ms must be positive");
-        anyhow::ensure!(
+    pub fn validate(&self) -> crate::Result<()> {
+        crate::ensure!(self.max_objects > 0, "max_objects must be positive");
+        crate::ensure!(self.hop > 0, "hop must be positive");
+        crate::ensure!(self.window_ms > 0.0, "window_ms must be positive");
+        crate::ensure!(
             self.importance_smooth_s > 0.0,
             "importance_smooth_s must be positive"
         );
-        anyhow::ensure!(
+        crate::ensure!(
             self.adaptive_smooth_s >= 0.0,
             "adaptive_smooth_s must not be negative"
         );
-        anyhow::ensure!(self.gain_smooth_ms > 0.0, "gain_smooth_ms must be positive");
-        anyhow::ensure!(
+        crate::ensure!(self.gain_smooth_ms > 0.0, "gain_smooth_ms must be positive");
+        crate::ensure!(
             self.transient_db >= 0.0,
             "transient_db must not be negative"
         );
-        anyhow::ensure!(
+        crate::ensure!(
             self.audio_spatial_weight >= 0.0,
             "audio_spatial_weight must not be negative"
         );
-        anyhow::ensure!(
+        crate::ensure!(
             self.metadata_interval_frames >= 1,
             "metadata_interval_frames must be positive"
         );
-        anyhow::ensure!(
+        crate::ensure!(
             self.centroid_hold_ms >= 0.0,
             "centroid_hold_ms must not be negative"
         );
-        anyhow::ensure!(
+        crate::ensure!(
             self.centroid_stability >= 0.0,
             "centroid_stability must not be negative"
         );
-        anyhow::ensure!(
+        crate::ensure!(
             self.centroid_min_distance >= 0.0,
             "centroid_min_distance must not be negative"
         );
-        anyhow::ensure!(self.vad_gain_db >= 0.0, "vad_gain_db must not be negative");
-        anyhow::ensure!(
+        crate::ensure!(self.vad_gain_db >= 0.0, "vad_gain_db must not be negative");
+        crate::ensure!(
             (0.0..=1.0).contains(&self.vad_threshold),
             "vad_threshold must be in [0, 1]"
         );
-        anyhow::ensure!(
+        crate::ensure!(
             self.vad_smooth_ms >= 0.0,
             "vad_smooth_ms must not be negative"
         );
-        anyhow::ensure!(self.max_seconds >= 0.0, "max_seconds must not be negative");
+        crate::ensure!(self.max_seconds >= 0.0, "max_seconds must not be negative");
         if self.centroid_score == CentroidScore::Reconstruction {
-            anyhow::ensure!(
+            crate::ensure!(
                 self.assign == AssignMode::Audio,
                 "centroid-score reconstruction requires --assign audio"
             );

@@ -13,7 +13,8 @@
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, ensure};
+use crate::ensure;
+use crate::error::{Context, Result};
 use eac3joc::parameter_band_map;
 use objectaudio_damf::{CafReader, Manifest};
 use rustfft::{Fft, FftPlanner, num_complex::Complex32};
@@ -158,19 +159,32 @@ pub(crate) struct JocAnalyzer {
     matrices: Vec<[[f32; 5]; ENC_BANDS]>,
 }
 
+/// Tunables for [`JocAnalyzer::new`].
+pub(crate) struct AnalyzerConfig {
+    pub pan_mode: render::PanMode,
+    pub joc_lambda: f64,
+    pub ridge: f64,
+    pub refine_rounds: usize,
+    pub rd_passes: usize,
+    pub smooth: f64,
+    pub power_gate: f64,
+}
+
 impl JocAnalyzer {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         manifest: &Manifest,
         scene: &objectaudio_damf::DamfScene,
-        pan_mode: render::PanMode,
-        joc_lambda: f64,
-        ridge: f64,
-        refine_rounds: usize,
-        rd_passes: usize,
-        smooth: f64,
-        power_gate: f64,
+        config: AnalyzerConfig,
     ) -> Result<Self> {
+        let AnalyzerConfig {
+            pan_mode,
+            joc_lambda,
+            ridge,
+            refine_rounds,
+            rd_passes,
+            smooth,
+            power_gate,
+        } = config;
         let reader = CafReader::open(&manifest.audio)
             .with_context(|| format!("opening {}", manifest.audio.display()))?;
         let info = reader.info();

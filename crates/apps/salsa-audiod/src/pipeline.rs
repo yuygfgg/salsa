@@ -13,9 +13,6 @@ use gstreamer as gst;
 use gstreamer_app::{AppSink, AppSrc};
 
 use crate::queue::BoundedAppSrc;
-use gstsalsaeac3joc::{Eac3JocDec, Eac3JocParse};
-use gstsalsaobjectaudio::{HrtfRender, Oar};
-use gstsalsatruehd::{TrueHdAtmosDec, TrueHdParse};
 use salsa_codec::elements;
 
 pub use salsa_codec::Codec;
@@ -68,46 +65,11 @@ pub struct PipelineConfig {
 /// Register the Salsa elements explicitly so the binary does not depend on the
 /// host's GStreamer plug-in search path.
 pub fn init() -> Result<()> {
-    gst::init().context("GStreamer init failed")?;
-    objectaudio_meta::init().context("ObjectAudioMeta init failed")?;
-
-    let _ = gst::Element::register(
-        None,
-        elements::EAC3_PARSE,
-        gst::Rank::PRIMARY,
-        Eac3JocParse::static_type(),
-    );
-    let _ = gst::Element::register(
-        None,
-        elements::EAC3_DEC,
-        gst::Rank::PRIMARY,
-        Eac3JocDec::static_type(),
-    );
-    let _ = gst::Element::register(
-        None,
-        elements::TRUEHD_PARSE,
-        gst::Rank::PRIMARY,
-        TrueHdParse::static_type(),
-    );
-    let _ = gst::Element::register(
-        None,
-        elements::TRUEHD_DEC,
-        gst::Rank::PRIMARY,
-        TrueHdAtmosDec::static_type(),
-    );
-    let _ = gst::Element::register(None, elements::OAR, gst::Rank::PRIMARY, Oar::static_type());
-    let _ = gst::Element::register(
-        None,
-        elements::HRTF_RENDER,
-        gst::Rank::PRIMARY,
-        HrtfRender::static_type(),
-    );
-    Ok(())
+    salsa_gst_registry::init().context("GStreamer init failed")
 }
 
 fn element(factory: &str) -> Result<gst::Element> {
-    gst::ElementFactory::make(factory)
-        .build()
+    salsa_gst::element(factory)
         .with_context(|| format!("required element '{factory}' is unavailable"))
 }
 

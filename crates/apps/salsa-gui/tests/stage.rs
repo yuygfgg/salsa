@@ -74,13 +74,15 @@ fn render_snapshot_with_labels(
                     stage::draw(
                         ui,
                         Some(snapshot),
-                        layout,
-                        &mode,
                         state,
-                        true,
-                        labels_enabled,
-                        false,
-                        false,
+                        &stage::StageView {
+                            layout_name: layout,
+                            mode: &mode,
+                            visual_enabled: true,
+                            labels_enabled,
+                            reduce_motion: false,
+                            stale_hint: false,
+                        },
                     );
                 });
             },
@@ -580,13 +582,15 @@ fn object_at_listener_position_can_still_be_selected() {
                     stage::draw(
                         ui,
                         Some(&snapshot),
-                        "7.1.4",
-                        &OutputMode::Binaural,
                         &mut state,
-                        true,
-                        true,
-                        false,
-                        false,
+                        &stage::StageView {
+                            layout_name: "7.1.4",
+                            mode: &OutputMode::Binaural,
+                            visual_enabled: true,
+                            labels_enabled: true,
+                            reduce_motion: false,
+                            stale_hint: false,
+                        },
                     );
                 });
             },
@@ -749,13 +753,15 @@ fn hover_detail_still_shows_when_labels_are_hidden() {
                     stage::draw(
                         ui,
                         Some(&snapshot),
-                        "7.1.4",
-                        &OutputMode::Binaural,
                         &mut state,
-                        true,
-                        false,
-                        false,
-                        false,
+                        &stage::StageView {
+                            layout_name: "7.1.4",
+                            mode: &OutputMode::Binaural,
+                            visual_enabled: true,
+                            labels_enabled: false,
+                            reduce_motion: false,
+                            stale_hint: false,
+                        },
                     );
                 });
             },

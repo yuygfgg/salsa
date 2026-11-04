@@ -15,8 +15,6 @@ use gstreamer::glib::translate::IntoGlib;
 use objectaudio_ir::{ObjectEvent, ObjectState, SpatialPayload};
 use objectaudio_meta::{add_spatial, get_spatial};
 
-use gstsalsaobjectaudio::ObjectAudioAdapt;
-
 #[repr(C)]
 struct FakeDlbMeta {
     meta: gst::ffi::GstMeta,
@@ -118,13 +116,7 @@ fn ensure_dlb_meta() {
 fn init() {
     let _ = gst::init();
     ensure_dlb_meta();
-    let _ = objectaudio_meta::init();
-    let _ = gst::Element::register(
-        None,
-        "salsaobjectaudioadapt",
-        gst::Rank::PRIMARY,
-        ObjectAudioAdapt::static_type(),
-    );
+    let _ = salsa_gst_registry::init();
 }
 
 fn payload() -> SpatialPayload {

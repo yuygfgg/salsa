@@ -10,23 +10,9 @@ use std::sync::mpsc;
 use gst::PadProbeReturn;
 use gst::prelude::*;
 use gstreamer as gst;
-use gstsalsaeac3joc::{Eac3JocDec, Eac3JocParse};
 
 fn init() {
-    let _ = gst::init();
-    let _ = objectaudio_meta::init();
-    let _ = gst::Element::register(
-        None,
-        "salsaeac3jocparse",
-        gst::Rank::PRIMARY,
-        Eac3JocParse::static_type(),
-    );
-    let _ = gst::Element::register(
-        None,
-        "salsaeac3jocdec",
-        gst::Rank::PRIMARY,
-        Eac3JocDec::static_type(),
-    );
+    let _ = salsa_gst_registry::init();
 }
 
 fn run_pipeline(description: &str) -> (Arc<AtomicUsize>, Arc<AtomicUsize>, Arc<AtomicUsize>) {

@@ -35,4 +35,16 @@ pub enum Eac3JocError {
     Oamd(#[from] objectaudio_oamd::OamdError),
 }
 
+impl From<salsa_bitstream::BitstreamError> for Eac3JocError {
+    fn from(error: salsa_bitstream::BitstreamError) -> Self {
+        match error {
+            salsa_bitstream::BitstreamError::Truncated => Self::BitstreamTruncated,
+            salsa_bitstream::BitstreamError::TooManyGroups => {
+                Self::EmdfSyntax("variable_bits extension groups exceeded".into())
+            }
+            salsa_bitstream::BitstreamError::ValueTooLarge => Self::BitstreamTruncated,
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, Eac3JocError>;

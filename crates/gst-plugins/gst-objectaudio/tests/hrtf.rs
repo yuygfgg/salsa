@@ -8,30 +8,10 @@ use gst::prelude::*;
 use gstreamer as gst;
 use gstreamer::glib;
 use gstreamer_base::prelude::BaseTransformExtManual;
-use gstsalsaeac3joc::{Eac3JocDec, Eac3JocParse};
-use gstsalsaobjectaudio::{HrtfRender, Oar};
+use gstsalsaobjectaudio::HrtfRender;
 
 fn init() {
-    let _ = gst::init();
-    let _ = gst::Element::register(
-        None,
-        "salsaeac3jocparse",
-        gst::Rank::PRIMARY,
-        Eac3JocParse::static_type(),
-    );
-    let _ = gst::Element::register(
-        None,
-        "salsaeac3jocdec",
-        gst::Rank::PRIMARY,
-        Eac3JocDec::static_type(),
-    );
-    let _ = gst::Element::register(None, "salsaoar", gst::Rank::PRIMARY, Oar::static_type());
-    let _ = gst::Element::register(
-        None,
-        "salsahrtfrender",
-        gst::Rank::PRIMARY,
-        HrtfRender::static_type(),
-    );
+    let _ = salsa_gst_registry::init();
 }
 
 #[test]

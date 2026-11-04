@@ -21,18 +21,31 @@ pub struct ClusterFrameMetadata {
     pub active: Vec<bool>,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn select_centroids(
-    loudness: &Loudness,
-    excitation: &[f64],
-    f_cluster: &[f64],
-    active: &[bool],
-    content_prior: &[f64],
-    n_smooth: &[f64],
-    target: usize,
-    fixed_indices: &[usize],
-    sources: &[usize],
-) -> Vec<usize> {
+/// Inputs for [`select_centroids`].
+pub struct CentroidRequest<'a> {
+    pub loudness: &'a Loudness,
+    pub excitation: &'a [f64],
+    pub f_cluster: &'a [f64],
+    pub active: &'a [bool],
+    pub content_prior: &'a [f64],
+    pub n_smooth: &'a [f64],
+    pub target: usize,
+    pub fixed_indices: &'a [usize],
+    pub sources: &'a [usize],
+}
+
+pub fn select_centroids(request: CentroidRequest<'_>) -> Vec<usize> {
+    let CentroidRequest {
+        loudness,
+        excitation,
+        f_cluster,
+        active,
+        content_prior,
+        n_smooth,
+        target,
+        fixed_indices,
+        sources,
+    } = request;
     let n_sources = content_prior.len();
     if target >= n_sources {
         return (0..n_sources).collect();
@@ -300,19 +313,33 @@ pub fn assign_gains(
     gains
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn cluster_metadata(
-    gains: &[f64],
-    positions: &[[f64; 3]],
-    sizes: &[f64],
-    n_smooth: &[f64],
-    dialog: &[f64],
-    music: &[f64],
-    zones: &[String],
-    centroids: &[[f64; 3]],
-    source_power: &[f64],
-    audible: &[bool],
-) -> ClusterFrameMetadata {
+/// Inputs for [`cluster_metadata`].
+pub struct ClusterMetadataRequest<'a> {
+    pub gains: &'a [f64],
+    pub positions: &'a [[f64; 3]],
+    pub sizes: &'a [f64],
+    pub n_smooth: &'a [f64],
+    pub dialog: &'a [f64],
+    pub music: &'a [f64],
+    pub zones: &'a [String],
+    pub centroids: &'a [[f64; 3]],
+    pub source_power: &'a [f64],
+    pub audible: &'a [bool],
+}
+
+pub fn cluster_metadata(request: ClusterMetadataRequest<'_>) -> ClusterFrameMetadata {
+    let ClusterMetadataRequest {
+        gains,
+        positions,
+        sizes,
+        n_smooth,
+        dialog,
+        music,
+        zones,
+        centroids,
+        source_power,
+        audible,
+    } = request;
     let n_obj = positions.len();
     let n_cluster = centroids.len();
     let mut out_positions = vec![[0.0; 3]; n_cluster];

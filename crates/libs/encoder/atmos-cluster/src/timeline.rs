@@ -16,7 +16,7 @@ impl SourceSet {
     }
 }
 
-pub fn build_sources(manifest: &Manifest, metadata: &Metadata) -> anyhow::Result<SourceSet> {
+pub fn build_sources(manifest: &Manifest, metadata: &Metadata) -> crate::Result<SourceSet> {
     let scene = DamfScene::resolve(manifest, metadata)?;
     for warning in scene
         .warnings

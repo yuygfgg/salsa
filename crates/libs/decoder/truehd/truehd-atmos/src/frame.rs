@@ -60,7 +60,10 @@ impl TrueHdParser {
     }
 
     fn parse_frame(&mut self, frame: &ExtractFrame) -> Result<TrueHdFrame, TrueHdError> {
-        let access_unit = self.parser.parse(frame).map_err(TrueHdError::Parse)?;
+        let access_unit = self
+            .parser
+            .parse(frame)
+            .map_err(|error| TrueHdError::Parse(error.into()))?;
         self.parsed_frames += 1;
         Ok(TrueHdFrame {
             oamd: oamd_payloads(&access_unit),
@@ -133,7 +136,10 @@ impl TrueHdAccessUnitParser {
             index,
             offset,
         };
-        let access_unit = self.parser.parse(&frame).map_err(TrueHdError::Parse)?;
+        let access_unit = self
+            .parser
+            .parse(&frame)
+            .map_err(|error| TrueHdError::Parse(error.into()))?;
         self.parsed_frames += 1;
         Ok(TrueHdFrame {
             oamd: oamd_payloads(&access_unit),

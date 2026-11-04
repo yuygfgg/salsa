@@ -11,31 +11,8 @@ use gst::PadProbeReturn;
 use gst::prelude::*;
 use gstreamer as gst;
 
-use gstsalsaobjectaudio::{HrtfRender, Oar};
-use gstsalsatruehd::{TrueHdAtmosDec, TrueHdParse};
-
 fn init() {
-    let _ = gst::init();
-    let _ = objectaudio_meta::init();
-    let _ = gst::Element::register(
-        None,
-        "salsatruehdparse",
-        gst::Rank::PRIMARY,
-        TrueHdParse::static_type(),
-    );
-    let _ = gst::Element::register(
-        None,
-        "salsatruehdatmosdec",
-        gst::Rank::PRIMARY,
-        TrueHdAtmosDec::static_type(),
-    );
-    let _ = gst::Element::register(None, "salsaoar", gst::Rank::PRIMARY, Oar::static_type());
-    let _ = gst::Element::register(
-        None,
-        "salsahrtfrender",
-        gst::Rank::PRIMARY,
-        HrtfRender::static_type(),
-    );
+    let _ = salsa_gst_registry::init();
 }
 
 fn sample_path() -> Option<String> {

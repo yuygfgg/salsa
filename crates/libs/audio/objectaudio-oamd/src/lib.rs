@@ -27,7 +27,7 @@ pub fn parse(bytes: &[u8]) -> Result<OamdFrame, OamdError> {
 
 /// Parse one OAMD payload with explicit limits.
 pub fn parse_with_limits(bytes: &[u8], limits: OamdLimits) -> Result<OamdFrame, OamdError> {
-    let payload = ObjectAudioMetadataPayload::read(bytes).map_err(OamdError::Parse)?;
+    let payload = ObjectAudioMetadataPayload::read(bytes)?;
     OamdFrame::from_payload(&payload, limits)
 }
 

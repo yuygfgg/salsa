@@ -25,3 +25,4 @@ gstreamer-audio.workspace = true
 
 [dev-dependencies]
 gst-objectaudio = { path = "../gst-objectaudio" }
+salsa-gst-registry.workspace = true

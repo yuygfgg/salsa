@@ -64,7 +64,7 @@ impl Default for State {
             pending: PendingAudio::default(),
             in_bpf: 0,
             out_bpf: 0,
-            rate: 48_000,
+            rate: salsa_codec::SAMPLE_RATE,
             in_channels: 0,
             out_channels: 0,
         }
@@ -318,61 +318,51 @@ impl ObjectImpl for Oar {
 impl GstObjectImpl for Oar {}
 
 impl ElementImpl for Oar {
-    fn metadata() -> Option<&'static gst::subclass::ElementMetadata> {
-        static METADATA: OnceLock<gst::subclass::ElementMetadata> = OnceLock::new();
-        Some(METADATA.get_or_init(|| {
-            gst::subclass::ElementMetadata::new(
-                "Object Audio Renderer",
-                "Audio/Renderer",
-                "Renders object audio to a standard speaker layout",
-                "salsa",
-            )
-        }))
-    }
+    salsa_gst::element_metadata!(
+        "Object Audio Renderer",
+        "Audio/Renderer",
+        "Renders object audio to a standard speaker layout"
+    );
 
-    fn pad_templates() -> &'static [gst::PadTemplate] {
-        static TEMPLATES: OnceLock<Vec<gst::PadTemplate>> = OnceLock::new();
-        TEMPLATES.get_or_init(|| {
-            let sink_caps = Self::sink_caps(None, None);
+    salsa_gst::pad_templates!({
+        let sink_caps = Self::sink_caps(None, None);
 
-            let mut src_caps = gst::Caps::new_empty();
-            {
-                let caps = src_caps.get_mut().unwrap();
-                for layout in layouts() {
-                    let positions = layout_positions(layout);
-                    let mask =
-                        gst_audio::AudioChannelPosition::positions_to_mask(&positions, false)
-                            .unwrap_or(0);
-                    caps.append_structure(
-                        gst::Structure::builder("audio/x-raw")
-                            .field("format", "F32LE")
-                            .field("layout", "interleaved")
-                            .field("rate", gst::IntRange::new(32_000, 48_000))
-                            .field("channels", layout.channel_count() as i32)
-                            .field("channel-mask", gst::Bitmask(mask))
-                            .build(),
-                    );
-                }
+        let mut src_caps = gst::Caps::new_empty();
+        {
+            let caps = src_caps.get_mut().unwrap();
+            for layout in layouts() {
+                let positions = layout_positions(layout);
+                let mask = gst_audio::AudioChannelPosition::positions_to_mask(&positions, false)
+                    .unwrap_or(0);
+                caps.append_structure(
+                    gst::Structure::builder("audio/x-raw")
+                        .field("format", "F32LE")
+                        .field("layout", "interleaved")
+                        .field("rate", gst::IntRange::new(32_000, 48_000))
+                        .field("channels", layout.channel_count() as i32)
+                        .field("channel-mask", gst::Bitmask(mask))
+                        .build(),
+                );
             }
+        }
 
-            vec![
-                gst::PadTemplate::new(
-                    "sink",
-                    gst::PadDirection::Sink,
-                    gst::PadPresence::Always,
-                    &sink_caps,
-                )
-                .unwrap(),
-                gst::PadTemplate::new(
-                    "src",
-                    gst::PadDirection::Src,
-                    gst::PadPresence::Always,
-                    &src_caps,
-                )
-                .unwrap(),
-            ]
-        })
-    }
+        vec![
+            gst::PadTemplate::new(
+                "sink",
+                gst::PadDirection::Sink,
+                gst::PadPresence::Always,
+                &sink_caps,
+            )
+            .unwrap(),
+            gst::PadTemplate::new(
+                "src",
+                gst::PadDirection::Src,
+                gst::PadPresence::Always,
+                &src_caps,
+            )
+            .unwrap(),
+        ]
+    });
 }
 
 impl BaseTransformImpl for Oar {

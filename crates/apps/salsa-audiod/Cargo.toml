@@ -19,9 +19,6 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 env_logger = "0.11"
-gst-eac3joc = { path = "../../gst-plugins/gst-eac3joc" }
-gst-objectaudio = { path = "../../gst-plugins/gst-objectaudio" }
-gst-truehd = { path = "../../gst-plugins/gst-truehd" }
 gstreamer.workspace = true
 gstreamer-app.workspace = true
 gstreamer-audio.workspace = true
@@ -29,8 +26,9 @@ iec61937.workspace = true
 libc.workspace = true
 log.workspace = true
 objectaudio-hrtf.workspace = true
-objectaudio-meta.workspace = true
 salsa-codec.workspace = true
+salsa-gst.workspace = true
+salsa-gst-registry.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

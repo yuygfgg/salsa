@@ -195,21 +195,37 @@ impl GainObjective<'_> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn solve_gains(
-    covariance: &[f64],
-    source_pan: &[f64],
-    cluster_pan: &[f64],
-    positions: &[[f64; 3]],
-    centroids: &[[f64; 3]],
-    active: &[bool],
-    selected: &[usize],
-    fixed_indices: &[usize],
-    sizes: &[f64],
-    width_weight: f64,
-    spatial_weight: f64,
-    iterations: usize,
-) -> Vec<f64> {
+/// Inputs for [`solve_gains`].
+pub struct GainSolveRequest<'a> {
+    pub covariance: &'a [f64],
+    pub source_pan: &'a [f64],
+    pub cluster_pan: &'a [f64],
+    pub positions: &'a [[f64; 3]],
+    pub centroids: &'a [[f64; 3]],
+    pub active: &'a [bool],
+    pub selected: &'a [usize],
+    pub fixed_indices: &'a [usize],
+    pub sizes: &'a [f64],
+    pub width_weight: f64,
+    pub spatial_weight: f64,
+    pub iterations: usize,
+}
+
+pub fn solve_gains(request: GainSolveRequest<'_>) -> Vec<f64> {
+    let GainSolveRequest {
+        covariance,
+        source_pan,
+        cluster_pan,
+        positions,
+        centroids,
+        active,
+        selected,
+        fixed_indices,
+        sizes,
+        width_weight,
+        spatial_weight,
+        iterations,
+    } = request;
     let n_sources = positions.len();
     let n_clusters = selected.len();
     if n_clusters == 0 {
@@ -366,25 +382,45 @@ pub fn solve_gains(
     gains
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn select_centroids_reconstruction(
-    positions: &[[f64; 3]],
-    sizes: &[f64],
-    active: &[bool],
-    block: &[f64],
-    frames: usize,
-    importance: &[f64],
-    content_prior: &[f64],
-    target: usize,
-    fixed_indices: &[usize],
-    width_weight: f64,
-    spatial_weight: f64,
-    iterations: usize,
-    source_weighting: AudioSourceWeighting,
-    prev_selected: &[usize],
-    stability: f64,
-    min_centroid_distance: f64,
-) -> Vec<usize> {
+/// Inputs for [`select_centroids_reconstruction`].
+pub struct ReconstructionRequest<'a> {
+    pub positions: &'a [[f64; 3]],
+    pub sizes: &'a [f64],
+    pub active: &'a [bool],
+    pub block: &'a [f64],
+    pub frames: usize,
+    pub importance: &'a [f64],
+    pub content_prior: &'a [f64],
+    pub target: usize,
+    pub fixed_indices: &'a [usize],
+    pub width_weight: f64,
+    pub spatial_weight: f64,
+    pub iterations: usize,
+    pub source_weighting: AudioSourceWeighting,
+    pub prev_selected: &'a [usize],
+    pub stability: f64,
+    pub min_centroid_distance: f64,
+}
+
+pub fn select_centroids_reconstruction(request: ReconstructionRequest<'_>) -> Vec<usize> {
+    let ReconstructionRequest {
+        positions,
+        sizes,
+        active,
+        block,
+        frames,
+        importance,
+        content_prior,
+        target,
+        fixed_indices,
+        width_weight,
+        spatial_weight,
+        iterations,
+        source_weighting,
+        prev_selected,
+        stability,
+        min_centroid_distance,
+    } = request;
     let n_sources = positions.len();
     if target >= n_sources {
         return (0..n_sources).collect();
@@ -485,20 +521,20 @@ pub fn select_centroids_reconstruction(
                 }
             }
             let centroids: Vec<[f64; 3]> = selected.iter().map(|index| positions[*index]).collect();
-            let gains = solve_gains(
-                &covariance,
-                &source_pan,
-                &cluster_pan,
+            let gains = solve_gains(GainSolveRequest {
+                covariance: &covariance,
+                source_pan: &source_pan,
+                cluster_pan: &cluster_pan,
                 positions,
-                &centroids,
+                centroids: &centroids,
                 active,
-                &selected,
+                selected: &selected,
                 fixed_indices,
                 sizes,
                 width_weight,
                 spatial_weight,
                 iterations,
-            );
+            });
             let source_term = matrix::mat_mul(
                 &source_pan,
                 VIRTUAL_SPEAKERS,
@@ -679,20 +715,20 @@ mod tests {
                 assert_eq!(covariance[source * 3 + 1], 0.0);
             }
             let solve = |covariance: &[f64]| {
-                solve_gains(
+                solve_gains(GainSolveRequest {
                     covariance,
-                    &source_pan,
-                    &cluster_pan,
-                    &positions,
-                    &positions[..2],
-                    &active,
-                    &selected,
-                    &[1],
-                    &[0.0; 3],
-                    0.5,
-                    0.0,
-                    100,
-                )
+                    source_pan: &source_pan,
+                    cluster_pan: &cluster_pan,
+                    positions: &positions,
+                    centroids: &positions[..2],
+                    active: &active,
+                    selected: &selected,
+                    fixed_indices: &[1],
+                    sizes: &[0.0; 3],
+                    width_weight: 0.5,
+                    spatial_weight: 0.0,
+                    iterations: 100,
+                })
             };
             let gains = solve(&covariance);
             assert_eq!(gains, solve(&changed));
@@ -744,20 +780,20 @@ mod tests {
         let cluster_pan = panning_matrix(&positions[..2]);
         let covariance = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
         let weight = 0.2;
-        let gains = solve_gains(
-            &covariance,
-            &source_pan,
-            &cluster_pan,
-            &positions,
-            &positions[..2],
-            &[true; 3],
-            &[0, 1],
-            &[0, 1],
-            &[0.0; 3],
-            0.5,
-            weight,
-            500,
-        );
+        let gains = solve_gains(GainSolveRequest {
+            covariance: &covariance,
+            source_pan: &source_pan,
+            cluster_pan: &cluster_pan,
+            positions: &positions,
+            centroids: &positions[..2],
+            active: &[true; 3],
+            selected: &[0, 1],
+            fixed_indices: &[0, 1],
+            sizes: &[0.0; 3],
+            width_weight: 0.5,
+            spatial_weight: weight,
+            iterations: 500,
+        });
         let distances: Vec<f64> = positions
             .iter()
             .flat_map(|position| {

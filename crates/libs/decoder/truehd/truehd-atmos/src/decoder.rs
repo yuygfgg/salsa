@@ -77,7 +77,7 @@ impl SpatialDecoder for TrueHdDecoder {
         let decoded = self
             .decoder
             .decode_presentation(&frame.access_unit, OBJECT_PRESENTATION)
-            .map_err(TrueHdError::Decode)?;
+            .map_err(|error| TrueHdError::Decode(error.into()))?;
 
         if decoded.channel_count > MAX_CHANNELS {
             return Err(TrueHdError::ChannelCount {

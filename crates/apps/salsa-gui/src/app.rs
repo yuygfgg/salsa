@@ -393,7 +393,7 @@ impl SalsaApp {
                 && self
                     .source
                     .as_ref()
-                    .is_some_and(|source| source.codec == Codec::TrueHd)
+                    .is_some_and(|source| source.codec == Codec::TRUEHD)
             {
                 let difference = self.position.nseconds().abs_diff(target.nseconds());
                 if difference > 150_000_000 {
@@ -1041,13 +1041,15 @@ impl SalsaApp {
                 let action = stage::draw(
                     ui,
                     snapshot.as_ref(),
-                    &self.effective_layout,
-                    &self.settings.mode,
                     &mut self.stage,
-                    self.settings.visual_enabled,
-                    self.settings.labels_enabled,
-                    self.settings.reduce_motion,
-                    stale,
+                    &stage::StageView {
+                        layout_name: &self.effective_layout,
+                        mode: &self.settings.mode,
+                        visual_enabled: self.settings.visual_enabled,
+                        labels_enabled: self.settings.labels_enabled,
+                        reduce_motion: self.settings.reduce_motion,
+                        stale_hint: stale,
+                    },
                 );
                 match action {
                     Some(StageAction::ToggleFocus) => self.focus_mode = !self.focus_mode,

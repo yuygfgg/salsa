@@ -5,7 +5,8 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, ensure};
+use crate::ensure;
+use crate::error::{ClusterError, Context, Result};
 use objectaudio_damf::{
     BedEntry, CafReader, CafWriter, DamfEvent, Gain, Manifest, ManifestSpec, Metadata, ObjectEntry,
     write_manifest,
@@ -375,7 +376,6 @@ fn convert_to_caf(
     Ok(writer.finish()?)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn run_cluster(
     source: &Path,
     out: &Path,
@@ -402,7 +402,7 @@ pub fn run_cluster(
     }
     let total_frames = caf
         .total_frames()
-        .ok_or_else(|| anyhow::anyhow!("CAF essence has no known frame count"))?;
+        .ok_or_else(|| ClusterError::msg("CAF essence has no known frame count"))?;
     let total_frames = if settings.max_seconds > 0.0 {
         total_frames.min((settings.max_seconds * f64::from(sample_rate)).round() as u64)
     } else {
@@ -503,7 +503,7 @@ pub fn run_cluster(
         let stamp = std::time::Instant::now();
         let input = rx
             .recv()
-            .map_err(|_| anyhow::anyhow!("clustering reader thread stopped early"))??;
+            .map_err(|_| ClusterError::msg("clustering reader thread stopped early"))??;
         timing_read += stamp.elapsed().as_secs_f64();
         let stamp = std::time::Instant::now();
         let levels = loudness.band_levels(&input.window, n_sources);
@@ -566,7 +566,7 @@ pub fn run_cluster(
     drop(rx);
     producer
         .join()
-        .map_err(|_| anyhow::anyhow!("clustering reader thread panicked"))?;
+        .map_err(|_| ClusterError::msg("clustering reader thread panicked"))?;
     raw.flush()?;
     drop(raw);
     if std::env::var_os("SALSA_CLUSTER_TIMING").is_some() {

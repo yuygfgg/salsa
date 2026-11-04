@@ -56,10 +56,7 @@ pub fn parse_at(data: &[u8], start_bit: usize) -> Result<EmdfContainer> {
 
     let mut version = reader.read(2);
     if version == 3 {
-        version += reader.variable_bits(2, 8).map_err(|error| match error {
-            Eac3JocError::BitstreamTruncated => Eac3JocError::BitstreamTruncated,
-            other => other,
-        })?;
+        version += reader.variable_bits(2, 8)?;
     }
     let mut key_id = reader.read(3);
     if key_id == 7 {

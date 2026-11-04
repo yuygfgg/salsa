@@ -74,18 +74,28 @@ pub enum StageAction {
     ToggleFocus,
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Presentation options for [`draw`].
+pub struct StageView<'a> {
+    pub layout_name: &'a str,
+    pub mode: &'a OutputMode,
+    pub visual_enabled: bool,
+    pub labels_enabled: bool,
+    pub reduce_motion: bool,
+    pub stale_hint: bool,
+}
+
 pub fn draw(
     ui: &mut egui::Ui,
     snapshot: Option<&VisualSnapshot>,
-    layout_name: &str,
-    mode: &OutputMode,
     state: &mut StageState,
-    visual_enabled: bool,
-    labels_enabled: bool,
-    reduce_motion: bool,
-    stale_hint: bool,
+    view: &StageView<'_>,
 ) -> Option<StageAction> {
+    let layout_name = view.layout_name;
+    let mode = view.mode;
+    let visual_enabled = view.visual_enabled;
+    let labels_enabled = view.labels_enabled;
+    let reduce_motion = view.reduce_motion;
+    let stale_hint = view.stale_hint;
     let mut action = None;
     ui.horizontal_wrapped(|ui| {
         if ui.button("Top").clicked() {

@@ -8,10 +8,10 @@ pub enum TrueHdError {
     UnsupportedBedChannel(truehd::structs::channel::ChannelLabel),
 
     #[error("TrueHD access unit parse failed: {0}")]
-    Parse(#[source] anyhow::Error),
+    Parse(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     #[error("TrueHD decode failed: {0}")]
-    Decode(#[source] anyhow::Error),
+    Decode(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     #[error("OAMD payload parse failed: {0}")]
     Oamd(#[from] objectaudio_oamd::OamdError),

@@ -8,24 +8,10 @@ use gst::glib::prelude::*;
 use gst::prelude::*;
 use gstreamer as gst;
 
-use gstsalsadamf::{DamfSink, DamfSrc};
 use objectaudio_ir::{ObjectEvent, ObjectState, SceneTimeline, SpatialPayload, Transition};
 
 fn init() {
-    let _ = gst::init();
-    let _ = objectaudio_meta::init();
-    let _ = gst::Element::register(
-        None,
-        "salsadamfsrc",
-        gst::Rank::PRIMARY,
-        DamfSrc::static_type(),
-    );
-    let _ = gst::Element::register(
-        None,
-        "salsadamfsink",
-        gst::Rank::PRIMARY,
-        DamfSink::static_type(),
-    );
+    let _ = salsa_gst_registry::init();
 }
 
 fn unique_dir() -> PathBuf {

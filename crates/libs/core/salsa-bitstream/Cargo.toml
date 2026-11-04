@@ -1,0 +1,10 @@
+[package]
+name = "salsa-bitstream"
+description = "MSB-first bit reader/writer shared by the Salsa codecs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

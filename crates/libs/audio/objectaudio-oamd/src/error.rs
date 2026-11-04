@@ -8,7 +8,10 @@ pub enum OamdError {
     UnsupportedLfe2,
 
     #[error("failed to parse OAMD payload: {0}")]
-    Parse(#[source] anyhow::Error),
+    Parse(String),
+
+    #[error("OAMD bitstream read failed: {0}")]
+    Bitstream(#[from] std::io::Error),
 
     #[error("OAMD declares {count} objects, limit is {limit}")]
     TooManyObjects { count: usize, limit: usize },

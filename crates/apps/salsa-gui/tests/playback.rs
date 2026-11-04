@@ -1,7 +1,7 @@
 //! Opt-in real-stream smoke tests for the playback shell and visual tap.
 //!
-//! Run with the Salsa plugins on `GST_PLUGIN_PATH`, a real stream, and the
-//! headless sink override:
+//! Run with a real stream and the headless sink override; the Salsa elements
+//! are registered in-process:
 //!
 //! ```sh
 //! SALSA_TEST_EC3=stream.ec3 SALSA_TEST_DAMF=master.atmos \
@@ -28,7 +28,7 @@ fn run(variable: &str) {
         eprintln!("set SALSA_SINK_OVERRIDE=fakesink to run the headless playback test");
         return;
     }
-    gst::init().expect("gst init");
+    salsa_gst_registry::init().expect("gst init");
     let config = OutputConfig {
         mode: OutputMode::Speaker,
         layout: "7.1.4".to_string(),
@@ -105,7 +105,7 @@ fn binaural_playback_reaches_the_visual_tap() {
         eprintln!("set SALSA_SINK_OVERRIDE=fakesink to run the headless playback test");
         return;
     }
-    gst::init().expect("gst init");
+    salsa_gst_registry::init().expect("gst init");
     let mut config = OutputConfig {
         mode: OutputMode::Binaural,
         layout: "7.1.4".to_string(),
@@ -153,7 +153,7 @@ fn flush_seek_moves_forward_and_backward() {
         eprintln!("set SALSA_SINK_OVERRIDE=fakesink SALSA_SINK_SYNC=true to run the seek test");
         return;
     }
-    gst::init().expect("gst init");
+    salsa_gst_registry::init().expect("gst init");
     let config = OutputConfig {
         mode: OutputMode::Speaker,
         layout: "7.1.4".to_string(),
@@ -204,7 +204,7 @@ fn flush_seek_moves_forward_and_backward() {
 
 #[test]
 fn device_enumeration_is_safe() {
-    gst::init().expect("gst init");
+    salsa_gst_registry::init().expect("gst init");
     let devices = salsa_gui::pipeline::enumerate_devices();
     eprintln!("{} audio sink devices", devices.len());
     for device in &devices {
@@ -230,7 +230,7 @@ fn non_atmos_stream_is_rejected() {
         eprintln!("set SALSA_SINK_OVERRIDE=fakesink to run the headless playback test");
         return;
     }
-    gst::init().expect("gst init");
+    salsa_gst_registry::init().expect("gst init");
     let config = OutputConfig {
         mode: OutputMode::Speaker,
         layout: "7.1.4".to_string(),
@@ -262,7 +262,7 @@ fn duration_scan_in_a_worker_is_safe() {
         eprintln!("SALSA_TEST_EC3 is unset; skipping");
         return;
     };
-    gst::init().expect("gst init");
+    salsa_gst_registry::init().expect("gst init");
     let path = PathBuf::from(path);
     let codec = salsa_gui::pipeline::detect_codec(&path).expect("codec");
     let (sender, receiver) = std::sync::mpsc::channel();

@@ -2,25 +2,42 @@
 //! Audio-reconstruction-driven source-to-cluster assignment.
 
 use crate::panning::panning_matrix;
-use crate::reconstruction::{solve_gains, source_covariance};
+use crate::reconstruction::{GainSolveRequest, solve_gains, source_covariance};
 use crate::settings::{AudioSourceWeighting, SILENCE_POWER};
 
-#[allow(clippy::too_many_arguments)]
-pub fn audio_reconstruction_gains(
-    block: &[f64],
-    frames: usize,
-    positions: &[[f64; 3]],
-    sizes: &[f64],
-    active: &[bool],
-    selected: &[usize],
-    centroids: &[[f64; 3]],
-    width_weight: f64,
-    spatial_weight: f64,
-    iterations: usize,
-    anchor_indices: Option<&[usize]>,
-    source_weighting: AudioSourceWeighting,
-    importance: Option<&[f64]>,
-) -> Vec<f64> {
+/// Inputs for [`audio_reconstruction_gains`].
+pub struct AudioAssignRequest<'a> {
+    pub block: &'a [f64],
+    pub frames: usize,
+    pub positions: &'a [[f64; 3]],
+    pub sizes: &'a [f64],
+    pub active: &'a [bool],
+    pub selected: &'a [usize],
+    pub centroids: &'a [[f64; 3]],
+    pub width_weight: f64,
+    pub spatial_weight: f64,
+    pub iterations: usize,
+    pub anchor_indices: Option<&'a [usize]>,
+    pub source_weighting: AudioSourceWeighting,
+    pub importance: Option<&'a [f64]>,
+}
+
+pub fn audio_reconstruction_gains(request: AudioAssignRequest<'_>) -> Vec<f64> {
+    let AudioAssignRequest {
+        block,
+        frames,
+        positions,
+        sizes,
+        active,
+        selected,
+        centroids,
+        width_weight,
+        spatial_weight,
+        iterations,
+        anchor_indices,
+        source_weighting,
+        importance,
+    } = request;
     let n_sources = positions.len();
     let n_clusters = selected.len();
     if n_clusters == 0 {
@@ -57,18 +74,18 @@ pub fn audio_reconstruction_gains(
     let source_pan = panning_matrix(positions);
     let cluster_pan = panning_matrix(centroids);
     let empty: [usize; 0] = [];
-    solve_gains(
-        &source_cov,
-        &source_pan,
-        &cluster_pan,
+    solve_gains(GainSolveRequest {
+        covariance: &source_cov,
+        source_pan: &source_pan,
+        cluster_pan: &cluster_pan,
         positions,
         centroids,
-        &audible,
+        active: &audible,
         selected,
-        anchor_indices.unwrap_or(&empty),
+        fixed_indices: anchor_indices.unwrap_or(&empty),
         sizes,
         width_weight,
         spatial_weight,
         iterations,
-    )
+    })
 }

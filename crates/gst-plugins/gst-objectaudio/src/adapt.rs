@@ -19,7 +19,7 @@ use objectaudio_meta::{CAPS_FEATURE, DLB_CAPS_FEATURE};
 /// Dolby's `dlboar` sink caps accept `channels = [1, 32]`.
 const MAX_CHANNELS: i32 = 32;
 const MIN_RATE: i32 = 32_000;
-const MAX_RATE: i32 = 48_000;
+const MAX_RATE: i32 = salsa_codec::SAMPLE_RATE as i32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum Direction {
@@ -69,7 +69,7 @@ impl Default for State {
             remove_dlb: false,
             direction: Direction::Auto,
             resolved: Direction::ToDolby,
-            rate: 48_000,
+            rate: salsa_codec::SAMPLE_RATE,
             in_format: None,
             out_format: None,
             scene: None,
@@ -292,41 +292,32 @@ impl ObjectImpl for ObjectAudioAdapt {
 impl GstObjectImpl for ObjectAudioAdapt {}
 
 impl ElementImpl for ObjectAudioAdapt {
-    fn metadata() -> Option<&'static gst::subclass::ElementMetadata> {
-        static METADATA: OnceLock<gst::subclass::ElementMetadata> = OnceLock::new();
-        Some(METADATA.get_or_init(|| {
-            gst::subclass::ElementMetadata::new(
-                "Salsa/Dolby Object Audio Adapter",
-                "Filter/Audio",
-                "Bridges salsa SpatialPayload metadata and Dolby OAMD metadata",
-                "salsa",
-            )
-        }))
-    }
+    salsa_gst::element_metadata!(
+        "Salsa/Dolby Object Audio Adapter",
+        "Filter/Audio",
+        "Bridges salsa SpatialPayload metadata and Dolby OAMD metadata"
+    );
 
-    fn pad_templates() -> &'static [gst::PadTemplate] {
-        static TEMPLATES: OnceLock<Vec<gst::PadTemplate>> = OnceLock::new();
-        TEMPLATES.get_or_init(|| {
-            let sink_caps = Self::template_caps(&Self::sink_features());
-            let src_caps = Self::template_caps(&Self::src_features(Direction::Auto, false));
-            vec![
-                gst::PadTemplate::new(
-                    "sink",
-                    gst::PadDirection::Sink,
-                    gst::PadPresence::Always,
-                    &sink_caps,
-                )
-                .unwrap(),
-                gst::PadTemplate::new(
-                    "src",
-                    gst::PadDirection::Src,
-                    gst::PadPresence::Always,
-                    &src_caps,
-                )
-                .unwrap(),
-            ]
-        })
-    }
+    salsa_gst::pad_templates!({
+        let sink_caps = Self::template_caps(&Self::sink_features());
+        let src_caps = Self::template_caps(&Self::src_features(Direction::Auto, false));
+        vec![
+            gst::PadTemplate::new(
+                "sink",
+                gst::PadDirection::Sink,
+                gst::PadPresence::Always,
+                &sink_caps,
+            )
+            .unwrap(),
+            gst::PadTemplate::new(
+                "src",
+                gst::PadDirection::Src,
+                gst::PadPresence::Always,
+                &src_caps,
+            )
+            .unwrap(),
+        ]
+    });
 }
 
 impl BaseTransformImpl for ObjectAudioAdapt {

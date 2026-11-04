@@ -17,7 +17,7 @@ use objectaudio_hrtf::{
 };
 
 const OUTPUT_CHANNELS: usize = 2;
-const SAMPLE_RATE: u32 = 48_000;
+const SAMPLE_RATE: u32 = salsa_codec::SAMPLE_RATE;
 /// The renderer is codec agnostic; decoders fold the codec delay into the
 /// metadata offsets they attach.
 const DEFAULT_OBJECT_DELAY: u32 = 0;
@@ -320,47 +320,38 @@ impl ObjectImpl for HrtfRender {
 impl GstObjectImpl for HrtfRender {}
 
 impl ElementImpl for HrtfRender {
-    fn metadata() -> Option<&'static gst::subclass::ElementMetadata> {
-        static METADATA: OnceLock<gst::subclass::ElementMetadata> = OnceLock::new();
-        Some(METADATA.get_or_init(|| {
-            gst::subclass::ElementMetadata::new(
-                "HRTF Binaural Renderer",
-                "Audio/Renderer",
-                "Renders object audio through a Rosella personalized headphone model",
-                "salsa",
-            )
-        }))
-    }
+    salsa_gst::element_metadata!(
+        "HRTF Binaural Renderer",
+        "Audio/Renderer",
+        "Renders object audio through a Rosella personalized headphone model"
+    );
 
-    fn pad_templates() -> &'static [gst::PadTemplate] {
-        static TEMPLATES: OnceLock<Vec<gst::PadTemplate>> = OnceLock::new();
-        TEMPLATES.get_or_init(|| {
-            let sink_caps = Self::sink_caps(None, None);
-            let src_caps: gst::Caps = format!(
-                "audio/x-raw, format=(string)F32LE, layout=(string)interleaved, \
-                 channels=(int){OUTPUT_CHANNELS}, rate=(int){SAMPLE_RATE}, \
-                 channel-mask=(bitmask)0x3"
+    salsa_gst::pad_templates!({
+        let sink_caps = Self::sink_caps(None, None);
+        let src_caps: gst::Caps = format!(
+            "audio/x-raw, format=(string)F32LE, layout=(string)interleaved, \
+     channels=(int){OUTPUT_CHANNELS}, rate=(int){SAMPLE_RATE}, \
+     channel-mask=(bitmask)0x3"
+        )
+        .parse()
+        .unwrap();
+        vec![
+            gst::PadTemplate::new(
+                "sink",
+                gst::PadDirection::Sink,
+                gst::PadPresence::Always,
+                &sink_caps,
             )
-            .parse()
-            .unwrap();
-            vec![
-                gst::PadTemplate::new(
-                    "sink",
-                    gst::PadDirection::Sink,
-                    gst::PadPresence::Always,
-                    &sink_caps,
-                )
-                .unwrap(),
-                gst::PadTemplate::new(
-                    "src",
-                    gst::PadDirection::Src,
-                    gst::PadPresence::Always,
-                    &src_caps,
-                )
-                .unwrap(),
-            ]
-        })
-    }
+            .unwrap(),
+            gst::PadTemplate::new(
+                "src",
+                gst::PadDirection::Src,
+                gst::PadPresence::Always,
+                &src_caps,
+            )
+            .unwrap(),
+        ]
+    });
 }
 
 impl BaseTransformImpl for HrtfRender {

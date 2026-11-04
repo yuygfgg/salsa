@@ -534,15 +534,14 @@ Features:
 Build and run:
 
 ```sh
-cargo build --release -p gst-eac3joc -p gst-objectaudio -p gst-truehd -p gst-damf
-cd crates/apps/salsa-gui
-cargo run --release -- /path/to/stream.ec3
+cargo run --release -p salsa-gui -- /path/to/stream.ec3
 ```
 
+The GUI is part of the root workspace and registers the Salsa GStreamer elements
+in-process, so no plugin build or `GST_PLUGIN_PATH` setup is required.
+
 With no path argument, use `Cmd+O`, the Open button, or drag and drop. Playback
-starts paused. The app auto-detects the repo's `target/release` or
-`target/debug` plugin directory; otherwise set `GST_PLUGIN_PATH` before
-launching. On macOS it sets `GST_REGISTRY_FORK=no` automatically.
+starts paused.
 
 Binaural playback needs a Rosella model; choose one in the Output panel. Raw
 TrueHD has no container duration, so the app scans the parser output in the
@@ -555,32 +554,29 @@ SALSA_MODEL=/path/to/model.personalized_headphone \
   crates/apps/salsa-gui/scripts/bundle-macos.sh
 ```
 
-This produces `crates/apps/salsa-gui/target/release/Salsa Studio.app`, copies the
-four Salsa plugin dylibs into `Contents/Resources/gstreamer-1.0`, optionally
-bundles the model, and ad-hoc signs the app. It still uses the host GStreamer
-and FFmpeg installations; it does not bundle a GStreamer runtime.
+This produces `target/release/Salsa Studio.app`, optionally bundles the model,
+and ad-hoc signs the app. The Salsa elements are linked into the binary; it
+still uses the host GStreamer and FFmpeg installations and does not bundle a
+GStreamer runtime.
 
 ### GUI tests
 
-The GUI is a separate workspace, so run its tests from `crates/apps/salsa-gui`:
+Run the GUI tests from the workspace root:
 
 ```sh
-cd crates/apps/salsa-gui
-cargo test
+cargo test -p salsa-gui
 ```
 
 Real-stream playback tests are opt-in and use a headless sink:
 
 ```sh
-cd crates/apps/salsa-gui
 SALSA_TEST_EC3=/path/to/stream.ec3 \
 SALSA_TEST_TRUEHD=/path/to/master.mlp \
 SALSA_TEST_DAMF=/path/to/master.atmos \
 SALSA_TEST_NONATMOS=/path/to/non-atmos.ec3 \
 SALSA_TEST_MODEL=/path/to/model.personalized_headphone \
 SALSA_SINK_OVERRIDE=fakesink SALSA_SINK_SYNC=true \
-GST_PLUGIN_PATH=$PWD/../../target/debug \
-cargo test --test playback
+cargo test -p salsa-gui --test playback
 ```
 
 Without these variables the tests skip.

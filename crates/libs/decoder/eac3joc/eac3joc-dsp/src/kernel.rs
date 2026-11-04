@@ -180,7 +180,6 @@ impl JocKernel {
     /// `bed` is planar `core_channels * 1536`, `lfe` is 1536 samples and
     /// `output` is planar `16 * 1536` with LFE in channel 0 and JOC objects in
     /// channels 1..15.
-    #[allow(clippy::too_many_arguments)]
     pub fn process(
         &mut self,
         bed: &[f32],

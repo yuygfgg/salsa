@@ -164,7 +164,7 @@ impl Drop for Player {
 }
 
 fn has_object_audio(codec: Codec, parser: Option<&gst::Element>) -> bool {
-    if codec == Codec::Damf {
+    if codec == Codec::DAMF {
         return true;
     }
     parser

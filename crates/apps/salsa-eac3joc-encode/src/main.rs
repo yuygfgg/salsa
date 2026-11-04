@@ -438,7 +438,8 @@ fn main() -> Result<()> {
         emdf_key,
         emdf_key_id: cli.emdf_key_id,
     };
-    eac3joc_encoder::encode(&cli.master, &cli.out, &options)
+    eac3joc_encoder::encode(&cli.master, &cli.out, &options)?;
+    Ok(())
 }
 
 /// `ddpmeta` binary key-set magic (version 1).

@@ -16,7 +16,7 @@ use objectaudio_ir::{SceneTimeline, SpatialPayload};
 
 const MAX_CHANNELS: i32 = 1024;
 const MIN_RATE: i32 = 8_000;
-const MAX_RATE: i32 = 192_000;
+const MAX_RATE: i32 = salsa_codec::CARRIER_SAMPLE_RATE as i32;
 const DEFAULT_LFE_ID: i32 = 3;
 const DEFAULT_OBJECT_ID_BASE: i32 = 10;
 const DEFAULT_FPS: f64 = 24.0;
@@ -327,32 +327,23 @@ impl ObjectImpl for DamfSink {
 impl GstObjectImpl for DamfSink {}
 
 impl ElementImpl for DamfSink {
-    fn metadata() -> Option<&'static gst::subclass::ElementMetadata> {
-        static METADATA: OnceLock<gst::subclass::ElementMetadata> = OnceLock::new();
-        Some(METADATA.get_or_init(|| {
-            gst::subclass::ElementMetadata::new(
-                "DAMF Sink",
-                "Sink/Audio",
-                "Writes raw object audio and ObjectAudioMeta as a DAMF presentation",
-                "salsa",
-            )
-        }))
-    }
+    salsa_gst::element_metadata!(
+        "DAMF Sink",
+        "Sink/Audio",
+        "Writes raw object audio and ObjectAudioMeta as a DAMF presentation"
+    );
 
-    fn pad_templates() -> &'static [gst::PadTemplate] {
-        static TEMPLATES: OnceLock<Vec<gst::PadTemplate>> = OnceLock::new();
-        TEMPLATES.get_or_init(|| {
-            vec![
-                gst::PadTemplate::new(
-                    "sink",
-                    gst::PadDirection::Sink,
-                    gst::PadPresence::Always,
-                    &broad_caps(),
-                )
-                .unwrap(),
-            ]
-        })
-    }
+    salsa_gst::pad_templates!({
+        vec![
+            gst::PadTemplate::new(
+                "sink",
+                gst::PadDirection::Sink,
+                gst::PadPresence::Always,
+                &broad_caps(),
+            )
+            .unwrap(),
+        ]
+    });
 }
 
 impl BaseSinkImpl for DamfSink {
@@ -533,12 +524,12 @@ mod tests {
     #[test]
     fn collects_snapshots_and_events_on_the_signed_timeline() {
         let mut state = State {
-            rate: 48_000,
+            rate: salsa_codec::SAMPLE_RATE,
             channels: 3,
             ..State::default()
         };
         let payload = SpatialPayload::new(
-            48_000,
+            salsa_codec::SAMPLE_RATE,
             vec![
                 ObjectState {
                     id: 1,

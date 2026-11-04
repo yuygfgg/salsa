@@ -2,7 +2,9 @@
 resolver = "3"
 members = [
     "crates/libs/core/salsa-codec",
+    "crates/libs/core/salsa-bitstream",
     "crates/libs/gst/salsa-gst",
+    "crates/libs/gst/salsa-gst-registry",
     "crates/libs/audio/objectaudio-ir",
     "crates/libs/audio/objectaudio-oamd",
     "crates/libs/decoder/eac3joc/eac3joc",
@@ -24,6 +26,7 @@ members = [
     "crates/apps/salsa-eac3joc-encode",
     "crates/apps/salsa-cluster",
     "crates/apps/salsa-audiod",
+    "crates/apps/salsa-gui",
 ]
 
 [workspace.package]
@@ -35,7 +38,9 @@ publish = false
 
 [workspace.dependencies]
 salsa-codec = { path = "crates/libs/core/salsa-codec" }
+salsa-bitstream = { path = "crates/libs/core/salsa-bitstream" }
 salsa-gst = { path = "crates/libs/gst/salsa-gst" }
+salsa-gst-registry = { path = "crates/libs/gst/salsa-gst-registry" }
 objectaudio-ir = { path = "crates/libs/audio/objectaudio-ir" }
 eac3joc-encoder = { path = "crates/libs/encoder/eac3joc-encoder" }
 atmos-cluster = { path = "crates/libs/encoder/atmos-cluster" }
@@ -62,7 +67,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 postcard = { version = "1", features = ["alloc"] }
-bitstream-io = "4"
 sha2 = "0.10"
 ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format"] }
 gstreamer = "0.24"

@@ -14,7 +14,7 @@ use truehd::process::parse::Parser as AccessUnitParser;
 use truehd::structs::access_unit::AccessUnit;
 use truehd::utils::errors::ExtractError;
 
-const DEFAULT_RATE: u32 = 48_000;
+const DEFAULT_RATE: u32 = salsa_codec::SAMPLE_RATE;
 const DEFAULT_SAMPLES: usize = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,10 +110,7 @@ impl TrueHdParse {
             .field("rate", info.rate as i32)
             .field("atmos", info.atmos)
             .build();
-        let borrowed = self.obj();
-        let object: &super::TrueHdParse = borrowed.as_ref();
-        <super::TrueHdParse as gst_base::prelude::BaseParseExtManual>::src_pad(object)
-            .push_event(gst::event::Caps::new(&src_caps))
+        salsa_gst::push_parse_caps!(self, src_caps)
     }
 
     fn update_caps(&self, state: &mut State, info: CapsInfo) -> Option<CapsInfo> {
@@ -147,47 +144,37 @@ impl ObjectImpl for TrueHdParse {}
 impl GstObjectImpl for TrueHdParse {}
 
 impl ElementImpl for TrueHdParse {
-    fn metadata() -> Option<&'static gst::subclass::ElementMetadata> {
-        static METADATA: std::sync::OnceLock<gst::subclass::ElementMetadata> =
-            std::sync::OnceLock::new();
-        Some(METADATA.get_or_init(|| {
-            gst::subclass::ElementMetadata::new(
-                "TrueHD Parser",
-                "Codec/Parser/Audio",
-                "Frames TrueHD Atmos access units",
-                "salsa",
-            )
-        }))
-    }
+    salsa_gst::element_metadata!(
+        "TrueHD Parser",
+        "Codec/Parser/Audio",
+        "Frames TrueHD Atmos access units"
+    );
 
-    fn pad_templates() -> &'static [gst::PadTemplate] {
-        static TEMPLATES: std::sync::OnceLock<Vec<gst::PadTemplate>> = std::sync::OnceLock::new();
-        TEMPLATES.get_or_init(|| {
-            let sink_caps: gst::Caps = "audio/x-true-hd; audio/x-truehd".parse().unwrap();
-            let src_caps: gst::Caps =
-                "audio/x-true-hd, framed=(boolean)true, alignment=(string)frame, \
-                 rate=(int){44100,48000,88200,96000,176400,192000}, \
-                 atmos=(boolean){false,true}"
-                    .parse()
-                    .unwrap();
-            vec![
-                gst::PadTemplate::new(
-                    "sink",
-                    gst::PadDirection::Sink,
-                    gst::PadPresence::Always,
-                    &sink_caps,
-                )
-                .unwrap(),
-                gst::PadTemplate::new(
-                    "src",
-                    gst::PadDirection::Src,
-                    gst::PadPresence::Always,
-                    &src_caps,
-                )
-                .unwrap(),
-            ]
-        })
-    }
+    salsa_gst::pad_templates!({
+        let sink_caps: gst::Caps = "audio/x-true-hd; audio/x-truehd".parse().unwrap();
+        let src_caps: gst::Caps =
+            "audio/x-true-hd, framed=(boolean)true, alignment=(string)frame, \
+     rate=(int){44100,48000,88200,96000,176400,192000}, \
+     atmos=(boolean){false,true}"
+                .parse()
+                .unwrap();
+        vec![
+            gst::PadTemplate::new(
+                "sink",
+                gst::PadDirection::Sink,
+                gst::PadPresence::Always,
+                &sink_caps,
+            )
+            .unwrap(),
+            gst::PadTemplate::new(
+                "src",
+                gst::PadDirection::Src,
+                gst::PadPresence::Always,
+                &src_caps,
+            )
+            .unwrap(),
+        ]
+    });
 }
 
 impl BaseParseImpl for TrueHdParse {

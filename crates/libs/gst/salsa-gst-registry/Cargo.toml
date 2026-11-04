@@ -1,0 +1,18 @@
+[package]
+name = "salsa-gst-registry"
+description = "Explicit registration of every Salsa GStreamer element"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gst-damf = { path = "../../../gst-plugins/gst-damf" }
+gst-eac3joc = { path = "../../../gst-plugins/gst-eac3joc" }
+gst-objectaudio = { path = "../../../gst-plugins/gst-objectaudio" }
+gst-truehd = { path = "../../../gst-plugins/gst-truehd" }
+gstreamer.workspace = true
+objectaudio-meta.workspace = true
+salsa-codec.workspace = true
+salsa-gst.workspace = true

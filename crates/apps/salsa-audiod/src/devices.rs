@@ -3,8 +3,6 @@
 use std::io::{BufRead, IsTerminal, Write};
 
 use anyhow::{Context, Result, bail};
-use gst::prelude::*;
-use gstreamer as gst;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,37 +56,19 @@ impl AudioDevice {
 /// List devices that can be used as a physical output. Salsa's own virtual
 /// carrier device is hidden unless `include_virtual` is set.
 pub fn list_output_devices(include_virtual: bool) -> Result<Vec<AudioDevice>> {
-    gst::init().context("GStreamer init failed")?;
-    let monitor = gst::DeviceMonitor::new();
-    monitor.add_filter(Some("Audio/Sink"), Some(&gst::Caps::new_any()));
-    monitor
-        .start()
-        .context("cannot start the GStreamer device monitor")?;
-
-    let mut devices = Vec::new();
-    for device in monitor.devices() {
-        let properties = device.properties();
-        let unique_id = properties
-            .as_ref()
-            .and_then(|p| p.get::<String>("unique-id").ok());
-        let transport = properties
-            .as_ref()
-            .and_then(|p| p.get::<String>("transport").ok());
-        let is_default = properties
-            .as_ref()
-            .and_then(|p| p.get::<bool>("is-default").ok())
-            .unwrap_or(false);
-        let device = AudioDevice {
+    gstreamer::init().context("GStreamer init failed")?;
+    let devices = salsa_gst::device::enumerate()
+        .context("cannot start the GStreamer device monitor")?
+        .into_iter()
+        .map(|entry| AudioDevice {
             index: 0,
-            name: device.display_name().to_string(),
-            unique_id,
-            is_default,
-            transport,
-            max_channels: max_channels(device.caps()),
-        };
-        devices.push(device);
-    }
-    monitor.stop();
+            name: entry.display_name,
+            unique_id: entry.unique_id,
+            is_default: entry.is_default,
+            transport: entry.transport,
+            max_channels: entry.max_channels,
+        })
+        .collect();
     Ok(prepare_devices(devices, include_virtual))
 }
 
@@ -106,19 +86,6 @@ fn prepare_devices(mut devices: Vec<AudioDevice>, include_virtual: bool) -> Vec<
         device.index = index + 1;
     }
     devices
-}
-
-fn max_channels(caps: Option<gst::Caps>) -> Option<u32> {
-    let caps = caps?;
-    let mut maximum = None;
-    for index in 0..caps.size() {
-        if let Some(structure) = caps.structure(index)
-            && let Ok(channels) = structure.get::<i32>("channels")
-        {
-            maximum = Some(maximum.unwrap_or(0).max(channels.max(0) as u32));
-        }
-    }
-    maximum
 }
 
 /// Resolve a list index, unique ID, or (case-insensitive) device name to a

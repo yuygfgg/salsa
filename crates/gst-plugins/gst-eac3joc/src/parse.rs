@@ -43,10 +43,7 @@ impl Eac3JocParse {
             .field("channels", info.channels)
             .field("atmos", info.atmos)
             .build();
-        let borrowed = self.obj();
-        let object: &super::Eac3JocParse = borrowed.as_ref();
-        <super::Eac3JocParse as gst_base::prelude::BaseParseExtManual>::src_pad(object)
-            .push_event(gst::event::Caps::new(&src_caps))
+        salsa_gst::push_parse_caps!(self, src_caps)
     }
 }
 
@@ -62,48 +59,38 @@ impl ObjectImpl for Eac3JocParse {}
 impl GstObjectImpl for Eac3JocParse {}
 
 impl ElementImpl for Eac3JocParse {
-    fn metadata() -> Option<&'static gst::subclass::ElementMetadata> {
-        static METADATA: std::sync::OnceLock<gst::subclass::ElementMetadata> =
-            std::sync::OnceLock::new();
-        Some(METADATA.get_or_init(|| {
-            gst::subclass::ElementMetadata::new(
-                "E-AC-3 JOC Parser",
-                "Codec/Parser/Audio",
-                "Frames E-AC-3 JOC syncframes carrying object audio",
-                "salsa",
-            )
-        }))
-    }
+    salsa_gst::element_metadata!(
+        "E-AC-3 JOC Parser",
+        "Codec/Parser/Audio",
+        "Frames E-AC-3 JOC syncframes carrying object audio"
+    );
 
-    fn pad_templates() -> &'static [gst::PadTemplate] {
-        static TEMPLATES: std::sync::OnceLock<Vec<gst::PadTemplate>> = std::sync::OnceLock::new();
-        TEMPLATES.get_or_init(|| {
-            let max_channels = 8;
-            let src_caps: gst::Caps = format!(
-                "audio/x-eac3, framed=(boolean)true, alignment=(string)frame, \
-                 rate=(int)[8000,48000], channels=(int)[1,{max_channels}], \
-                 atmos=(boolean){{false,true}}"
+    salsa_gst::pad_templates!({
+        let max_channels = 8;
+        let src_caps: gst::Caps = format!(
+            "audio/x-eac3, framed=(boolean)true, alignment=(string)frame, \
+     rate=(int)[8000,48000], channels=(int)[1,{max_channels}], \
+     atmos=(boolean){{false,true}}"
+        )
+        .parse()
+        .unwrap();
+        vec![
+            gst::PadTemplate::new(
+                "sink",
+                gst::PadDirection::Sink,
+                gst::PadPresence::Always,
+                &gst::Caps::builder("audio/x-eac3").build(),
             )
-            .parse()
-            .unwrap();
-            vec![
-                gst::PadTemplate::new(
-                    "sink",
-                    gst::PadDirection::Sink,
-                    gst::PadPresence::Always,
-                    &gst::Caps::builder("audio/x-eac3").build(),
-                )
-                .unwrap(),
-                gst::PadTemplate::new(
-                    "src",
-                    gst::PadDirection::Src,
-                    gst::PadPresence::Always,
-                    &src_caps,
-                )
-                .unwrap(),
-            ]
-        })
-    }
+            .unwrap(),
+            gst::PadTemplate::new(
+                "src",
+                gst::PadDirection::Src,
+                gst::PadPresence::Always,
+                &src_caps,
+            )
+            .unwrap(),
+        ]
+    });
 }
 
 impl BaseParseImpl for Eac3JocParse {

@@ -38,10 +38,10 @@ pub struct Loudness {
 }
 
 impl Loudness {
-    pub fn new(fs: u32, window_ms: f64, db_max: f64) -> anyhow::Result<Self> {
-        anyhow::ensure!(fs > 0, "sample rate must be positive");
+    pub fn new(fs: u32, window_ms: f64, db_max: f64) -> crate::Result<Self> {
+        crate::ensure!(fs > 0, "sample rate must be positive");
         let n_fft = (f64::from(fs) * window_ms / 1000.0).round() as usize;
-        anyhow::ensure!(n_fft >= 256, "window too short");
+        crate::ensure!(n_fft >= 256, "window too short");
         let n_bins = n_fft / 2 + 1;
 
         let mut window = vec![0.0f32; n_fft];

@@ -3,13 +3,17 @@
 
 #![allow(clippy::needless_range_loop)]
 
-use anyhow::{Result, ensure};
+use crate::ensure;
+use crate::error::Result;
 use rayon::prelude::*;
 
-use crate::audio_assign::audio_reconstruction_gains;
-use crate::clustering::{ClusterFrameMetadata, assign_gains, cluster_metadata, select_centroids};
+use crate::audio_assign::{AudioAssignRequest, audio_reconstruction_gains};
+use crate::clustering::{
+    CentroidRequest, ClusterFrameMetadata, ClusterMetadataRequest, assign_gains, cluster_metadata,
+    select_centroids,
+};
 use crate::loudness::Loudness;
-use crate::reconstruction::select_centroids_reconstruction;
+use crate::reconstruction::{ReconstructionRequest, select_centroids_reconstruction};
 use crate::settings::{AssignMode, CentroidScore, ClusterSettings, SILENCE_POWER};
 use crate::spatial::{clustering_unmasking, unmasking_matrix};
 
@@ -289,36 +293,36 @@ impl<'a> ClusterRenderer<'a> {
                 .copied()
                 .filter(|index| *index < n_sources && candidate_active[*index])
                 .collect();
-            select_centroids_reconstruction(
-                features.positions,
-                features.sizes,
-                &audible,
+            select_centroids_reconstruction(ReconstructionRequest {
+                positions: features.positions,
+                sizes: features.sizes,
+                active: &audible,
                 block,
-                length,
-                &self.n_smooth,
-                features.content_prior,
-                self.target,
-                &self.fixed_indices,
-                self.settings.width_weight,
-                self.settings.audio_spatial_weight,
-                self.settings.audio_iterations,
-                self.settings.audio_source_weighting,
-                &prev_hold,
-                self.settings.centroid_stability,
-                self.settings.centroid_min_distance,
-            )
+                frames: length,
+                importance: &self.n_smooth,
+                content_prior: features.content_prior,
+                target: self.target,
+                fixed_indices: &self.fixed_indices,
+                width_weight: self.settings.width_weight,
+                spatial_weight: self.settings.audio_spatial_weight,
+                iterations: self.settings.audio_iterations,
+                source_weighting: self.settings.audio_source_weighting,
+                prev_selected: &prev_hold,
+                stability: self.settings.centroid_stability,
+                min_centroid_distance: self.settings.centroid_min_distance,
+            })
         } else {
-            select_centroids(
+            select_centroids(CentroidRequest {
                 loudness,
                 excitation,
-                &f_cluster,
-                &audible,
-                features.content_prior,
-                &self.n_smooth,
-                self.target,
-                &self.fixed_indices,
-                &active_sources,
-            )
+                f_cluster: &f_cluster,
+                active: &audible,
+                content_prior: features.content_prior,
+                n_smooth: &self.n_smooth,
+                target: self.target,
+                fixed_indices: &self.fixed_indices,
+                sources: &active_sources,
+            })
         };
         self.timing_select += stamp.elapsed().as_secs_f64();
         ensure!(
@@ -380,21 +384,21 @@ impl<'a> ClusterRenderer<'a> {
             } else {
                 None
             };
-            audio_reconstruction_gains(
+            audio_reconstruction_gains(AudioAssignRequest {
                 block,
-                length,
-                features.positions,
-                features.sizes,
-                &audible,
-                &selected,
-                &centroids,
-                self.settings.width_weight,
-                self.settings.audio_spatial_weight,
-                self.settings.audio_iterations,
-                anchors,
-                self.settings.audio_source_weighting,
-                Some(&importance),
-            )
+                frames: length,
+                positions: features.positions,
+                sizes: features.sizes,
+                active: &audible,
+                selected: &selected,
+                centroids: &centroids,
+                width_weight: self.settings.width_weight,
+                spatial_weight: self.settings.audio_spatial_weight,
+                iterations: self.settings.audio_iterations,
+                anchor_indices: anchors,
+                source_weighting: self.settings.audio_source_weighting,
+                importance: Some(&importance),
+            })
         } else {
             assign_gains(
                 features.positions,
@@ -453,18 +457,18 @@ impl<'a> ClusterRenderer<'a> {
         self.timing_output += stamp.elapsed().as_secs_f64();
         let stamp = std::time::Instant::now();
         let dialog = features.dialog_probability.unwrap_or(features.dialog);
-        let mut metadata = cluster_metadata(
-            &gains_smooth,
-            features.positions,
-            features.sizes,
-            &self.n_smooth,
+        let mut metadata = cluster_metadata(ClusterMetadataRequest {
+            gains: &gains_smooth,
+            positions: features.positions,
+            sizes: features.sizes,
+            n_smooth: &self.n_smooth,
             dialog,
-            features.music,
-            &self.zones,
-            &centroids,
-            &block_power,
-            &audible,
-        );
+            music: features.music,
+            zones: &self.zones,
+            centroids: &centroids,
+            source_power: &block_power,
+            audible: &audible,
+        });
         for (cluster, source) in selected.iter().enumerate() {
             if self.fixed_mask[*source] {
                 metadata.positions[cluster] = features.positions[*source];

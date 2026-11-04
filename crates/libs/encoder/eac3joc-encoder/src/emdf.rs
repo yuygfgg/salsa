@@ -369,13 +369,14 @@ pub fn wrap_emdf_with(payloads: &[(u8, Vec<u8>)], prot: &dyn EmdfProtector) -> V
         b.bit(0); // smploffste = 0
         b.bit(0); // duratione = 0
         b.bit(1); // groupide = 1
-        b.write_var(0, 2); // groupid = 0
+        b.write_variable_bits(0, 2).expect("group id fits"); // groupid = 0
         b.bit(0); // codecdatae = 0 (matches real Dolby JOC streams)
         b.bit(0); // discard_unknown_payload = 0 → enter config block
         b.bit(1); // payload_frame_aligned = 1 (smploffste == 0)
         b.write(0, 2); // create_duplicate = 0, remove_duplicate = 0
         b.write(0, 7); // priority + proc_allowed = 0
-        b.write_var(payload.len() as u32, 8); // emdf_payload_size (bytes)
+        b.write_variable_bits(payload.len() as u32, 8)
+            .expect("payload size fits"); // emdf_payload_size (bytes)
         b.copy_bits(payload, payload.len() * 8);
     }
     b.write(0, 5); // emdf_payload_id = 0 → terminate
@@ -455,10 +456,10 @@ pub(crate) fn field_offsets(aligned: &[u8]) -> Option<EmdfFieldOffsets> {
     }
     let emdf_len = r.read(16) as usize;
     let _version = r.read(2);
-    let key_id_bit = r.pos; // 34 when version == 0 (the only version genuine streams use)
+    let key_id_bit = r.position(); // 34 when version == 0 (the only version genuine streams use)
     let _key = r.read(3);
     loop {
-        if r.pos + 5 > r.end {
+        if !r.can_read(5) {
             return None;
         }
         let id = r.read(5) as u8;
@@ -470,10 +471,10 @@ pub(crate) fn field_offsets(aligned: &[u8]) -> Option<EmdfFieldOffsets> {
             r.read(12);
         }
         if r.read_bit() {
-            r.read_var(11, 8);
+            r.variable_bits(11, 8).ok()?;
         }
         if r.read_bit() {
-            r.read_var(2, 8);
+            r.variable_bits(2, 8).ok()?;
         }
         if r.read_bit() {
             r.read(8);
@@ -490,16 +491,15 @@ pub(crate) fn field_offsets(aligned: &[u8]) -> Option<EmdfFieldOffsets> {
                 r.read(7);
             }
         }
-        let size = r.read_var(8, 8) as usize;
-        r.pos += size * 8;
-        if r.pos > r.end {
+        let size = r.variable_bits(8, 8).ok()? as usize;
+        if !r.skip(size * 8) {
             return None;
         }
     }
     let lenmap = [0u32, 8, 32, 128];
     let prim_bits = lenmap[r.read(2) as usize];
     let sec_bits = lenmap[r.read(2) as usize];
-    let protection_start = r.pos;
+    let protection_start = r.position();
     let container_bits = 32 + emdf_len * 8;
     if container_bits > aligned.len() * 8
         || protection_start + prim_bits as usize + sec_bits as usize > container_bits

@@ -349,7 +349,6 @@ fn special_lfe_direct() -> DirectResult {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn direct_and_room_send(
     model: &RosellaModel,
     field_left: &[f64],

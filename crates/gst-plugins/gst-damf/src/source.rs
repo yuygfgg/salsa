@@ -13,7 +13,7 @@ use gst_base::subclass::prelude::*;
 
 use objectaudio_damf::{DamfInfo, DamfSource};
 
-const DEFAULT_BLOCK_FRAMES: usize = 1536;
+const DEFAULT_BLOCK_FRAMES: usize = salsa_codec::EAC3_FRAME_SAMPLES as usize;
 const MAX_CHANNELS: usize = 1024;
 
 #[derive(Debug)]
@@ -138,32 +138,23 @@ impl ObjectImpl for DamfSrc {
 impl GstObjectImpl for DamfSrc {}
 
 impl ElementImpl for DamfSrc {
-    fn metadata() -> Option<&'static gst::subclass::ElementMetadata> {
-        static METADATA: OnceLock<gst::subclass::ElementMetadata> = OnceLock::new();
-        Some(METADATA.get_or_init(|| {
-            gst::subclass::ElementMetadata::new(
-                "DAMF Source",
-                "Source/Audio",
-                "Reads a Dolby Atmos Master Format presentation as raw object audio",
-                "salsa",
-            )
-        }))
-    }
+    salsa_gst::element_metadata!(
+        "DAMF Source",
+        "Source/Audio",
+        "Reads a Dolby Atmos Master Format presentation as raw object audio"
+    );
 
-    fn pad_templates() -> &'static [gst::PadTemplate] {
-        static TEMPLATES: OnceLock<Vec<gst::PadTemplate>> = OnceLock::new();
-        TEMPLATES.get_or_init(|| {
-            vec![
-                gst::PadTemplate::new(
-                    "src",
-                    gst::PadDirection::Src,
-                    gst::PadPresence::Always,
-                    &broad_caps(),
-                )
-                .unwrap(),
-            ]
-        })
-    }
+    salsa_gst::pad_templates!({
+        vec![
+            gst::PadTemplate::new(
+                "src",
+                gst::PadDirection::Src,
+                gst::PadPresence::Always,
+                &broad_caps(),
+            )
+            .unwrap(),
+        ]
+    });
 }
 
 impl BaseSrcImpl for DamfSrc {

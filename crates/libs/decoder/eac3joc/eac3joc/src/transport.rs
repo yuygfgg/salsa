@@ -82,12 +82,7 @@ pub struct SyncFrame {
 }
 
 fn read_bits(data: &[u8], start: usize, count: usize) -> u32 {
-    let mut value = 0u32;
-    for index in start..start + count {
-        let bit = (data[index >> 3] >> (7 - (index & 7))) & 1;
-        value = (value << 1) | u32::from(bit);
-    }
-    value
+    salsa_bitstream::BitReader::at(data, start).read(count as u32)
 }
 
 /// Parse the syncframe header at the start of `data`.

@@ -22,3 +22,6 @@ eac3joc-dsp.workspace = true
 gstreamer.workspace = true
 gstreamer-base.workspace = true
 gstreamer-audio.workspace = true
+
+[dev-dependencies]
+salsa-gst-registry.workspace = true

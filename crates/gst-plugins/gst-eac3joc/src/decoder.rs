@@ -3,7 +3,6 @@
 use std::sync::Mutex;
 
 use gst::glib;
-use gst::prelude::*;
 use gst_audio::prelude::*;
 use gst_audio::subclass::prelude::*;
 use gstreamer as gst;
@@ -36,7 +35,7 @@ impl Default for State {
         Self {
             parser: Eac3JocParser::new(),
             decoder: None,
-            rate: 48_000,
+            rate: salsa_codec::SAMPLE_RATE as i32,
             channels: 0,
             caps_set: false,
             attach_meta: false,
@@ -100,14 +99,7 @@ impl Eac3JocDec {
     /// a fatal stream error, so drop the frame instead; `FLUSH_STOP` will
     /// reset the decoder.
     fn push_frames(&self, frames: &[Eac3JocFrame]) -> Result<(), gst::FlowError> {
-        for frame in frames {
-            match self.decode_and_push(frame) {
-                Ok(()) => {}
-                Err(gst::FlowError::Flushing) => break,
-                Err(error) => return Err(error),
-            }
-        }
-        Ok(())
+        salsa_gst::drain_frames(frames, |frame| self.decode_and_push(frame))
     }
 
     fn decode_and_push(&self, frame: &Eac3JocFrame) -> Result<(), gst::FlowError> {
@@ -161,59 +153,42 @@ impl ObjectImpl for Eac3JocDec {}
 impl GstObjectImpl for Eac3JocDec {}
 
 impl ElementImpl for Eac3JocDec {
-    fn metadata() -> Option<&'static gst::subclass::ElementMetadata> {
-        static METADATA: std::sync::OnceLock<gst::subclass::ElementMetadata> =
-            std::sync::OnceLock::new();
-        Some(METADATA.get_or_init(|| {
-            gst::subclass::ElementMetadata::new(
-                "E-AC-3 JOC Decoder",
-                "Codec/Decoder/Audio",
-                "Decodes E-AC-3 JOC into 16-channel object audio",
-                "salsa",
-            )
-        }))
-    }
+    salsa_gst::element_metadata!(
+        "E-AC-3 JOC Decoder",
+        "Codec/Decoder/Audio",
+        "Decodes E-AC-3 JOC into 16-channel object audio"
+    );
 
-    fn pad_templates() -> &'static [gst::PadTemplate] {
-        static TEMPLATES: std::sync::OnceLock<Vec<gst::PadTemplate>> = std::sync::OnceLock::new();
-        TEMPLATES.get_or_init(|| {
-            let src_caps = object_audio_template_caps(eac3joc_dsp::OUTPUT_CHANNELS, EAC3_RATES);
-            vec![
-                gst::PadTemplate::new(
-                    "sink",
-                    gst::PadDirection::Sink,
-                    gst::PadPresence::Always,
-                    &gst::Caps::builder("audio/x-eac3")
-                        .field("framed", true)
-                        .field("alignment", "frame")
-                        .field("rate", gst::IntRange::new(1, 655_350))
-                        .build(),
-                )
-                .unwrap(),
-                gst::PadTemplate::new(
-                    "src",
-                    gst::PadDirection::Src,
-                    gst::PadPresence::Always,
-                    &src_caps,
-                )
-                .unwrap(),
-            ]
-        })
-    }
+    salsa_gst::pad_templates!({
+        let src_caps = object_audio_template_caps(eac3joc_dsp::OUTPUT_CHANNELS, EAC3_RATES);
+        vec![
+            gst::PadTemplate::new(
+                "sink",
+                gst::PadDirection::Sink,
+                gst::PadPresence::Always,
+                &gst::Caps::builder("audio/x-eac3")
+                    .field("framed", true)
+                    .field("alignment", "frame")
+                    .field("rate", gst::IntRange::new(1, 655_350))
+                    .build(),
+            )
+            .unwrap(),
+            gst::PadTemplate::new(
+                "src",
+                gst::PadDirection::Src,
+                gst::PadPresence::Always,
+                &src_caps,
+            )
+            .unwrap(),
+        ]
+    });
 }
 
 impl AudioDecoderImpl for Eac3JocDec {
     fn start(&self) -> Result<(), gst::ErrorMessage> {
         let borrowed = self.obj();
         let object: &super::Eac3JocDec = borrowed.as_ref();
-        object.set_needs_format(true);
-        object.set_estimate_rate(true);
-        object.set_use_default_pad_acceptcaps(true);
-        let sink_pad =
-            <super::Eac3JocDec as gst_audio::prelude::AudioDecoderExtManual>::sink_pad(object);
-        sink_pad.set_object_flags(gst::ObjectFlags::from_bits_retain(
-            gst::PadFlags::ACCEPT_TEMPLATE.bits(),
-        ));
+        salsa_gst::configure_audio_decoder(object);
         Ok(())
     }
 
@@ -231,7 +206,9 @@ impl AudioDecoderImpl for Eac3JocDec {
         let structure = caps
             .structure(0)
             .ok_or_else(|| gst::loggable_error!(gst::CAT_RUST, "empty sink caps"))?;
-        let rate = structure.get::<i32>("rate").unwrap_or(48_000);
+        let rate = structure
+            .get::<i32>("rate")
+            .unwrap_or(salsa_codec::SAMPLE_RATE as i32);
         {
             let mut state = salsa_gst::lock(&self.state);
             state.parser = Eac3JocParser::new();

@@ -9,7 +9,9 @@
 use std::default::Default;
 
 use crate::bitstream::SliceReader;
-use anyhow::{Result, bail, ensure};
+use crate::error::OamdError;
+
+type Result<T> = std::result::Result<T, OamdError>;
 use log::{trace, warn};
 use objectaudio_ir::{BED_CHANNEL_COUNT, SpeakerPosition};
 
@@ -254,7 +256,9 @@ impl ObjectAudioMetadataPayload {
 
         // Field layout below is only defined for version 0.
         if oamd_version != 0 {
-            bail!("unsupported OAMD version {oamd_version}");
+            return Err(OamdError::Parse(format!(
+                "unsupported OAMD version {oamd_version}"
+            )));
         }
 
         let mut object_count_bits = reader.get_n::<u8>(5)?;
@@ -528,7 +532,11 @@ impl MDUpdateInfo {
             // sample_offset_bits
             2 => reader.get_n::<u8>(5)? as usize,
             // 3 => reserved
-            _ => bail!("reserved md_update_info sample_offset_code"),
+            _ => {
+                return Err(OamdError::Parse(
+                    "reserved md_update_info sample_offset_code".into(),
+                ));
+            }
         };
 
         let num_obj_info_blocks = (reader.get_n::<u8>(3)? + 1) as usize;
@@ -1124,10 +1132,11 @@ impl BedObjectElement {
             ..Self::default()
         };
         let mut read = |n: u32| -> Result<u8> {
-            ensure!(
-                reader.position()? + n as u64 <= end,
-                "bed object field crosses the element boundary"
-            );
+            if reader.position()? + n as u64 > end {
+                return Err(OamdError::Parse(
+                    "bed object field crosses the element boundary".into(),
+                ));
+            }
             Ok(reader.get_n::<u8>(n)?)
         };
         element.is_channels = read(1)? != 0;
@@ -1694,7 +1703,7 @@ mod tests {
             assert!(payload.bed_object_element.is_none(), "length {len}");
         }
     }
-    use anyhow::Result;
+    type Result<T> = std::result::Result<T, OamdError>;
 
     #[test]
     fn test1() -> Result<()> {

@@ -5,7 +5,6 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
 use gst::glib;
-use gst::prelude::*;
 use gst_audio::prelude::*;
 use gst_audio::subclass::prelude::*;
 use gstreamer as gst;
@@ -153,7 +152,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             worker: None,
-            rate: 48_000,
+            rate: salsa_codec::SAMPLE_RATE as i32,
             channels: 0,
             caps_set: false,
             attach_meta: false,
@@ -235,7 +234,7 @@ impl TrueHdAtmosDec {
         if channel_count == 0 {
             return Ok(());
         }
-        let rate = i32::try_from(spatial.sample_rate).unwrap_or(48_000);
+        let rate = i32::try_from(spatial.sample_rate).unwrap_or(salsa_codec::SAMPLE_RATE as i32);
         self.ensure_output_caps(rate, channel_count as i32)?;
 
         let interleaved = spatial.pcm.interleave();
@@ -269,14 +268,9 @@ impl TrueHdAtmosDec {
     /// a fatal stream error, so drop the remaining units instead; `FLUSH_STOP`
     /// will reset the worker.
     fn push_decoded(&self, decoded: Vec<Decoded>) -> Result<(), gst::FlowError> {
-        for decoded in decoded {
-            match self.accumulate(decoded.spatial, decoded.snapshot) {
-                Ok(()) => {}
-                Err(gst::FlowError::Flushing) => break,
-                Err(error) => return Err(error),
-            }
-        }
-        Ok(())
+        salsa_gst::drain_frames(decoded, |decoded| {
+            self.accumulate(decoded.spatial, decoded.snapshot)
+        })
     }
 
     fn flush_ready(&self) -> Result<(), gst::FlowError> {
@@ -367,62 +361,45 @@ impl ObjectImpl for TrueHdAtmosDec {}
 impl GstObjectImpl for TrueHdAtmosDec {}
 
 impl ElementImpl for TrueHdAtmosDec {
-    fn metadata() -> Option<&'static gst::subclass::ElementMetadata> {
-        static METADATA: std::sync::OnceLock<gst::subclass::ElementMetadata> =
-            std::sync::OnceLock::new();
-        Some(METADATA.get_or_init(|| {
-            gst::subclass::ElementMetadata::new(
-                "TrueHD Atmos Decoder",
-                "Codec/Decoder/Audio",
-                "Decodes a TrueHD Atmos object presentation into raw object audio",
-                "salsa",
-            )
-        }))
-    }
+    salsa_gst::element_metadata!(
+        "TrueHD Atmos Decoder",
+        "Codec/Decoder/Audio",
+        "Decodes a TrueHD Atmos object presentation into raw object audio"
+    );
 
-    fn pad_templates() -> &'static [gst::PadTemplate] {
-        static TEMPLATES: std::sync::OnceLock<Vec<gst::PadTemplate>> = std::sync::OnceLock::new();
-        TEMPLATES.get_or_init(|| {
-            let sink_caps: gst::Caps =
-                "audio/x-true-hd, framed=(boolean)true, alignment=(string)frame, \
-                 rate=(int)[1,655350]; \
-                 audio/x-truehd, framed=(boolean)true, alignment=(string)frame, \
-                 rate=(int)[1,655350]"
-                    .parse()
-                    .unwrap();
-            let src_caps = object_audio_template_caps(MAX_CHANNELS, TRUEHD_RATES);
-            vec![
-                gst::PadTemplate::new(
-                    "sink",
-                    gst::PadDirection::Sink,
-                    gst::PadPresence::Always,
-                    &sink_caps,
-                )
-                .unwrap(),
-                gst::PadTemplate::new(
-                    "src",
-                    gst::PadDirection::Src,
-                    gst::PadPresence::Always,
-                    &src_caps,
-                )
-                .unwrap(),
-            ]
-        })
-    }
+    salsa_gst::pad_templates!({
+        let sink_caps: gst::Caps =
+            "audio/x-true-hd, framed=(boolean)true, alignment=(string)frame, \
+     rate=(int)[1,655350]; \
+     audio/x-truehd, framed=(boolean)true, alignment=(string)frame, \
+     rate=(int)[1,655350]"
+                .parse()
+                .unwrap();
+        let src_caps = object_audio_template_caps(MAX_CHANNELS, TRUEHD_RATES);
+        vec![
+            gst::PadTemplate::new(
+                "sink",
+                gst::PadDirection::Sink,
+                gst::PadPresence::Always,
+                &sink_caps,
+            )
+            .unwrap(),
+            gst::PadTemplate::new(
+                "src",
+                gst::PadDirection::Src,
+                gst::PadPresence::Always,
+                &src_caps,
+            )
+            .unwrap(),
+        ]
+    });
 }
 
 impl AudioDecoderImpl for TrueHdAtmosDec {
     fn start(&self) -> Result<(), gst::ErrorMessage> {
         let borrowed = self.obj();
         let object: &super::TrueHdAtmosDec = borrowed.as_ref();
-        object.set_needs_format(true);
-        object.set_estimate_rate(true);
-        object.set_use_default_pad_acceptcaps(true);
-        let sink_pad =
-            <super::TrueHdAtmosDec as gst_audio::prelude::AudioDecoderExtManual>::sink_pad(object);
-        sink_pad.set_object_flags(gst::ObjectFlags::from_bits_retain(
-            gst::PadFlags::ACCEPT_TEMPLATE.bits(),
-        ));
+        salsa_gst::configure_audio_decoder(object);
         Ok(())
     }
 
@@ -442,7 +419,9 @@ impl AudioDecoderImpl for TrueHdAtmosDec {
         let structure = caps
             .structure(0)
             .ok_or_else(|| gst::loggable_error!(gst::CAT_RUST, "empty sink caps"))?;
-        let rate = structure.get::<i32>("rate").unwrap_or(48_000);
+        let rate = structure
+            .get::<i32>("rate")
+            .unwrap_or(salsa_codec::SAMPLE_RATE as i32);
         let worker = Worker::spawn().map_err(|error| {
             gst::loggable_error!(
                 gst::CAT_RUST,

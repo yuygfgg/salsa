@@ -10,19 +10,8 @@ use gst::PadProbeReturn;
 use gst::prelude::*;
 use gstreamer as gst;
 
-use gstsalsadamf::DamfSrc;
-use gstsalsaobjectaudio::Oar;
-
 fn init() {
-    let _ = gst::init();
-    let _ = objectaudio_meta::init();
-    let _ = gst::Element::register(
-        None,
-        "salsadamfsrc",
-        gst::Rank::PRIMARY,
-        DamfSrc::static_type(),
-    );
-    let _ = gst::Element::register(None, "salsaoar", gst::Rank::PRIMARY, Oar::static_type());
+    let _ = salsa_gst_registry::init();
 }
 
 fn unique_dir() -> PathBuf {

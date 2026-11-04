@@ -7,11 +7,11 @@
 
 use std::collections::BTreeMap;
 
-use bitstream_io::{BigEndian, BitWrite, BitWriter};
 use objectaudio_ir::{
     METADATA_BLOCK_SAMPLES, ProgramCalibration, Snapshot, SpatialPayload, TrimRecord,
     TrimRecordKind, align_sample,
 };
+use salsa_bitstream::BitWriter;
 
 use crate::OamdError;
 
@@ -64,16 +64,16 @@ pub fn encode_with_profile(
     }
 
     let blocks = block_table(payload)?;
-    let mut body = BitWriter::new(Vec::new());
+    let mut body = BitWriter::new();
     write_body(&mut body, &blocks)?;
     body.byte_align()
         .map_err(|error| OamdError::Encode(error.to_string()))?;
-    let body = body.into_writer();
+    let body = body.into_bytes();
 
-    let mut out = BitWriter::new(Vec::new());
-    let write = |writer: &mut BitWriter<Vec<u8>, BigEndian>, bits: u32, value: u32| {
+    let mut out = BitWriter::new();
+    let write = |writer: &mut BitWriter, bits: u32, value: u32| {
         writer
-            .write_var::<u32>(bits, value)
+            .write_bits(value, bits)
             .map_err(|error| OamdError::Encode(error.to_string()))
     };
     write(&mut out, 2, 0)?; // oamd_version
@@ -101,15 +101,15 @@ pub fn encode_with_profile(
     }
     out.byte_align()
         .map_err(|error| OamdError::Encode(error.to_string()))?;
-    Ok(out.into_writer())
+    Ok(out.into_bytes())
 }
 
 fn write_trim_element(
-    out: &mut BitWriter<Vec<u8>, BigEndian>,
+    out: &mut BitWriter,
     calibration: &ProgramCalibration,
     object_count: usize,
 ) -> Result<(), OamdError> {
-    let mut body = BitWriter::new(Vec::new());
+    let mut body = BitWriter::new();
     body.write_bit(false)
         .map_err(|error| OamdError::Encode(error.to_string()))?; // b_discard_unknown_element
     write_bits(&mut body, 2, u32::from(calibration.warp_mode))?;
@@ -135,7 +135,7 @@ fn write_trim_element(
     }
     body.byte_align()
         .map_err(|error| OamdError::Encode(error.to_string()))?;
-    let body = body.into_writer();
+    let body = body.into_bytes();
     write_bits(out, 4, 2)?; // trim element
     write_variable(out, (body.len() - 1) as u32)?;
     out.write_bytes(&body)
@@ -143,10 +143,7 @@ fn write_trim_element(
     Ok(())
 }
 
-fn write_trim_record(
-    out: &mut BitWriter<Vec<u8>, BigEndian>,
-    record: &TrimRecord,
-) -> Result<(), OamdError> {
+fn write_trim_record(out: &mut BitWriter, record: &TrimRecord) -> Result<(), OamdError> {
     match record.kind {
         TrimRecordKind::Absent | TrimRecordKind::Default => {
             out.write_bit(true)
@@ -197,7 +194,7 @@ fn write_trim_record(
     Ok(())
 }
 
-fn write_balance(out: &mut BitWriter<Vec<u8>, BigEndian>, balance: f64) -> Result<(), OamdError> {
+fn write_balance(out: &mut BitWriter, balance: f64) -> Result<(), OamdError> {
     out.write_bit(balance >= 0.0)
         .map_err(|error| OamdError::Encode(error.to_string()))?;
     let code = (balance.abs() * 16.0).round_ties_even().clamp(1.0, 16.0) as u32 - 1;
@@ -218,56 +215,28 @@ fn trim_code(value: f64) -> u32 {
     best as u32
 }
 
-fn write_bits(
-    out: &mut BitWriter<Vec<u8>, BigEndian>,
-    bits: u32,
-    value: u32,
-) -> Result<(), OamdError> {
-    out.write_var::<u32>(bits, value)
+fn write_bits(out: &mut BitWriter, bits: u32, value: u32) -> Result<(), OamdError> {
+    out.write_bits(value, bits)
         .map_err(|error| OamdError::Encode(error.to_string()))
 }
 
-fn write_object_count(
-    out: &mut BitWriter<Vec<u8>, BigEndian>,
-    count: usize,
-) -> Result<(), OamdError> {
+fn write_object_count(out: &mut BitWriter, count: usize) -> Result<(), OamdError> {
     let value = (count - 1) as u32;
     if value < 31 {
-        out.write::<5, u32>(value)
+        out.write_bits(value, 5)
             .map_err(|error| OamdError::Encode(error.to_string()))
     } else {
-        out.write::<5, u32>(31)
+        out.write_bits(31, 5)
             .map_err(|error| OamdError::Encode(error.to_string()))?;
-        out.write::<7, u32>(value - 31)
+        out.write_bits(value - 31, 7)
             .map_err(|error| OamdError::Encode(error.to_string()))
     }
 }
 
 /// `get_variable_bits_max(4, 4)` inverse.
-fn write_variable(out: &mut BitWriter<Vec<u8>, BigEndian>, value: u32) -> Result<(), OamdError> {
-    let mut groups = Vec::new();
-    let mut value = value;
-    loop {
-        groups.push((value & 0xF) as u8);
-        value >>= 4;
-        if value == 0 {
-            break;
-        }
-        value -= 1;
-    }
-    if groups.len() > 4 {
-        return Err(OamdError::Encode(format!(
-            "OAMD element is too large ({value} groups)"
-        )));
-    }
-    for (index, group) in groups.iter().rev().enumerate() {
-        out.write::<4, u8>(*group)
-            .map_err(|error| OamdError::Encode(error.to_string()))?;
-        let more = index + 1 != groups.len();
-        out.write_bit(more)
-            .map_err(|error| OamdError::Encode(error.to_string()))?;
-    }
-    Ok(())
+fn write_variable(out: &mut BitWriter, value: u32) -> Result<(), OamdError> {
+    out.write_variable_bits_max(value, 4, 4)
+        .map_err(|error| OamdError::Encode(error.to_string()))
 }
 
 struct BlockTable {
@@ -357,13 +326,10 @@ fn block_table(payload: &SpatialPayload) -> Result<BlockTable, OamdError> {
     })
 }
 
-fn write_body(
-    out: &mut BitWriter<Vec<u8>, BigEndian>,
-    table: &BlockTable,
-) -> Result<(), OamdError> {
-    let write = |writer: &mut BitWriter<Vec<u8>, BigEndian>, bits: u32, value: u32| {
+fn write_body(out: &mut BitWriter, table: &BlockTable) -> Result<(), OamdError> {
+    let write = |writer: &mut BitWriter, bits: u32, value: u32| {
         writer
-            .write_var::<u32>(bits, value)
+            .write_bits(value, bits)
             .map_err(|error| OamdError::Encode(error.to_string()))
     };
     out.write_bit(false)
@@ -429,10 +395,10 @@ fn write_body(
     Ok(())
 }
 
-fn write_ramp(out: &mut BitWriter<Vec<u8>, BigEndian>, ramp: u16) -> Result<(), OamdError> {
-    let write = |writer: &mut BitWriter<Vec<u8>, BigEndian>, bits: u32, value: u32| {
+fn write_ramp(out: &mut BitWriter, ramp: u16) -> Result<(), OamdError> {
+    let write = |writer: &mut BitWriter, bits: u32, value: u32| {
         writer
-            .write_var::<u32>(bits, value)
+            .write_bits(value, bits)
             .map_err(|error| OamdError::Encode(error.to_string()))
     };
     match ramp {
@@ -448,10 +414,10 @@ fn write_ramp(out: &mut BitWriter<Vec<u8>, BigEndian>, ramp: u16) -> Result<(), 
     }
 }
 
-fn write_basic(out: &mut BitWriter<Vec<u8>, BigEndian>, gain: f32) -> Result<(), OamdError> {
-    let write = |writer: &mut BitWriter<Vec<u8>, BigEndian>, bits: u32, value: u32| {
+fn write_basic(out: &mut BitWriter, gain: f32) -> Result<(), OamdError> {
+    let write = |writer: &mut BitWriter, bits: u32, value: u32| {
         writer
-            .write_var::<u32>(bits, value)
+            .write_bits(value, bits)
             .map_err(|error| OamdError::Encode(error.to_string()))
     };
     if gain <= 0.0 || !gain.is_finite() {
@@ -471,13 +437,10 @@ fn write_basic(out: &mut BitWriter<Vec<u8>, BigEndian>, gain: f32) -> Result<(),
     Ok(())
 }
 
-fn write_position(
-    out: &mut BitWriter<Vec<u8>, BigEndian>,
-    position: [f32; 3],
-) -> Result<(), OamdError> {
-    let write = |writer: &mut BitWriter<Vec<u8>, BigEndian>, bits: u32, value: u32| {
+fn write_position(out: &mut BitWriter, position: [f32; 3]) -> Result<(), OamdError> {
+    let write = |writer: &mut BitWriter, bits: u32, value: u32| {
         writer
-            .write_var::<u32>(bits, value)
+            .write_bits(value, bits)
             .map_err(|error| OamdError::Encode(error.to_string()))
     };
     let x = (position[0].clamp(-1.0, 1.0) + 1.0) * 0.5;
@@ -490,10 +453,10 @@ fn write_position(
     write(out, 4, (z.abs() * 15.0).round().clamp(0.0, 15.0) as u32)
 }
 
-fn write_size(out: &mut BitWriter<Vec<u8>, BigEndian>, size: Option<f32>) -> Result<(), OamdError> {
-    let write = |writer: &mut BitWriter<Vec<u8>, BigEndian>, bits: u32, value: u32| {
+fn write_size(out: &mut BitWriter, size: Option<f32>) -> Result<(), OamdError> {
+    let write = |writer: &mut BitWriter, bits: u32, value: u32| {
         writer
-            .write_var::<u32>(bits, value)
+            .write_bits(value, bits)
             .map_err(|error| OamdError::Encode(error.to_string()))
     };
     match size.filter(|size| *size > 0.0) {

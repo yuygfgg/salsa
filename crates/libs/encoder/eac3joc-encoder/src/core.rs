@@ -6,7 +6,8 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-use anyhow::{Context, Result, ensure};
+use crate::ensure;
+use crate::error::{Context, EncoderError, Result};
 use objectaudio_damf::{DamfScene, Manifest, Metadata};
 use reac3e::{
     Acmod, BsiMetadata, ChannelLayout, ChannelOrder, Coupling, EncoderConfig, FrameEdits,
@@ -174,13 +175,15 @@ pub fn encode(atmos: &Path, out: &Path, options: &EncodeOptions) -> Result<()> {
     let mut analyzer = joc_analysis::JocAnalyzer::new(
         &manifest,
         &scene,
-        options.pan,
-        options.joc.lambda,
-        options.joc.ridge,
-        options.joc.refine_rounds,
-        options.joc.rd_passes,
-        options.joc.smooth,
-        options.joc.power_gate,
+        joc_analysis::AnalyzerConfig {
+            pan_mode: options.pan,
+            joc_lambda: options.joc.lambda,
+            ridge: options.joc.ridge,
+            refine_rounds: options.joc.refine_rounds,
+            rd_passes: options.joc.rd_passes,
+            smooth: options.joc.smooth,
+            power_gate: options.joc.power_gate,
+        },
     )?;
     let program_info = emdf::encode_program_info(
         options.surround_phase_shift,
@@ -243,21 +246,25 @@ pub fn encode(atmos: &Path, out: &Path, options: &EncodeOptions) -> Result<()> {
         let oamd = encode_frame_oamd(&scene, start, end)?;
         let matrices = analyzer
             .matrices_for_frame(start, end)
-            .map_err(|error| anyhow::anyhow!("JOC band analysis at frame {frame_index}: {error}"))?
+            .map_err(|error| {
+                EncoderError::msg(format_args!(
+                    "JOC band analysis at frame {frame_index}: {error}"
+                ))
+            })?
             .to_vec();
         let rates = analyzer.object_rates().to_vec();
 
-        let (payload, mode) = choose_payload(
-            &oamd,
-            &program_info,
-            &matrices,
-            &rates,
+        let (payload, mode) = choose_payload(PayloadRequest {
+            oamd: &oamd,
+            program_info: &program_info,
+            matrices: &matrices,
+            rates: &rates,
             nobj,
-            (frame_index % 1024) as u16,
+            seq: (frame_index % 1024) as u16,
             dmx_config,
-            &options.joc,
+            options: &options.joc,
             protector,
-        );
+        });
         ensure!(
             payload.len() <= 511,
             "EMDF payload is {} B; the skip field allows at most 511 B \
@@ -402,19 +409,32 @@ fn encode_frame_oamd(scene: &DamfScene, start: u64, end: u64) -> Result<Vec<u8>>
     Ok(emdf::encode_oamd(&objects, Some(calibration))?)
 }
 
-/// Choose a fine/coarse/broadband JOC payload that fits the skip-field budget.
-#[allow(clippy::too_many_arguments)]
-fn choose_payload(
-    oamd: &[u8],
-    program_info: &[u8],
-    matrices: &[[[f32; 5]; joc::ENC_BANDS]],
-    rates: &[joc_analysis::ObjectRate],
+/// Inputs for [`choose_payload`].
+struct PayloadRequest<'a> {
+    oamd: &'a [u8],
+    program_info: &'a [u8],
+    matrices: &'a [[[f32; 5]; joc::ENC_BANDS]],
+    rates: &'a [joc_analysis::ObjectRate],
     nobj: usize,
     seq: u16,
     dmx_config: u8,
-    options: &JocOptions,
-    protector: &dyn EmdfProtector,
-) -> (Vec<u8>, u8) {
+    options: &'a JocOptions,
+    protector: &'a dyn EmdfProtector,
+}
+
+/// Choose a fine/coarse/broadband JOC payload that fits the skip-field budget.
+fn choose_payload(request: PayloadRequest<'_>) -> (Vec<u8>, u8) {
+    let PayloadRequest {
+        oamd,
+        program_info,
+        matrices,
+        rates,
+        nobj,
+        seq,
+        dmx_config,
+        options,
+        protector,
+    } = request;
     let make = |joc_payload: Vec<u8>| {
         emdf::wrap_emdf_with(
             &[
@@ -542,7 +562,7 @@ fn sign_frame(
     let excluded = excluded_ranges(edits, addbsi.len(), emdf.len(), target_block);
     signer
         .sign_frame(&mut bytes, start, emdf, &excluded)
-        .map_err(|error| anyhow::anyhow!("EMDF frame signing failed: {error}"))?;
+        .map_err(|error| EncoderError::msg(format_args!("EMDF frame signing failed: {error}")))?;
     Ok(bytes)
 }
 

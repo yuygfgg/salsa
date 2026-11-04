@@ -9,7 +9,6 @@ publish.workspace = true
 
 [dependencies]
 objectaudio-ir.workspace = true
-anyhow.workspace = true
 objectaudio-oamd.workspace = true
 truehd.workspace = true
 thiserror.workspace = true

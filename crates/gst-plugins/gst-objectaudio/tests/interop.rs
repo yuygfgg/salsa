@@ -6,20 +6,7 @@ use gstreamer::prelude::*;
 use gstsalsaobjectaudio::{HrtfRender, Oar, ObjectAudioAdapt};
 
 fn init() {
-    let _ = gst::init();
-    let _ = gst::Element::register(
-        None,
-        "salsaobjectaudioadapt",
-        gst::Rank::PRIMARY,
-        ObjectAudioAdapt::static_type(),
-    );
-    let _ = gst::Element::register(None, "salsaoar", gst::Rank::PRIMARY, Oar::static_type());
-    let _ = gst::Element::register(
-        None,
-        "salsahrtfrender",
-        gst::Rank::PRIMARY,
-        HrtfRender::static_type(),
-    );
+    let _ = salsa_gst_registry::init();
 }
 
 fn structure(format: &str, features: Option<&str>) -> gst::Caps {

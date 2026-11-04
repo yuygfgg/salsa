@@ -102,6 +102,16 @@ impl CarrierChunk {
     }
 }
 
+/// One carrier byte source.
+pub trait CarrierSource {
+    fn next_chunk(&mut self) -> Result<Option<CarrierChunk>>;
+
+    /// True when the source can block waiting for more carrier data.
+    fn is_live(&self) -> bool {
+        false
+    }
+}
+
 /// Carrier byte source.
 pub enum CarrierInput {
     File(FileInput),
@@ -124,16 +134,28 @@ impl CarrierInput {
     }
 
     pub fn next_chunk(&mut self) -> Result<Option<CarrierChunk>> {
-        match self {
-            Self::File(input) => input.next_chunk(),
-            Self::Shared(input) => input.next_chunk(),
-            Self::Scripted(input) => input.next_chunk(),
-        }
+        self.as_source_mut().next_chunk()
     }
 
     /// True when the source can block waiting for more carrier data.
     pub fn is_live(&self) -> bool {
-        matches!(self, Self::Shared(_))
+        self.as_source().is_live()
+    }
+
+    fn as_source(&self) -> &dyn CarrierSource {
+        match self {
+            Self::File(input) => input,
+            Self::Shared(input) => input,
+            Self::Scripted(input) => input,
+        }
+    }
+
+    fn as_source_mut(&mut self) -> &mut dyn CarrierSource {
+        match self {
+            Self::File(input) => input,
+            Self::Shared(input) => input,
+            Self::Scripted(input) => input,
+        }
     }
 }
 
@@ -147,7 +169,9 @@ impl ScriptedInput {
             chunks: chunks.into_iter(),
         }
     }
+}
 
+impl CarrierSource for ScriptedInput {
     fn next_chunk(&mut self) -> Result<Option<CarrierChunk>> {
         Ok(self.chunks.next())
     }
@@ -165,7 +189,9 @@ impl FileInput {
             .with_context(|| format!("cannot open carrier capture {}", path.display()))?;
         Ok(Self { file, path })
     }
+}
 
+impl CarrierSource for FileInput {
     fn next_chunk(&mut self) -> Result<Option<CarrierChunk>> {
         let mut bytes = vec![0u8; 64 * 1024];
         let read = self
@@ -393,6 +419,16 @@ impl SharedInput {
                 .dropped_frames
                 .load(Ordering::Acquire)
         }
+    }
+}
+
+impl CarrierSource for SharedInput {
+    fn next_chunk(&mut self) -> Result<Option<CarrierChunk>> {
+        SharedInput::next_chunk(self)
+    }
+
+    fn is_live(&self) -> bool {
+        true
     }
 }
 

@@ -7,7 +7,8 @@
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, ensure};
+use crate::ensure;
+use crate::error::{Context, Result};
 use rayon::prelude::*;
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Fft, FixedSync, Indexing, Resampler};
@@ -43,7 +44,7 @@ fn accept_duplicate_names(result: TractResult<()>) -> Result<()> {
             if message.contains("duplicate name") {
                 Ok(())
             } else {
-                Err(error)
+                Err(error.into())
             }
         }
     }

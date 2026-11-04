@@ -15,6 +15,7 @@
 
 mod audio_assign;
 mod clustering;
+mod error;
 mod loudness;
 mod matrix;
 mod panning;
@@ -27,6 +28,7 @@ mod timeline;
 mod tvl2018;
 mod vad;
 
+pub use error::{ClusterError, Result};
 pub use pipeline::{ClusterResult, run_cluster};
 pub use renderer::RenderStats;
 pub use settings::{AssignMode, AudioSourceWeighting, CentroidScore, ClusterSettings, LimitMode};

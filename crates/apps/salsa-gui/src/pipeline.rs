@@ -9,28 +9,41 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use objectaudio_render::{layout_by_name, layouts};
+use salsa_codec::{Codec as StreamCodec, elements};
 use serde::{Deserialize, Serialize};
 
+/// A file the GUI can open: a compressed stream known to `salsa-codec`, or a
+/// raw DAMF master.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Codec {
-    Eac3,
-    TrueHd,
+    Stream(StreamCodec),
     Damf,
 }
 
 impl Codec {
+    pub const EAC3: Self = Self::Stream(StreamCodec::Eac3);
+    pub const TRUEHD: Self = Self::Stream(StreamCodec::TrueHd);
+    pub const DAMF: Self = Self::Damf;
+
+    pub const fn stream(self) -> Option<StreamCodec> {
+        match self {
+            Self::Stream(codec) => Some(codec),
+            Self::Damf => None,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
-            Self::Eac3 => "E-AC-3 JOC",
-            Self::TrueHd => "TrueHD Atmos",
+            Self::Stream(StreamCodec::Eac3) => "E-AC-3 JOC",
+            Self::Stream(StreamCodec::TrueHd) => "TrueHD Atmos",
             Self::Damf => "DAMF Master",
         }
     }
 
     pub fn short(self) -> &'static str {
         match self {
-            Self::Eac3 => "EC3",
-            Self::TrueHd => "TrueHD",
+            Self::Stream(StreamCodec::Eac3) => "EC3",
+            Self::Stream(StreamCodec::TrueHd) => "TrueHD",
             Self::Damf => "DAMF",
         }
     }
@@ -97,13 +110,7 @@ impl Default for OutputConfig {
     }
 }
 
-#[derive(Clone)]
-pub struct DeviceInfo {
-    pub display_name: String,
-    pub max_channels: Option<u32>,
-    pub is_default: bool,
-    pub device: gst::Device,
-}
+pub use salsa_gst::device::DeviceEntry as DeviceInfo;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PipelineError {
@@ -123,12 +130,6 @@ pub enum PipelineError {
     Build(String),
 }
 
-impl From<PipelineError> for String {
-    fn from(error: PipelineError) -> Self {
-        error.to_string()
-    }
-}
-
 pub fn detect_codec(path: &Path) -> Result<Codec, PipelineError> {
     let mut file = File::open(path).map_err(|error| PipelineError::Io {
         path: path.to_path_buf(),
@@ -146,16 +147,17 @@ pub fn detect_codec(path: &Path) -> Result<Codec, PipelineError> {
         .map(|value| value.to_ascii_lowercase());
 
     if contains_truehd_sync(bytes) {
-        return Ok(Codec::TrueHd);
+        return Ok(Codec::TRUEHD);
     }
     if find_eac3_sync(bytes).is_some() {
-        return Ok(Codec::Eac3);
+        return Ok(Codec::EAC3);
     }
     match extension.as_deref() {
-        Some("ec3" | "eac3") => Ok(Codec::Eac3),
-        Some("mlp" | "thd" | "truehd") => Ok(Codec::TrueHd),
-        Some("atmos" | "damf") => Ok(Codec::Damf),
-        _ => Err(PipelineError::UnsupportedCodec(path.to_path_buf())),
+        Some("atmos" | "damf") => Ok(Codec::DAMF),
+        Some(extension) => StreamCodec::from_label(extension)
+            .map(Codec::Stream)
+            .ok_or_else(|| PipelineError::UnsupportedCodec(path.to_path_buf())),
+        None => Err(PipelineError::UnsupportedCodec(path.to_path_buf())),
     }
 }
 
@@ -174,62 +176,7 @@ fn contains_truehd_sync(bytes: &[u8]) -> bool {
 }
 
 pub fn enumerate_devices() -> Vec<DeviceInfo> {
-    let monitor = gst::DeviceMonitor::new();
-    monitor.add_filter(Some("Audio/Sink"), None);
-    if monitor.start().is_err() {
-        return Vec::new();
-    }
-    let mut devices = Vec::new();
-    for device in monitor.devices().into_iter() {
-        let display_name = device.display_name().to_string();
-        let max_channels = max_channels_for_device(&device);
-        let is_default = device
-            .properties()
-            .and_then(|properties| properties.get::<bool>("is-default").ok())
-            .unwrap_or(false);
-        devices.push(DeviceInfo {
-            display_name,
-            max_channels,
-            is_default,
-            device,
-        });
-    }
-    monitor.stop();
-    if !devices.iter().any(|info| info.is_default)
-        && let Some(first) = devices.first_mut()
-    {
-        first.is_default = true;
-    }
-    devices
-}
-
-fn max_channels_for_device(device: &gst::Device) -> Option<u32> {
-    // The device caps come from the device provider and describe this device's
-    // real channel limit. Do not intersect them with the sink element caps:
-    // `create_element()` returns an unbound element whose sink pad still exposes
-    // the generic template (`channels=[1,9]` for osxaudiosink), which would
-    // silently cap every multichannel device at 9.
-    let device_max = device.caps().as_ref().and_then(max_channels_from_caps);
-    if device_max.is_some() {
-        return device_max;
-    }
-    device.create_element(None).ok().and_then(|element| {
-        let pad = element.static_pad("sink")?;
-        let caps = pad.query_caps(None);
-        max_channels_from_caps(&caps)
-    })
-}
-
-fn max_channels_from_caps(caps: &gst::Caps) -> Option<u32> {
-    let mut maximum: Option<u32> = None;
-    for structure in caps.iter() {
-        if let Ok(channels) = structure.get::<i32>("channels") {
-            maximum = maximum.max(Some(channels.max(0) as u32));
-        } else if let Ok(range) = structure.get::<gst::IntRange<i32>>("channels") {
-            maximum = maximum.max(Some(range.max().max(0) as u32));
-        }
-    }
-    maximum
+    salsa_gst::device::enumerate_or_default()
 }
 
 pub fn layout_channel_count(name: &str) -> Option<usize> {
@@ -319,12 +266,10 @@ pub struct PipelineParts {
 }
 
 fn element(factory: &str) -> Result<gst::Element, PipelineError> {
-    gst::ElementFactory::make(factory)
-        .build()
-        .map_err(|error| PipelineError::MissingElement {
-            factory: factory.to_string(),
-            reason: error.to_string(),
-        })
+    salsa_gst::element(factory).map_err(|error| PipelineError::MissingElement {
+        factory: factory.to_string(),
+        reason: error.to_string(),
+    })
 }
 
 pub fn build_pipeline(
@@ -341,24 +286,19 @@ pub fn build_pipeline(
     let pipeline = gst::Pipeline::new();
 
     let mut chain = Vec::new();
-    let (parser, decoder) = match codec {
-        Codec::Damf => {
-            let source = element("salsadamfsrc")?;
+    let (parser, decoder) = match codec.stream() {
+        None => {
+            let source = element(elements::DAMF_SRC)?;
             source.set_property("location", path.to_string_lossy().to_string());
             chain.push(source.clone());
             (None, source)
         }
-        Codec::Eac3 | Codec::TrueHd => {
+        Some(stream) => {
             let filesrc = element("filesrc")?;
             filesrc.set_property("location", path.to_string_lossy().to_string());
             filesrc.set_property("blocksize", 1_048_576u32);
-            let (parser_name, decoder_name) = match codec {
-                Codec::Eac3 => ("salsaeac3jocparse", "salsaeac3jocdec"),
-                Codec::TrueHd => ("salsatruehdparse", "salsatruehdatmosdec"),
-                Codec::Damf => unreachable!(),
-            };
-            let parser = element(parser_name)?;
-            let decoder = element(decoder_name)?;
+            let parser = element(stream.spec().parser)?;
+            let decoder = element(stream.spec().decoder)?;
             chain.push(filesrc);
             chain.push(parser.clone());
             chain.push(decoder.clone());
@@ -368,7 +308,7 @@ pub fn build_pipeline(
 
     let renderer = match config.mode {
         OutputMode::Speaker => {
-            let renderer = element("salsaoar")?;
+            let renderer = element(elements::OAR)?;
             renderer.set_property("layout", config.layout.as_str());
             renderer
         }
@@ -376,7 +316,7 @@ pub fn build_pipeline(
             let Some(model) = config.binaural.model.as_ref() else {
                 return Err(PipelineError::ModelRequired);
             };
-            let renderer = element("salsahrtfrender")?;
+            let renderer = element(elements::HRTF_RENDER)?;
             renderer.set_property(
                 "personalized-headphone",
                 model.to_string_lossy().to_string(),
@@ -454,22 +394,17 @@ pub fn scan_duration(
     cancel: &Arc<AtomicBool>,
 ) -> Option<gst::ClockTime> {
     let pipeline = gst::Pipeline::new();
-    let (filesrc, feeder) = match codec {
-        Codec::Damf => {
-            let source = element("salsadamfsrc").ok()?;
+    let (filesrc, feeder) = match codec.stream() {
+        None => {
+            let source = element(elements::DAMF_SRC).ok()?;
             source.set_property("location", path.to_string_lossy().to_string());
             (None, source)
         }
-        Codec::Eac3 | Codec::TrueHd => {
+        Some(stream) => {
             let filesrc = element("filesrc").ok()?;
             filesrc.set_property("location", path.to_string_lossy().to_string());
             filesrc.set_property("blocksize", 8_388_608u32);
-            let parser_name = match codec {
-                Codec::Eac3 => "salsaeac3jocparse",
-                Codec::TrueHd => "salsatruehdparse",
-                Codec::Damf => unreachable!(),
-            };
-            let parser = element(parser_name).ok()?;
+            let parser = element(stream.spec().parser).ok()?;
             pipeline.add_many([&filesrc, &parser]).ok()?;
             gst::Element::link_many([&filesrc, &parser]).ok()?;
             (Some(filesrc), parser)
@@ -600,12 +535,12 @@ mod tests {
         let fixed = gst::Caps::builder("audio/x-raw")
             .field("channels", 12i32)
             .build();
-        assert_eq!(max_channels_from_caps(&fixed), Some(12));
+        assert_eq!(salsa_gst::device::max_channels_from_caps(&fixed), Some(12));
 
         let ranged = gst::Caps::builder("audio/x-raw")
             .field("channels", gst::IntRange::new(1i32, 16i32))
             .build();
-        assert_eq!(max_channels_from_caps(&ranged), Some(16));
+        assert_eq!(salsa_gst::device::max_channels_from_caps(&ranged), Some(16));
     }
 
     #[test]
@@ -617,9 +552,9 @@ mod tests {
         std::fs::write(&ec3, [0x0B, 0x77, 0, 0]).unwrap();
         std::fs::write(&mlp, [0, 0, 0xF8, 0x72, 0x6F, 0xBA]).unwrap();
         std::fs::write(&atmos, b"version: 0.5.1\npresentations: []\n").unwrap();
-        assert_eq!(detect_codec(&ec3).unwrap(), Codec::Eac3);
-        assert_eq!(detect_codec(&mlp).unwrap(), Codec::TrueHd);
-        assert_eq!(detect_codec(&atmos).unwrap(), Codec::Damf);
+        assert_eq!(detect_codec(&ec3).unwrap(), Codec::EAC3);
+        assert_eq!(detect_codec(&mlp).unwrap(), Codec::TRUEHD);
+        assert_eq!(detect_codec(&atmos).unwrap(), Codec::DAMF);
         let _ = std::fs::remove_file(ec3);
         let _ = std::fs::remove_file(mlp);
         let _ = std::fs::remove_file(atmos);
