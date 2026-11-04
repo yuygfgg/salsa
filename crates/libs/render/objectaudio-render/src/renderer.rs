@@ -119,7 +119,7 @@ impl SpeakerRenderer {
     pub fn new(layout: &'static SpeakerLayout, object_count: usize) -> Self {
         let mut standard_index_for_internal = [0u8; MAX_CHANNELS];
         for standard in 0..layout.channel_count() {
-            standard_index_for_internal[usize::from(layout.standard_from_internal[standard])] =
+            standard_index_for_internal[usize::from(layout.internal_for_output_slot[standard])] =
                 standard as u8;
         }
         let mut renderer = Self {
@@ -553,7 +553,7 @@ fn fold_40_layout() -> &'static SpeakerLayout {
         layout.speaker_bitfield = 25; // 4.0's pair plus the rear pair
         layout.out_ch_config = 255;
         layout.channel_count = 6;
-        for (slot, target) in layout.standard_from_internal.iter_mut().enumerate() {
+        for (slot, target) in layout.internal_for_output_slot.iter_mut().enumerate() {
             *target = slot as u8;
         }
         const MAPPED: [i8; 8] = [0, 1, -1, -1, 2, 3, 4, 5];

@@ -9,12 +9,9 @@ const EAC3_MIN_FRAME_BYTES: usize = 8;
 /// order; this type never merges or reinterprets them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Eac3AccessUnit {
-    /// Session generation that produced the frame.
-    pub generation: u64,
-    /// Absolute carrier byte offset of the syncframe payload.
-    pub carrier_offset: u64,
-    /// Complete E-AC-3 syncframe, including the `0B77` sync word.
-    pub bytes: Vec<u8>,
+    /// Header fields shared with every codec access unit.
+    pub header: super::AccessUnitHeader,
+    // E-AC-3 carries no codec-specific fields beyond the common header.
 }
 
 /// Cumulative E-AC-3 extraction counters.
@@ -104,9 +101,11 @@ impl Eac3Depacketizer {
 
             let bytes = self.pending[cursor..cursor + size].to_vec();
             frames.push(Eac3AccessUnit {
-                generation,
-                carrier_offset: self.pending_offset + cursor as u64,
-                bytes,
+                header: super::AccessUnitHeader {
+                    generation,
+                    carrier_offset: self.pending_offset + cursor as u64,
+                    bytes,
+                },
             });
             self.stats.frames += 1;
             cursor += size;
@@ -163,11 +162,11 @@ mod tests {
         let mut depacketizer = Eac3Depacketizer::new();
         let frames = depacketizer.push(&payload, 100, 7);
         assert_eq!(frames.len(), 2);
-        assert_eq!(frames[0].bytes, first);
-        assert_eq!(frames[1].bytes, dependent);
-        assert_eq!(frames[0].carrier_offset, 100);
-        assert_eq!(frames[1].carrier_offset, 132);
-        assert_eq!(frames[0].generation, 7);
+        assert_eq!(frames[0].header.bytes, first);
+        assert_eq!(frames[1].header.bytes, dependent);
+        assert_eq!(frames[0].header.carrier_offset, 100);
+        assert_eq!(frames[1].header.carrier_offset, 132);
+        assert_eq!(frames[0].header.generation, 7);
     }
 
     #[test]
@@ -177,7 +176,7 @@ mod tests {
         assert!(depacketizer.push(&frame[..20], 0, 0).is_empty());
         let frames = depacketizer.push(&frame[20..], 20, 0);
         assert_eq!(frames.len(), 1);
-        assert_eq!(frames[0].bytes, frame);
+        assert_eq!(frames[0].header.bytes, frame);
     }
 
     #[test]
@@ -188,7 +187,7 @@ mod tests {
         let mut depacketizer = Eac3Depacketizer::new();
         let frames = depacketizer.push(&payload, 0, 0);
         assert_eq!(frames.len(), 1);
-        assert_eq!(frames[0].bytes, frame);
+        assert_eq!(frames[0].header.bytes, frame);
         assert_eq!(depacketizer.stats().corrupt_frames, 1);
     }
 }

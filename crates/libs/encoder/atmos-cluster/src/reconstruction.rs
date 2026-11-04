@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Audio-reconstruction-driven centroid selection and gain solving.
 
+#![allow(clippy::needless_range_loop)]
+
 use rayon::prelude::*;
 
 use crate::clustering::assign_gains;

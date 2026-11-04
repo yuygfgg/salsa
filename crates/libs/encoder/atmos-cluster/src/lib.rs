@@ -12,11 +12,6 @@
 //! container and metadata formats.
 
 #![forbid(unsafe_code)]
-#![allow(
-    clippy::needless_range_loop,
-    clippy::too_many_arguments,
-    clippy::type_complexity
-)]
 
 mod audio_assign;
 mod clustering;

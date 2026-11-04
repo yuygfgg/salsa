@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/libs/core/salsa-codec",
+    "crates/libs/gst/salsa-gst",
     "crates/libs/audio/objectaudio-ir",
     "crates/libs/audio/objectaudio-oamd",
     "crates/libs/decoder/eac3joc/eac3joc",
@@ -32,6 +34,8 @@ license = "MPL-2.0"
 publish = false
 
 [workspace.dependencies]
+salsa-codec = { path = "crates/libs/core/salsa-codec" }
+salsa-gst = { path = "crates/libs/gst/salsa-gst" }
 objectaudio-ir = { path = "crates/libs/audio/objectaudio-ir" }
 eac3joc-encoder = { path = "crates/libs/encoder/eac3joc-encoder" }
 atmos-cluster = { path = "crates/libs/encoder/atmos-cluster" }

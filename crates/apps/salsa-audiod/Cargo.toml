@@ -30,6 +30,7 @@ libc.workspace = true
 log.workspace = true
 objectaudio-hrtf.workspace = true
 objectaudio-meta.workspace = true
+salsa-codec.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

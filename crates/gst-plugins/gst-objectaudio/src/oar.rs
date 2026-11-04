@@ -78,7 +78,7 @@ pub struct Oar {
 
 impl Oar {
     fn requested_layout(&self) -> Result<Option<&'static SpeakerLayout>, String> {
-        let state = self.state.lock().unwrap();
+        let state = salsa_gst::lock(&self.state);
         if state.layout == "auto" {
             Ok(None)
         } else {
@@ -168,6 +168,13 @@ fn layout_positions(layout: &SpeakerLayout) -> Vec<gst_audio::AudioChannelPositi
     layout.output_channels().map(gst_position).collect()
 }
 
+/// Map an internal Salsa speaker label to the GStreamer channel position.
+///
+/// `VerticalHeight*` and `TopFront*` intentionally fold onto the same
+/// GStreamer positions (`TopFront*`), as do `TopBack*` and `TopRear*`. Current
+/// layouts never contain both aliases, so the resulting caps mask stays a
+/// permutation. If a future layout mixes them, this function needs a distinct
+/// disambiguation rather than silently duplicating a position.
 fn gst_position(channel: SpeakerChannel) -> gst_audio::AudioChannelPosition {
     use gst_audio::AudioChannelPosition as P;
     match channel {
@@ -280,30 +287,30 @@ impl ObjectImpl for Oar {
         match pspec.name() {
             "layout" => {
                 let layout = value.get::<String>().unwrap_or_default();
-                self.state.lock().unwrap().layout = layout;
+                salsa_gst::lock(&self.state).layout = layout;
             }
             "limiter-enable" => {
-                self.state.lock().unwrap().limiter_enable = value.get().unwrap_or(false);
+                salsa_gst::lock(&self.state).limiter_enable = value.get().unwrap_or(false);
             }
             "discard-latency" => {
-                self.state.lock().unwrap().discard_latency = value.get().unwrap_or(false);
+                salsa_gst::lock(&self.state).discard_latency = value.get().unwrap_or(false);
             }
             "metadata-offset" => {
-                self.state.lock().unwrap().metadata_offset =
+                salsa_gst::lock(&self.state).metadata_offset =
                     value.get().unwrap_or(DEFAULT_METADATA_OFFSET);
             }
-            _ => unimplemented!(),
+            _ => {}
         }
     }
 
     fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
-        let state = self.state.lock().unwrap();
+        let state = salsa_gst::lock(&self.state);
         match pspec.name() {
             "layout" => state.layout.to_value(),
             "limiter-enable" => state.limiter_enable.to_value(),
             "discard-latency" => state.discard_latency.to_value(),
             "metadata-offset" => state.metadata_offset.to_value(),
-            _ => unimplemented!(),
+            _ => pspec.default_value().clone(),
         }
     }
 }
@@ -377,7 +384,7 @@ impl BaseTransformImpl for Oar {
     fn start(&self) -> Result<(), gst::ErrorMessage> {
         self.requested_layout()
             .map_err(|error| gst::error_msg!(gst::CoreError::Negotiation, ["{error}"]))?;
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.renderer = None;
         state.runtime = RuntimeState::default();
         state.pending = PendingAudio::default();
@@ -389,7 +396,7 @@ impl BaseTransformImpl for Oar {
     }
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.renderer = None;
         state.runtime = RuntimeState::default();
         state.pending = PendingAudio::default();
@@ -473,7 +480,7 @@ impl BaseTransformImpl for Oar {
             ));
         }
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.renderer = Some(SpeakerRenderer::new(layout, object_count));
         state.runtime.reset();
         state.pending = PendingAudio::default();
@@ -495,7 +502,7 @@ impl BaseTransformImpl for Oar {
         let Some(inbuf) = self.take_queued_buffer() else {
             return Ok(GenerateOutputSuccess::NoOutput);
         };
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.queue(&inbuf)?;
         Ok(match state.render_pending(false)? {
             Some(buffer) => GenerateOutputSuccess::Buffer(buffer),
@@ -510,7 +517,7 @@ impl BaseTransformImpl for Oar {
             && let gst::QueryViewMut::Latency(latency) = query.view_mut()
         {
             let (live, min, max) = latency.result();
-            let rate = self.state.lock().unwrap().rate;
+            let rate = salsa_gst::lock(&self.state).rate;
             let extra = sample_time((BLOCK_SAMPLES - 1) as u64, rate);
             latency.set(live, min + extra, max.map(|value| value + extra));
         }
@@ -519,11 +526,11 @@ impl BaseTransformImpl for Oar {
 
     fn sink_event(&self, event: gst::Event) -> bool {
         match event.view() {
-            gst::EventView::FlushStop(_) => self.state.lock().unwrap().reset_stream(),
+            gst::EventView::FlushStop(_) => salsa_gst::lock(&self.state).reset_stream(),
             gst::EventView::Eos(_) | gst::EventView::Segment(_) | gst::EventView::Caps(_) => {
                 // Complete the old timeline before forwarding a serialized boundary.
                 // A flushing seek has already discarded its pending audio.
-                let tail = self.state.lock().unwrap().render_pending(true);
+                let tail = salsa_gst::lock(&self.state).render_pending(true);
                 match tail {
                     Ok(Some(buffer)) => {
                         if self.obj().src_pad().push(buffer).is_err() {
@@ -541,7 +548,7 @@ impl BaseTransformImpl for Oar {
                     }
                 }
                 if matches!(event.view(), gst::EventView::Segment(_)) {
-                    self.state.lock().unwrap().reset_stream();
+                    salsa_gst::lock(&self.state).reset_stream();
                 }
             }
             _ => (),

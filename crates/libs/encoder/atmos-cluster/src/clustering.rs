@@ -21,6 +21,7 @@ pub struct ClusterFrameMetadata {
     pub active: Vec<bool>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn select_centroids(
     loudness: &Loudness,
     excitation: &[f64],
@@ -299,6 +300,7 @@ pub fn assign_gains(
     gains
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn cluster_metadata(
     gains: &[f64],
     positions: &[[f64; 3]],

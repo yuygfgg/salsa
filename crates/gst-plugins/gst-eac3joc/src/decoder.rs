@@ -20,7 +20,7 @@ use objectaudio_ir::SpatialFrame;
 ///
 /// This is the only place the E-AC-3 delay is defined. It is added to both the
 /// metadata event offsets and the snapshot offset handed to downstream.
-pub const EAC3_DECODER_DELAY: usize = 1473;
+pub const EAC3_DECODER_DELAY: usize = salsa_codec::EAC3_DECODER_DELAY as usize;
 
 struct State {
     parser: Eac3JocParser,
@@ -53,7 +53,7 @@ pub struct Eac3JocDec {
 impl Eac3JocDec {
     fn ensure_output_caps(&self, channels: usize) -> Result<(), gst::FlowError> {
         let rate = {
-            let state = self.state.lock().unwrap();
+            let state = salsa_gst::lock(&self.state);
             if state.caps_set && state.channels == channels {
                 return Ok(());
             }
@@ -75,7 +75,7 @@ impl Eac3JocDec {
         object
             .set_output_caps(&caps)
             .map_err(|_| gst::FlowError::NotNegotiated)?;
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.channels = channels;
         state.caps_set = true;
         state.attach_meta = attach_meta;
@@ -84,7 +84,7 @@ impl Eac3JocDec {
 
     fn drain(&self) -> Result<(), gst::FlowError> {
         let frames = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             state.parser.flush().map_err(|error| {
                 gst::error!(gst::CAT_RUST, "salsaeac3jocdec: flush failed: {error}");
                 gst::FlowError::Error
@@ -112,7 +112,7 @@ impl Eac3JocDec {
 
     fn decode_and_push(&self, frame: &Eac3JocFrame) -> Result<(), gst::FlowError> {
         let spatial = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             let Some(decoder) = state.decoder.as_deref_mut() else {
                 return Err(gst::FlowError::NotNegotiated);
             };
@@ -134,7 +134,7 @@ impl Eac3JocDec {
         frame: &Eac3JocFrame,
         spatial: SpatialFrame,
     ) -> Result<(), gst::FlowError> {
-        let attach_meta = self.state.lock().unwrap().attach_meta;
+        let attach_meta = salsa_gst::lock(&self.state).attach_meta;
         let meta = if attach_meta && frame.oamd.is_some() {
             let mut payload = spatial.to_payload();
             payload.rebase(EAC3_DECODER_DELAY as i64);
@@ -218,7 +218,7 @@ impl AudioDecoderImpl for Eac3JocDec {
     }
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.parser = Eac3JocParser::new();
         state.decoder = None;
         state.channels = 0;
@@ -233,7 +233,7 @@ impl AudioDecoderImpl for Eac3JocDec {
             .ok_or_else(|| gst::loggable_error!(gst::CAT_RUST, "empty sink caps"))?;
         let rate = structure.get::<i32>("rate").unwrap_or(48_000);
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             state.parser = Eac3JocParser::new();
             state.rate = rate;
             state.channels = 0;
@@ -275,7 +275,7 @@ impl AudioDecoderImpl for Eac3JocDec {
         if buffer.flags().contains(gst::BufferFlags::DISCONT) {
             // A live seek/session reset reuses this element. DISCARD the old
             // codec and JOC state without waiting for a FLUSH_STOP.
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             state.parser = Eac3JocParser::new();
             if let Some(decoder) = state.decoder.as_deref_mut() {
                 decoder.reset();
@@ -283,7 +283,7 @@ impl AudioDecoderImpl for Eac3JocDec {
         }
         let frames = {
             let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             state.parser.push_bytes(&map).map_err(|error| {
                 gst::error!(gst::CAT_RUST, "salsaeac3jocdec: parse failed: {error}");
                 gst::FlowError::Error
@@ -308,7 +308,7 @@ impl AudioDecoderImpl for Eac3JocDec {
 
     fn flush(&self, hard: bool) {
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             state.parser = Eac3JocParser::new();
             if let Some(decoder) = state.decoder.as_deref_mut() {
                 decoder.reset();

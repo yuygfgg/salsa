@@ -8,6 +8,7 @@ use gst::glib::prelude::*;
 use gstreamer as gst;
 use gstreamer_audio as gst_audio;
 use gstreamer_base as gst_base;
+use salsa_codec::elements;
 
 gst::glib::wrapper! {
     pub struct Eac3JocParse(ObjectSubclass<parse::Eac3JocParse>)
@@ -22,13 +23,13 @@ gst::glib::wrapper! {
 fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
     gst::Element::register(
         Some(plugin),
-        "salsaeac3jocparse",
+        elements::EAC3_PARSE,
         gst::Rank::PRIMARY,
         Eac3JocParse::static_type(),
     )?;
     gst::Element::register(
         Some(plugin),
-        "salsaeac3jocdec",
+        elements::EAC3_DEC,
         gst::Rank::PRIMARY,
         Eac3JocDec::static_type(),
     )?;

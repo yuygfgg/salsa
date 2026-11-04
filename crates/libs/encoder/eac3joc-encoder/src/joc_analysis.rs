@@ -9,6 +9,8 @@
 //! A Hann-windowed `rustfft` bank approximates the decoder's QMF split: at
 //! 48 kHz a 1024-point FFT gives 8 bins per 375 Hz QMF subband.
 
+#![allow(clippy::needless_range_loop)]
+
 use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};

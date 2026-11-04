@@ -16,44 +16,9 @@ use crate::queue::BoundedAppSrc;
 use gstsalsaeac3joc::{Eac3JocDec, Eac3JocParse};
 use gstsalsaobjectaudio::{HrtfRender, Oar};
 use gstsalsatruehd::{TrueHdAtmosDec, TrueHdParse};
+use salsa_codec::elements;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Codec {
-    Eac3,
-    TrueHd,
-}
-
-impl Codec {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Eac3 => "eac3",
-            Self::TrueHd => "truehd",
-        }
-    }
-
-    pub const fn appsrc_caps(self) -> &'static str {
-        match self {
-            Self::Eac3 => "audio/x-eac3",
-            Self::TrueHd => "audio/x-true-hd",
-        }
-    }
-
-    pub const fn signal_delay_samples(self) -> u32 {
-        match self {
-            Self::Eac3 => 1473,
-            Self::TrueHd => 0,
-        }
-    }
-
-    /// Parser lookahead needed before an access unit can be emitted. This is a
-    /// scheduling requirement, not a signal delay.
-    pub const fn parser_lookahead_samples(self) -> u32 {
-        match self {
-            Self::Eac3 => 1536,
-            Self::TrueHd => 40,
-        }
-    }
-}
+pub use salsa_codec::Codec;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RenderMode {
@@ -108,32 +73,32 @@ pub fn init() -> Result<()> {
 
     let _ = gst::Element::register(
         None,
-        "salsaeac3jocparse",
+        elements::EAC3_PARSE,
         gst::Rank::PRIMARY,
         Eac3JocParse::static_type(),
     );
     let _ = gst::Element::register(
         None,
-        "salsaeac3jocdec",
+        elements::EAC3_DEC,
         gst::Rank::PRIMARY,
         Eac3JocDec::static_type(),
     );
     let _ = gst::Element::register(
         None,
-        "salsatruehdparse",
+        elements::TRUEHD_PARSE,
         gst::Rank::PRIMARY,
         TrueHdParse::static_type(),
     );
     let _ = gst::Element::register(
         None,
-        "salsatruehdatmosdec",
+        elements::TRUEHD_DEC,
         gst::Rank::PRIMARY,
         TrueHdAtmosDec::static_type(),
     );
-    let _ = gst::Element::register(None, "salsaoar", gst::Rank::PRIMARY, Oar::static_type());
+    let _ = gst::Element::register(None, elements::OAR, gst::Rank::PRIMARY, Oar::static_type());
     let _ = gst::Element::register(
         None,
-        "salsahrtfrender",
+        elements::HRTF_RENDER,
         gst::Rank::PRIMARY,
         HrtfRender::static_type(),
     );
@@ -144,6 +109,48 @@ fn element(factory: &str) -> Result<gst::Element> {
     gst::ElementFactory::make(factory)
         .build()
         .with_context(|| format!("required element '{factory}' is unavailable"))
+}
+
+/// Build the parser and decoder pair for `codec`.
+fn decode_elements(codec: Codec) -> Result<(gst::Element, gst::Element)> {
+    let spec = codec.spec();
+    Ok((element(spec.parser)?, element(spec.decoder)?))
+}
+
+/// Build the renderer selected by `render`.
+fn build_renderer(render: &RenderMode) -> Result<gst::Element> {
+    match render {
+        RenderMode::Speaker { layout } => {
+            let renderer = element(elements::OAR)?;
+            renderer.set_property("layout", layout.as_str());
+            Ok(renderer)
+        }
+        RenderMode::Binaural {
+            model,
+            filterbank,
+            profile,
+        } => {
+            let renderer = element(elements::HRTF_RENDER)?;
+            renderer.set_property(
+                "personalized-headphone",
+                model.to_string_lossy().to_string(),
+            );
+            renderer.set_property("filterbank", *filterbank);
+            renderer.set_property("profile", profile.as_str());
+            Ok(renderer)
+        }
+    }
+}
+
+/// Build the bounded `appsink` used by both pipeline variants.
+fn build_appsink() -> Result<(gst::Element, AppSink)> {
+    let sink = element("appsink")?;
+    sink.set_property("sync", false);
+    sink.set_property("max-buffers", 8u32);
+    sink.set_property("drop", false);
+    sink.set_property("enable-last-sample", false);
+    let appsink = sink.clone().downcast::<AppSink>().unwrap();
+    Ok((sink, appsink))
 }
 
 pub struct DecodeRenderPipeline {
@@ -182,41 +189,9 @@ impl DecodeRenderPipeline {
         let caps: gst::Caps = config.codec.appsrc_caps().parse().unwrap();
         appsrc.set_property("caps", &caps);
 
-        let (parser_name, decoder_name) = match config.codec {
-            Codec::Eac3 => ("salsaeac3jocparse", "salsaeac3jocdec"),
-            Codec::TrueHd => ("salsatruehdparse", "salsatruehdatmosdec"),
-        };
-        let parser = element(parser_name)?;
-        let decoder = element(decoder_name)?;
-
-        let renderer = match &config.render {
-            RenderMode::Speaker { layout } => {
-                let renderer = element("salsaoar")?;
-                renderer.set_property("layout", layout.as_str());
-                renderer
-            }
-            RenderMode::Binaural {
-                model,
-                filterbank,
-                profile,
-            } => {
-                let renderer = element("salsahrtfrender")?;
-                renderer.set_property(
-                    "personalized-headphone",
-                    model.to_string_lossy().to_string(),
-                );
-                renderer.set_property("filterbank", *filterbank);
-                renderer.set_property("profile", profile.as_str());
-                renderer
-            }
-        };
-
-        let sink_element = element("appsink")?;
-        sink_element.set_property("sync", false);
-        sink_element.set_property("max-buffers", 8u32);
-        sink_element.set_property("drop", false);
-        sink_element.set_property("enable-last-sample", false);
-        let appsink = sink_element.clone().downcast::<AppSink>().unwrap();
+        let (parser, decoder) = decode_elements(config.codec)?;
+        let renderer = build_renderer(&config.render)?;
+        let (sink_element, appsink) = build_appsink()?;
 
         pipeline
             .add_many([
@@ -350,38 +325,9 @@ impl DirectPipeline {
         let source = element("filesrc")?;
         source.set_property("location", path.to_string_lossy().to_string());
         source.set_property("blocksize", 1_048_576u32);
-        let (parser_name, decoder_name) = match codec {
-            Codec::Eac3 => ("salsaeac3jocparse", "salsaeac3jocdec"),
-            Codec::TrueHd => ("salsatruehdparse", "salsatruehdatmosdec"),
-        };
-        let parser = element(parser_name)?;
-        let decoder = element(decoder_name)?;
-        let renderer = match render {
-            RenderMode::Speaker { layout } => {
-                let renderer = element("salsaoar")?;
-                renderer.set_property("layout", layout.as_str());
-                renderer
-            }
-            RenderMode::Binaural {
-                model,
-                filterbank,
-                profile,
-            } => {
-                let renderer = element("salsahrtfrender")?;
-                renderer.set_property(
-                    "personalized-headphone",
-                    model.to_string_lossy().to_string(),
-                );
-                renderer.set_property("filterbank", *filterbank);
-                renderer.set_property("profile", profile.as_str());
-                renderer
-            }
-        };
-        let sink_element = element("appsink")?;
-        sink_element.set_property("sync", false);
-        sink_element.set_property("max-buffers", 8u32);
-        sink_element.set_property("drop", false);
-        let appsink = sink_element.clone().downcast::<AppSink>().unwrap();
+        let (parser, decoder) = decode_elements(codec)?;
+        let renderer = build_renderer(render)?;
+        let (sink_element, appsink) = build_appsink()?;
         let pipeline = gst::Pipeline::new();
         pipeline
             .add_many([&source, &parser, &decoder, &renderer, &sink_element])

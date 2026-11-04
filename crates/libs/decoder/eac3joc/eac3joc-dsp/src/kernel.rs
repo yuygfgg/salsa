@@ -1,13 +1,13 @@
+//! JOC reconstruction kernel: analysis QMF, object matrix, synthesis QMF, LFE.
+//!
+//! The transforms use a scalar `rustfft` path.
+
 #![allow(
     clippy::needless_range_loop,
     clippy::manual_range_contains,
     clippy::manual_memcpy,
     clippy::too_many_arguments
 )]
-
-//! JOC reconstruction kernel: analysis QMF, object matrix, synthesis QMF, LFE.
-//!
-//! The transforms use a scalar `rustfft` path.
 
 use std::f64::consts::PI;
 use std::sync::Arc;

@@ -45,7 +45,7 @@ pub struct SpeakerLayout {
     pub speaker_bitfield: u32,
     pub channel_count: u8,
     /// PCM output slot -> internal speaker id, in GStreamer channel order.
-    pub standard_from_internal: [u8; 16],
+    pub internal_for_output_slot: [u8; 16],
     /// Speaker labels indexed by internal geometry id, not PCM output slot.
     pub channels: &'static [SpeakerChannel],
     pub regions: [RegionGeometry; 7],
@@ -106,7 +106,7 @@ impl SpeakerLayout {
 
     /// Speaker labels in PCM output order.
     pub fn output_channels(&self) -> impl Iterator<Item = SpeakerChannel> + '_ {
-        self.standard_from_internal[..self.channel_count()]
+        self.internal_for_output_slot[..self.channel_count()]
             .iter()
             .map(|index| self.channels[usize::from(*index)])
     }
@@ -279,12 +279,12 @@ mod tests {
     }
 
     #[test]
-    fn standard_from_internal_is_a_permutation() {
+    fn internal_for_output_slot_is_a_permutation() {
         for layout in layouts() {
             let mut seen = [false; MAX_CHANNELS];
             let count = layout.channel_count();
             for internal in 0..count {
-                let standard = usize::from(layout.standard_from_internal[internal]);
+                let standard = usize::from(layout.internal_for_output_slot[internal]);
                 assert!(standard < count, "{}", layout.name);
                 assert!(!seen[standard], "{}", layout.name);
                 seen[standard] = true;

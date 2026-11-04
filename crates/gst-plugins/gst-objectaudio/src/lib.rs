@@ -8,6 +8,7 @@ use gst::glib;
 use gst::glib::prelude::*;
 use gstreamer as gst;
 use gstreamer_base as gst_base;
+use salsa_codec::elements;
 
 gst::glib::wrapper! {
     pub struct Oar(ObjectSubclass<oar::Oar>)
@@ -27,19 +28,19 @@ gst::glib::wrapper! {
 fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
     gst::Element::register(
         Some(plugin),
-        "salsaoar",
+        elements::OAR,
         gst::Rank::PRIMARY,
         Oar::static_type(),
     )?;
     gst::Element::register(
         Some(plugin),
-        "salsahrtfrender",
+        elements::HRTF_RENDER,
         gst::Rank::PRIMARY,
         HrtfRender::static_type(),
     )?;
     gst::Element::register(
         Some(plugin),
-        "salsaobjectaudioadapt",
+        elements::OBJECT_AUDIO_ADAPT,
         gst::Rank::PRIMARY,
         ObjectAudioAdapt::static_type(),
     )?;

@@ -159,7 +159,7 @@ impl HrtfRender {
     }
 
     fn tail_buffer(&self) -> Option<gst::Buffer> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         if state.tail_sent {
             return None;
         }
@@ -271,7 +271,7 @@ impl ObjectImpl for HrtfRender {
     }
 
     fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         match pspec.name() {
             "personalized-headphone" => {
                 state.model_path = value.get::<String>().unwrap_or_default();
@@ -293,12 +293,12 @@ impl ObjectImpl for HrtfRender {
             "output-gain" => state.output_gain = value.get().unwrap_or(1.0),
             "chunk-frames" => state.chunk_frames = value.get().unwrap_or(1),
             "room-impulse-slots" => state.room_impulse_slots = value.get().unwrap_or(4096),
-            _ => unimplemented!(),
+            _ => {}
         }
     }
 
     fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
-        let state = self.state.lock().unwrap();
+        let state = salsa_gst::lock(&self.state);
         match pspec.name() {
             "personalized-headphone" => state.model_path.to_value(),
             "filterbank" => match state.filterbank {
@@ -312,7 +312,7 @@ impl ObjectImpl for HrtfRender {
             "output-gain" => state.output_gain.to_value(),
             "chunk-frames" => state.chunk_frames.to_value(),
             "room-impulse-slots" => state.room_impulse_slots.to_value(),
-            _ => unimplemented!(),
+            _ => pspec.default_value().clone(),
         }
     }
 }
@@ -370,7 +370,7 @@ impl BaseTransformImpl for HrtfRender {
     const TRANSFORM_IP_ON_PASSTHROUGH: bool = false;
 
     fn start(&self) -> Result<(), gst::ErrorMessage> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.renderer = None;
         state.reset_stream();
         state.in_bpf = 0;
@@ -381,7 +381,7 @@ impl BaseTransformImpl for HrtfRender {
     }
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.renderer = None;
         state.reset_stream();
         Ok(())
@@ -443,7 +443,7 @@ impl BaseTransformImpl for HrtfRender {
                 "salsahrtfrender needs interleaved F32LE input and stereo F32LE output"
             ));
         }
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         if state.model_path.is_empty() {
             return Err(gst::loggable_error!(
                 gst::CAT_RUST,
@@ -489,7 +489,7 @@ impl BaseTransformImpl for HrtfRender {
         size: usize,
         othercaps: &gst::Caps,
     ) -> Option<usize> {
-        let state = self.state.lock().unwrap();
+        let state = salsa_gst::lock(&self.state);
         let in_bpf = if state.in_bpf != 0 {
             state.in_bpf
         } else {
@@ -532,11 +532,11 @@ impl BaseTransformImpl for HrtfRender {
         // Discard the pre-seek filter/room/timeline state; transient
         // convergence at the seek point is accepted.
         if inbuf.flags().contains(gst::BufferFlags::DISCONT) {
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             state.reset_stream();
         }
         let (in_bpf, out_bpf) = {
-            let state = self.state.lock().unwrap();
+            let state = salsa_gst::lock(&self.state);
             if state.renderer.is_none() || state.in_bpf == 0 {
                 return Err(gst::FlowError::NotNegotiated);
             }
@@ -548,7 +548,7 @@ impl BaseTransformImpl for HrtfRender {
             return Ok(gst::FlowSuccess::Ok);
         }
         let in_channels = {
-            let state = self.state.lock().unwrap();
+            let state = salsa_gst::lock(&self.state);
             state.in_channels
         };
         if in_channels == 0 {
@@ -563,7 +563,7 @@ impl BaseTransformImpl for HrtfRender {
 
         let updates = objectaudio_meta::iter_spatial(inbuf);
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         if state.next_pts.is_none() {
             state.next_pts = inbuf.pts();
         }
@@ -649,7 +649,7 @@ impl BaseTransformImpl for HrtfRender {
         {
             let (live, min, max) = latency.result();
             let extra = {
-                let state = self.state.lock().unwrap();
+                let state = salsa_gst::lock(&self.state);
                 gst::ClockTime::from_nseconds(state.latency_ns())
             };
             latency.set(
@@ -676,7 +676,7 @@ impl BaseTransformImpl for HrtfRender {
             }
             gst::EventView::FlushStop(_) => {
                 {
-                    let mut state = self.state.lock().unwrap();
+                    let mut state = salsa_gst::lock(&self.state);
                     state.reset_stream();
                 }
                 self.parent_sink_event(event)

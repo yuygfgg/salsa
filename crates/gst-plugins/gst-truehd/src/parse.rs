@@ -195,12 +195,12 @@ impl BaseParseImpl for TrueHdParse {
         let borrowed = self.obj();
         let object: &super::TrueHdParse = borrowed.as_ref();
         object.set_min_frame_size(6);
-        **self.state.lock().unwrap() = State::default();
+        **salsa_gst::lock(&self.state) = State::default();
         Ok(())
     }
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
-        **self.state.lock().unwrap() = State::default();
+        **salsa_gst::lock(&self.state) = State::default();
         Ok(())
     }
 
@@ -225,7 +225,7 @@ impl BaseParseImpl for TrueHdParse {
             // mean the old framing state is invalid: drop it and resynchronise
             // on the next major sync.
             let discont = buffer.flags().contains(gst::BufferFlags::DISCONT);
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             let expected = state.stream_offset.saturating_add(state.base_consumed);
             if discont || frame.offset() != expected {
                 state.reset_transport(frame.offset());
@@ -241,7 +241,7 @@ impl BaseParseImpl for TrueHdParse {
             end
         };
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
 
         if let Some(pending) = state.pending.take() {
             if pending.offset > state.base_consumed {

@@ -42,7 +42,7 @@ impl Default for FileConfig {
             shm_name: String::new(),
             device: None,
             codec: None,
-            sample_rate: 48_000,
+            sample_rate: salsa_codec::SAMPLE_RATE,
             layout: "7.1.4".to_string(),
             render: None,
             binaural_model: None,
@@ -110,9 +110,10 @@ impl FileConfig {
     pub fn codec(&self) -> Result<Option<Codec>> {
         match self.codec.as_deref() {
             None | Some("") | Some("auto") => Ok(None),
-            Some("eac3") => Ok(Some(Codec::Eac3)),
-            Some("truehd") => Ok(Some(Codec::TrueHd)),
-            Some(other) => bail!("unknown codec '{other}' (use eac3 or truehd)"),
+            Some(value) => match Codec::from_label(value) {
+                Some(codec) => Ok(Some(codec)),
+                None => bail!("unknown codec '{value}' (use eac3 or truehd)"),
+            },
         }
     }
 

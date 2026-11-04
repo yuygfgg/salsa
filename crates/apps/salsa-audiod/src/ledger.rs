@@ -89,7 +89,7 @@ impl DelayLedger {
     /// The same contract expressed in the HAL device's 192 kHz carrier frames.
     pub fn declared_carrier_frames(&self) -> u64 {
         self.total_presentation_ns()
-            .saturating_mul(192_000)
+            .saturating_mul(u64::from(salsa_codec::CARRIER_SAMPLE_RATE))
             .div_ceil(1_000_000_000)
     }
 

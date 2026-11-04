@@ -45,25 +45,8 @@ pub struct Eac3JocDecoder {
     last_object_count: usize,
 }
 
-impl Default for Eac3JocDecoder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Eac3JocDecoder {
     /// Build a decoder. The libavcodec E-AC-3 decoder must be available.
-    pub fn new() -> Self {
-        Self {
-            core: CoreDecoder::new().expect("libavcodec E-AC-3 decoder"),
-            kernel: Box::new(JocKernel::new()),
-            last_bed_plan: None,
-            last_config: 3,
-            last_sample_rate: 48_000,
-            last_object_count: MAX_OBJECTS,
-        }
-    }
-
     pub fn try_new() -> Result<Self, DspError> {
         Ok(Self {
             core: CoreDecoder::new()?,

@@ -153,7 +153,7 @@ impl ObjectAudioAdapt {
         filter: Option<&gst::Caps>,
     ) -> Option<gst::Caps> {
         let (convert, direction_mode, remove) = {
-            let state = self.state.lock().unwrap();
+            let state = salsa_gst::lock(&self.state);
             (state.convert_to_float, state.direction, state.remove_dlb)
         };
 
@@ -262,29 +262,29 @@ impl ObjectImpl for ObjectAudioAdapt {
             "direction" => {
                 let text = value.get::<String>().unwrap_or_default();
                 if let Some(direction) = Direction::parse(&text) {
-                    self.state.lock().unwrap().direction = direction;
+                    salsa_gst::lock(&self.state).direction = direction;
                     self.obj().reconfigure_src();
                 }
             }
             "remove" => {
-                self.state.lock().unwrap().remove_dlb = value.get().unwrap_or(false);
+                salsa_gst::lock(&self.state).remove_dlb = value.get().unwrap_or(false);
                 self.obj().reconfigure_src();
             }
             "float" => {
-                self.state.lock().unwrap().convert_to_float = value.get().unwrap_or(false);
+                salsa_gst::lock(&self.state).convert_to_float = value.get().unwrap_or(false);
                 self.obj().reconfigure_src();
             }
-            _ => unimplemented!(),
+            _ => {}
         }
     }
 
     fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
-        let state = self.state.lock().unwrap();
+        let state = salsa_gst::lock(&self.state);
         match pspec.name() {
             "direction" => state.direction.name().to_value(),
             "remove" => state.remove_dlb.to_value(),
             "float" => state.convert_to_float.to_value(),
-            _ => unimplemented!(),
+            _ => pspec.default_value().clone(),
         }
     }
 }
@@ -336,7 +336,7 @@ impl BaseTransformImpl for ObjectAudioAdapt {
     const TRANSFORM_IP_ON_PASSTHROUGH: bool = false;
 
     fn start(&self) -> Result<(), gst::ErrorMessage> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.in_format = None;
         state.out_format = None;
         state.scene = None;
@@ -345,7 +345,7 @@ impl BaseTransformImpl for ObjectAudioAdapt {
     }
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.in_format = None;
         state.out_format = None;
         state.scene = None;
@@ -358,7 +358,7 @@ impl BaseTransformImpl for ObjectAudioAdapt {
             event.view(),
             gst::EventView::FlushStop(_) | gst::EventView::Segment(_)
         ) {
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             state.scene = None;
             state.received = 0;
         }
@@ -380,7 +380,7 @@ impl BaseTransformImpl for ObjectAudioAdapt {
         let out_info = gst_audio::AudioInfo::from_caps(outcaps)
             .map_err(|_| gst::loggable_error!(gst::CAT_RUST, "invalid adapter src caps"))?;
         let (mode, convert) = {
-            let state = self.state.lock().unwrap();
+            let state = salsa_gst::lock(&self.state);
             (state.direction, state.convert_to_float)
         };
         let resolved = Self::resolve_direction(mode, incaps);
@@ -424,7 +424,7 @@ impl BaseTransformImpl for ObjectAudioAdapt {
             ));
         }
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.resolved = resolved;
         state.rate = in_info.rate();
         state.bpf = in_info.bpf() as usize;
@@ -440,7 +440,7 @@ impl BaseTransformImpl for ObjectAudioAdapt {
         buffer: &mut gst::BufferRef,
     ) -> Result<gst::FlowSuccess, gst::FlowError> {
         let (convert, remove, direction, rate) = {
-            let state = self.state.lock().unwrap();
+            let state = salsa_gst::lock(&self.state);
             (
                 state.convert_to_float,
                 state.remove_dlb,
@@ -450,7 +450,7 @@ impl BaseTransformImpl for ObjectAudioAdapt {
         };
 
         if convert {
-            let in_format = self.state.lock().unwrap().in_format;
+            let in_format = salsa_gst::lock(&self.state).in_format;
             if in_format == Some(gst_audio::AudioFormat::S32le) {
                 let mut map = buffer.map_writable().map_err(|_| gst::FlowError::Error)?;
                 convert_s32le_to_f32le(map.as_mut_slice());
@@ -473,7 +473,7 @@ impl BaseTransformImpl for ObjectAudioAdapt {
                 if !objectaudio_meta::dlb_payloads(buffer).is_empty() {
                     return Ok(gst::FlowSuccess::Ok);
                 }
-                let mut state = self.state.lock().unwrap();
+                let mut state = salsa_gst::lock(&self.state);
                 if buffer.flags().contains(gst::BufferFlags::DISCONT) {
                     state.scene = None;
                     state.received = 0;

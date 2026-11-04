@@ -5,8 +5,6 @@
 //! and EMDF signing pipeline. The `eac3joc-encode` binary is a thin CLI
 //! over [`encode`].
 
-#![allow(clippy::needless_range_loop)]
-
 mod bitwriter;
 pub mod core;
 mod emdf;

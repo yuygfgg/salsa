@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! One-third-octave excitation and partial loudness (TVL 2018 subset).
 
+#![allow(clippy::needless_range_loop)]
+
 use std::sync::Arc;
 
 use rayon::prelude::*;

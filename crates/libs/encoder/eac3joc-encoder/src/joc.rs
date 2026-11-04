@@ -4,6 +4,8 @@
 //! The encoder solves a per-band Wiener matrix, optionally refines it against
 //! the quantizer, and Huffman-codes it with the decoder tables from `eac3joc`.
 
+#![allow(clippy::needless_range_loop)]
+
 use eac3joc::huffman_tables::{JOC_HUFF_CODE_COARSE_GENERIC, JOC_HUFF_CODE_FINE_GENERIC};
 
 use crate::bitwriter::BitWriter;

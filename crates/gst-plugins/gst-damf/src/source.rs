@@ -91,7 +91,7 @@ fn broad_caps() -> gst::Caps {
 
 impl DamfSrc {
     fn negotiated_caps(&self, filter: Option<&gst::Caps>) -> Option<gst::Caps> {
-        let caps = self.state.lock().unwrap().caps.clone()?;
+        let caps = salsa_gst::lock(&self.state).caps.clone()?;
         let caps = match filter {
             Some(filter) => caps.intersect(filter),
             None => caps,
@@ -122,18 +122,15 @@ impl ObjectImpl for DamfSrc {
     }
 
     fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
-        match pspec.name() {
-            "location" => {
-                self.state.lock().unwrap().location = value.get().unwrap_or_default();
-            }
-            _ => unimplemented!(),
+        if pspec.name() == "location" {
+            salsa_gst::lock(&self.state).location = value.get().unwrap_or_default();
         }
     }
 
     fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
         match pspec.name() {
-            "location" => self.state.lock().unwrap().location.to_value(),
-            _ => unimplemented!(),
+            "location" => salsa_gst::lock(&self.state).location.to_value(),
+            _ => pspec.default_value().clone(),
         }
     }
 }
@@ -171,7 +168,7 @@ impl ElementImpl for DamfSrc {
 
 impl BaseSrcImpl for DamfSrc {
     fn start(&self) -> Result<(), gst::ErrorMessage> {
-        let location = self.state.lock().unwrap().location.clone();
+        let location = salsa_gst::lock(&self.state).location.clone();
         if location.is_empty() {
             return Err(gst::error_msg!(
                 gst::ResourceError::NotFound,
@@ -197,7 +194,7 @@ impl BaseSrcImpl for DamfSrc {
         self.obj()
             .set_blocksize(u32::try_from(block_bytes).unwrap_or(u32::MAX));
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.source = Some(source);
         state.info = Some(info);
         state.caps = Some(caps);
@@ -207,7 +204,7 @@ impl BaseSrcImpl for DamfSrc {
     }
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.source = None;
         state.info = None;
         state.caps = None;
@@ -225,7 +222,7 @@ impl BaseSrcImpl for DamfSrc {
             return false;
         }
         let frame = {
-            let state = self.state.lock().unwrap();
+            let state = salsa_gst::lock(&self.state);
             let Some(info) = state.info.as_ref() else {
                 return false;
             };
@@ -245,7 +242,7 @@ impl BaseSrcImpl for DamfSrc {
             }
         };
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         let Some(source) = state.source.as_mut() else {
             return false;
         };
@@ -259,7 +256,7 @@ impl BaseSrcImpl for DamfSrc {
     }
 
     fn size(&self) -> Option<u64> {
-        let state = self.state.lock().unwrap();
+        let state = salsa_gst::lock(&self.state);
         let info = state.info.as_ref()?;
         let frames = info.total_frames?;
         Some(frames * info.output_channels as u64 * 4)
@@ -269,7 +266,7 @@ impl BaseSrcImpl for DamfSrc {
         if let gst::QueryViewMut::Duration(duration) = query.view_mut()
             && duration.format() == gst::Format::Time
         {
-            let state = self.state.lock().unwrap();
+            let state = salsa_gst::lock(&self.state);
             if let Some(info) = state.info.as_ref()
                 && let Some(frames) = info.total_frames
             {
@@ -289,7 +286,7 @@ impl BaseSrcImpl for DamfSrc {
     fn set_caps(&self, caps: &gst::Caps) -> Result<(), gst::LoggableError> {
         let audio_info = gst_audio::AudioInfo::from_caps(caps)
             .map_err(|_| gst::loggable_error!(gst::CAT_RUST, "invalid salsadamfsrc caps"))?;
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         if let Some(info) = state.info.as_ref()
             && (audio_info.channels() != info.output_channels as u32
                 || audio_info.rate() != info.sample_rate)
@@ -311,7 +308,7 @@ impl BaseSrcImpl for DamfSrc {
         _length: u32,
     ) -> Result<CreateSuccess, gst::FlowError> {
         let (block, attach_meta, bpf) = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             let block_frames = state.block_frames;
             let Some(source) = state.source.as_mut() else {
                 return Err(gst::FlowError::NotNegotiated);

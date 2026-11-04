@@ -212,7 +212,7 @@ pub struct DamfSink {
 
 impl DamfSink {
     fn finalize(&self) -> objectaudio_damf::Result<()> {
-        self.state.lock().unwrap().finalize()
+        salsa_gst::lock(&self.state).finalize()
     }
 }
 
@@ -290,7 +290,7 @@ impl ObjectImpl for DamfSink {
     }
 
     fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         match pspec.name() {
             "location" => state.location = value.get().unwrap_or_default(),
             "creation-tool" => state.creation_tool = value.get().unwrap_or_default(),
@@ -304,12 +304,12 @@ impl ObjectImpl for DamfSink {
                 state.object_id_base = value.get().unwrap_or(DEFAULT_OBJECT_ID_BASE)
             }
             "little-endian" => state.little_endian = value.get().unwrap_or(false),
-            _ => unimplemented!(),
+            _ => {}
         }
     }
 
     fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
-        let state = self.state.lock().unwrap();
+        let state = salsa_gst::lock(&self.state);
         match pspec.name() {
             "location" => state.location.to_value(),
             "creation-tool" => state.creation_tool.to_value(),
@@ -319,7 +319,7 @@ impl ObjectImpl for DamfSink {
             "lfe-id" => state.lfe_id.to_value(),
             "object-id-base" => state.object_id_base.to_value(),
             "little-endian" => state.little_endian.to_value(),
-            _ => unimplemented!(),
+            _ => pspec.default_value().clone(),
         }
     }
 }
@@ -357,19 +357,19 @@ impl ElementImpl for DamfSink {
 
 impl BaseSinkImpl for DamfSink {
     fn start(&self) -> Result<(), gst::ErrorMessage> {
-        let location = self.state.lock().unwrap().location.clone();
+        let location = salsa_gst::lock(&self.state).location.clone();
         if location.is_empty() {
             return Err(gst::error_msg!(
                 gst::ResourceError::NotFound,
                 ("DAMF sink has no location")
             ));
         }
-        self.state.lock().unwrap().reset();
+        salsa_gst::lock(&self.state).reset();
         Ok(())
     }
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
-        let result = self.state.lock().unwrap().finalize();
+        let result = salsa_gst::lock(&self.state).finalize();
         result.map_err(|error| {
             gst::error_msg!(
                 gst::ResourceError::Write,
@@ -400,7 +400,7 @@ impl BaseSinkImpl for DamfSink {
             ));
         }
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         if state.writer.is_some() {
             if state.rate != rate || state.channels != channels || state.format != Some(format) {
                 return Err(gst::loggable_error!(
@@ -431,7 +431,7 @@ impl BaseSinkImpl for DamfSink {
     }
 
     fn render(&self, buffer: &gst::Buffer) -> Result<gst::FlowSuccess, gst::FlowError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         let Some(_) = state.writer.as_ref() else {
             return Err(gst::FlowError::NotNegotiated);
         };

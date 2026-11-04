@@ -12,6 +12,8 @@ name = "gstsalsadamf"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+salsa-codec.workspace = true
+salsa-gst.workspace = true
 objectaudio-damf.workspace = true
 objectaudio-ir.workspace = true
 objectaudio-meta.workspace = true

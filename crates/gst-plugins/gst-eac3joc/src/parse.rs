@@ -111,12 +111,12 @@ impl BaseParseImpl for Eac3JocParse {
         let borrowed = self.obj();
         let object: &super::Eac3JocParse = borrowed.as_ref();
         object.set_min_frame_size(6);
-        self.caps.lock().unwrap().take();
+        salsa_gst::lock(&self.caps).take();
         Ok(())
     }
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
-        self.caps.lock().unwrap().take();
+        salsa_gst::lock(&self.caps).take();
         Ok(())
     }
 
@@ -183,7 +183,7 @@ impl BaseParseImpl for Eac3JocParse {
                 info,
             } => {
                 let caps_to_push = {
-                    let mut caps = self.caps.lock().unwrap();
+                    let mut caps = salsa_gst::lock(&self.caps);
                     match caps.as_ref() {
                         None => {
                             *caps = Some(info);

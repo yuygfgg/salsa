@@ -12,6 +12,8 @@ name = "gstsalsaobjectaudio"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+salsa-codec.workspace = true
+salsa-gst.workspace = true
 objectaudio-ir.workspace = true
 objectaudio-meta.workspace = true
 objectaudio-oamd.workspace = true

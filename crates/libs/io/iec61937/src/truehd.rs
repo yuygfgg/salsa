@@ -37,17 +37,13 @@ const MAX_PENDING_BYTES: usize = MAT_FRAME_BYTES * 3;
 /// One TrueHD access unit recovered from the MAT transport.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrueHdAccessUnit {
-    /// Session generation that produced the access unit.
-    pub generation: u64,
-    /// Absolute carrier byte offset of the access unit start.
-    pub carrier_offset: u64,
+    /// Header fields shared with every codec access unit.
+    pub header: super::AccessUnitHeader,
     /// Raw 16-bit input timing field from the access-unit header.
     pub input_timing: u16,
     /// Unwrapped access-unit timeline, in audio samples, relative to the first
     /// access unit of this depacketizer session.
     pub sample_offset: u64,
-    /// Complete TrueHD access unit, including the length and timing header.
-    pub bytes: Vec<u8>,
 }
 
 /// Cumulative TrueHD transport counters.
@@ -218,11 +214,13 @@ impl TrueHdDepacketizer {
             };
 
             units.push(TrueHdAccessUnit {
-                generation,
-                carrier_offset,
+                header: super::AccessUnitHeader {
+                    generation,
+                    carrier_offset,
+                    bytes: self.data[start..start + len].to_vec(),
+                },
                 input_timing: timing,
                 sample_offset,
-                bytes: self.data[start..start + len].to_vec(),
             });
             self.stats.access_units += 1;
             self.prev_timing = Some(timing);
@@ -452,11 +450,11 @@ mod tests {
 
         assert_eq!(recovered.len(), 23);
         for (actual, expected) in recovered.iter().zip(&units) {
-            assert_eq!(&actual.bytes, expected);
+            assert_eq!(&actual.header.bytes, expected);
         }
         assert_eq!(recovered[0].sample_offset, 0);
         assert_eq!(recovered[1].sample_offset, 40);
-        assert_eq!(recovered[0].generation, 3);
+        assert_eq!(recovered[0].header.generation, 3);
     }
 
     #[test]
@@ -470,7 +468,7 @@ mod tests {
 
         assert_eq!(recovered.len(), units.len());
         for (actual, expected) in recovered.iter().zip(&units) {
-            assert_eq!(&actual.bytes, expected);
+            assert_eq!(&actual.header.bytes, expected);
         }
     }
 

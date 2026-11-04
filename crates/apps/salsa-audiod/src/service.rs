@@ -63,7 +63,7 @@ impl ServiceConfig {
         Self {
             source,
             codec: None,
-            sample_rate: 48_000,
+            sample_rate: salsa_codec::SAMPLE_RATE,
             render: RenderMode::speaker("7.1.4"),
             output: OutputConfig::Null,
             scheduling_allowance_ns: 50_000_000,
@@ -221,7 +221,7 @@ impl Timeline {
         let base = self.base_carrier_sample.unwrap_or(0);
         let samples = match unit {
             AccessUnit::Eac3(unit) => {
-                let burst = unit.carrier_offset / EAC3_BURST_BYTES as u64;
+                let burst = unit.header.carrier_offset / EAC3_BURST_BYTES as u64;
                 let carrier =
                     base + burst * (EAC3_BURST_BYTES as u64 / EAC3_CARRIER_BYTES_PER_FRAME as u64);
                 carrier * rate as u64 / u64::from(CARRIER_SAMPLE_RATE)
@@ -229,7 +229,7 @@ impl Timeline {
             AccessUnit::TrueHd(unit) => {
                 let anchor = *self.truehd_anchor.get_or_insert_with(|| {
                     let carrier =
-                        base + unit.carrier_offset / TRUEHD_CARRIER_BYTES_PER_FRAME as u64;
+                        base + unit.header.carrier_offset / TRUEHD_CARRIER_BYTES_PER_FRAME as u64;
                     carrier * rate as u64 / u64::from(CARRIER_SAMPLE_RATE)
                 });
                 anchor + unit.sample_offset
@@ -874,7 +874,9 @@ impl SourceCounter {
                 // One E-AC-3 audio frame per carrier burst: 6 x 256 samples.
                 // `start` is an absolute device position in live mode, so count
                 // frames instead of using it as a duration.
-                self.end = self.end.saturating_add(1536);
+                self.end = self
+                    .end
+                    .saturating_add(u64::from(salsa_codec::EAC3_FRAME_SAMPLES));
             }
             Codec::TrueHd => {
                 if let Some(previous) = self.prev_truehd_start {

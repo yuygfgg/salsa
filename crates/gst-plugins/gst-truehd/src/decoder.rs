@@ -194,7 +194,7 @@ pub struct TrueHdAtmosDec {
 impl TrueHdAtmosDec {
     fn ensure_output_caps(&self, rate: i32, channels: i32) -> Result<(), gst::FlowError> {
         {
-            let state = self.state.lock().unwrap();
+            let state = salsa_gst::lock(&self.state);
             if state.caps_set && state.rate == rate && state.channels == channels {
                 return Ok(());
             }
@@ -218,7 +218,7 @@ impl TrueHdAtmosDec {
             .set_output_caps(&caps)
             .map_err(|_| gst::FlowError::NotNegotiated)?;
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.rate = rate;
         state.channels = channels;
         state.caps_set = true;
@@ -240,7 +240,7 @@ impl TrueHdAtmosDec {
 
         let interleaved = spatial.pcm.interleave();
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             if state.channels as usize != channel_count {
                 return Err(gst::FlowError::NotNegotiated);
             }
@@ -281,7 +281,7 @@ impl TrueHdAtmosDec {
 
     fn flush_ready(&self) -> Result<(), gst::FlowError> {
         let needed = {
-            let state = self.state.lock().unwrap();
+            let state = salsa_gst::lock(&self.state);
             if state.channels == 0 {
                 return Ok(());
             }
@@ -300,7 +300,7 @@ impl TrueHdAtmosDec {
 
     fn flush_samples(&self, samples: usize) -> Result<(), gst::FlowError> {
         let (data, channels, attach_meta, meta) = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             let channels = state.channels as usize;
             if channels == 0 || samples == 0 {
                 return Ok(());
@@ -328,7 +328,7 @@ impl TrueHdAtmosDec {
 
     fn drain(&self) -> Result<(), gst::FlowError> {
         let (take, channels) = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             let channels = state.channels as usize;
             let samples = state.pending_samples();
             let take = round_up_32(samples);
@@ -347,7 +347,7 @@ impl TrueHdAtmosDec {
     }
 
     fn take_worker(&self) -> Option<Worker> {
-        self.state.lock().unwrap().worker.take()
+        salsa_gst::lock(&self.state).worker.take()
     }
 }
 
@@ -430,7 +430,7 @@ impl AudioDecoderImpl for TrueHdAtmosDec {
         if let Some(worker) = self.take_worker() {
             worker.shutdown();
         }
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.clear_stream();
         Ok(())
     }
@@ -449,7 +449,7 @@ impl AudioDecoderImpl for TrueHdAtmosDec {
                 "cannot spawn the TrueHD worker thread: {error}"
             )
         })?;
-        let mut state = self.state.lock().unwrap();
+        let mut state = salsa_gst::lock(&self.state);
         state.clear_stream();
         state.rate = rate;
         state.worker = Some(worker);
@@ -467,7 +467,7 @@ impl AudioDecoderImpl for TrueHdAtmosDec {
         if buffer.flags().contains(gst::BufferFlags::DISCONT) {
             // Reused after a live seek/session reset: drop the old decoder and
             // scene state, but keep the negotiated output caps.
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             state.pending.clear();
             state.scene = None;
             state.received = 0;
@@ -483,7 +483,7 @@ impl AudioDecoderImpl for TrueHdAtmosDec {
             map.to_vec()
         };
         let decoded = {
-            let state = self.state.lock().unwrap();
+            let state = salsa_gst::lock(&self.state);
             let Some(worker) = &state.worker else {
                 return Err(gst::FlowError::NotNegotiated);
             };
@@ -511,7 +511,7 @@ impl AudioDecoderImpl for TrueHdAtmosDec {
 
     fn flush(&self, hard: bool) {
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = salsa_gst::lock(&self.state);
             state.pending.clear();
             state.scene = None;
             state.received = 0;

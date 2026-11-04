@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Stateful streaming renderer for the clustering decisions.
 
+#![allow(clippy::needless_range_loop)]
+
 use anyhow::{Result, ensure};
 use rayon::prelude::*;
 

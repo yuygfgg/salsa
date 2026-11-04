@@ -19,7 +19,6 @@ pub const MAX_OBJ_INFO_BLOCKS: usize = 8;
 pub const GAIN_MINUS_INFINITY: i8 = -128; // -inf gain
 
 #[derive(Clone, Debug)]
-#[repr(C)]
 struct OAMDParserState {
     object_count: usize,
     program_assignment: ProgramAssignment,
@@ -60,7 +59,6 @@ impl Default for OAMDParserState {
 
 /// Speaker bed assignment for spatial audio channels
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
-#[repr(C)]
 pub struct BedAssignment(pub [bool; BED_CHANNEL_COUNT]);
 
 impl BedAssignment {
@@ -133,7 +131,6 @@ pub const STD_BED_LIST: [&[usize]; 10] = [
 pub const ISF_COUNT_LIST: [usize; 8] = [4, 8, 10, 14, 15, 30, 0, 0];
 
 #[derive(Clone, Debug, Default)]
-#[repr(C)]
 pub struct ProgramAssignment {
     pub b_bed_chan_distribute: bool,
     pub bed_assignment: Vec<BedAssignment>,
@@ -228,7 +225,6 @@ impl ProgramAssignment {
 }
 
 #[derive(Clone, Debug, Default)]
-#[repr(C)]
 pub struct ObjectAudioMetadataPayload {
     pub evo_sample_offset: u64,
     pub oamd_version: u8,
@@ -344,7 +340,6 @@ impl ObjectAudioMetadataPayload {
 }
 
 #[derive(Clone, Debug, Default)]
-#[repr(C)]
 pub struct OAElementMD {
     pub oa_element_id_idx: u8,
     pub alternate_object_data_id_idx: Option<u8>,
@@ -459,7 +454,6 @@ impl OAElementMD {
 pub type ObjectData = Vec<ObjectInfoBlock>;
 
 #[derive(Clone, Debug)]
-#[repr(C)]
 pub struct ObjectElement {
     pub md_update_info: MDUpdateInfo,
     pub b_reserved_data_not_present: bool,
@@ -512,7 +506,6 @@ impl ObjectElement {
 }
 
 #[derive(Clone, Debug, Default)]
-#[repr(C)]
 pub struct MDUpdateInfo {
     pub sample_offset: usize,
     pub num_obj_info_blocks: usize,
@@ -555,7 +548,6 @@ impl MDUpdateInfo {
 }
 
 #[derive(Clone, Debug, Default)]
-#[repr(C)]
 pub struct BlockUpdateInfo {
     pub block_offset_factor_bits: u8,
     pub ramp_duration_code: u8,
@@ -596,7 +588,6 @@ impl BlockUpdateInfo {
 }
 
 #[derive(Clone, Debug, Default)]
-#[repr(C)]
 pub struct ObjectInfoBlock {
     pub b_object_not_active: bool,
     pub object_basic_info: ObjectBasicInfo,
@@ -690,7 +681,6 @@ impl ObjectInfoBlock {
 }
 
 #[derive(Clone, Debug)]
-#[repr(C)]
 pub struct ObjectBasicInfo {
     pub object_gain: i8,
     pub object_priority: f64,
@@ -770,7 +760,6 @@ impl ObjectBasicInfo {
 }
 
 #[derive(Clone, Debug)]
-#[repr(C)]
 pub struct ObjectRenderInfo {
     pub b_differential_position_specified: bool,
     pub pos3d: [f64; 3],
@@ -923,7 +912,6 @@ pub const TRIM_LUT: [f64; 16] = [
 
 /// One object's headphone rendering intent at one block, from `oa_element_id` 3.
 #[derive(Clone, Copy, Debug, Default)]
-#[repr(C)]
 pub struct HeadphoneBlock {
     /// 0, 1 or 2. Values above 2 are not defined and are read as 2.
     pub hp_render_mode: u8,
@@ -936,7 +924,6 @@ pub struct HeadphoneBlock {
 /// codes it per object and block. A mode above 3 is not defined and reads nothing further,
 /// leaving the element empty.
 #[derive(Clone, Debug, Default)]
-#[repr(C)]
 pub struct HeadphoneElement {
     pub hp_mode: u8,
     pub num_obj_info_blocks: usize,
@@ -1017,7 +1004,6 @@ impl HeadphoneElement {
 
 /// Object description element, `oa_element_id` 4, which says which objects are dialogue.
 #[derive(Clone, Debug, Default)]
-#[repr(C)]
 pub struct ObjectDescriptionElement {
     pub num_obj_info_blocks: usize,
     pub b_present: bool,
@@ -1098,7 +1084,6 @@ impl ObjectDescriptionElement {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[repr(C)]
 pub struct DownmixRoute {
     /// 0=front, 1=side, 2=rear surround (only for the three-way tool).
     pub destination: u8,
@@ -1107,7 +1092,6 @@ pub struct DownmixRoute {
 
 /// Bed object element, `oa_element_id` 6, which says how a bed folds down to fewer outputs.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[repr(C)]
 pub struct BedObjectElement {
     pub is_channels: bool,
     /// Top front, top back, top pair, back pair, wides and LFE, derived from the
@@ -1211,7 +1195,6 @@ impl BedObjectElement {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-#[repr(C)]
 pub struct TrimElement {
     pub warp_mode: u8,
     pub reserved: u8,
@@ -1222,7 +1205,6 @@ pub struct TrimElement {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-#[repr(C)]
 pub struct Trim {
     pub b_default_trim: bool,
     pub b_disable_trim: bool,
@@ -1314,7 +1296,6 @@ impl TrimElement {
 }
 
 #[derive(Clone, Debug, Default)]
-#[repr(C)]
 pub struct ExtendedObjectElement {
     pub b_obj_div_block: bool,
     pub object_div_block: Vec<Vec<ObjectDivergenceBlock>>,
@@ -1449,7 +1430,6 @@ impl ExtendedObjectElement {
 }
 
 #[derive(Clone, Debug, Default)]
-#[repr(C)]
 pub struct ObjectDivergenceBlock {
     pub object_divergence: f64,
     pub b_object_divergence: bool,
@@ -1530,7 +1510,6 @@ impl ObjectDivergenceBlock {
 }
 
 #[derive(Clone, Debug, Default)]
-#[repr(C)]
 pub struct ExtendedPrecisionPositionBlock {
     pub ext_prec_pos3d_x: f64,
     pub ext_prec_pos3d_y: f64,

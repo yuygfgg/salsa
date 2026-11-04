@@ -26,6 +26,17 @@ pub use truehd::{
     TrueHdDepacketizer, TrueHdStats,
 };
 
+/// Header fields shared by every recovered codec access unit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessUnitHeader {
+    /// Session generation that produced the access unit.
+    pub generation: u64,
+    /// Absolute carrier byte offset of the access unit start.
+    pub carrier_offset: u64,
+    /// Complete codec access unit, including its codec framing.
+    pub bytes: Vec<u8>,
+}
+
 /// A recovered codec access unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccessUnit {
@@ -34,25 +45,23 @@ pub enum AccessUnit {
 }
 
 impl AccessUnit {
-    pub const fn generation(&self) -> u64 {
+    pub const fn header(&self) -> &AccessUnitHeader {
         match self {
-            Self::Eac3(unit) => unit.generation,
-            Self::TrueHd(unit) => unit.generation,
+            Self::Eac3(unit) => &unit.header,
+            Self::TrueHd(unit) => &unit.header,
         }
+    }
+
+    pub const fn generation(&self) -> u64 {
+        self.header().generation
     }
 
     pub const fn carrier_offset(&self) -> u64 {
-        match self {
-            Self::Eac3(unit) => unit.carrier_offset,
-            Self::TrueHd(unit) => unit.carrier_offset,
-        }
+        self.header().carrier_offset
     }
 
     pub fn bytes(&self) -> &[u8] {
-        match self {
-            Self::Eac3(unit) => &unit.bytes,
-            Self::TrueHd(unit) => &unit.bytes,
-        }
+        &self.header().bytes
     }
 }
 

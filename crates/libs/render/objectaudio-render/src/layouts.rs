@@ -68,7 +68,7 @@ pub(crate) const LAYOUTS: [SpeakerLayout; 11] = [
         out_ch_config: 0,
         speaker_bitfield: 0x1,
         channel_count: 2,
-        standard_from_internal: [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        internal_for_output_slot: [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         channels: &[SpeakerChannel::Left, SpeakerChannel::Right],
         regions: [
             region(
@@ -141,7 +141,7 @@ pub(crate) const LAYOUTS: [SpeakerLayout; 11] = [
         out_ch_config: 3,
         speaker_bitfield: 0x7,
         channel_count: 4,
-        standard_from_internal: [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        internal_for_output_slot: [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         channels: &[
             SpeakerChannel::Left,
             SpeakerChannel::Right,
@@ -211,7 +211,7 @@ pub(crate) const LAYOUTS: [SpeakerLayout; 11] = [
         out_ch_config: 255,
         speaker_bitfield: 0x9,
         channel_count: 4,
-        standard_from_internal: [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        internal_for_output_slot: [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         channels: &[
             SpeakerChannel::Left,
             SpeakerChannel::Right,
@@ -304,7 +304,7 @@ pub(crate) const LAYOUTS: [SpeakerLayout; 11] = [
         out_ch_config: 7,
         speaker_bitfield: 0xF,
         channel_count: 6,
-        standard_from_internal: [0, 1, 2, 3, 4, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        internal_for_output_slot: [0, 1, 2, 3, 4, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         channels: &[
             SpeakerChannel::Left,
             SpeakerChannel::Right,
@@ -406,7 +406,7 @@ pub(crate) const LAYOUTS: [SpeakerLayout; 11] = [
         out_ch_config: 11,
         speaker_bitfield: 0x1F,
         channel_count: 8,
-        standard_from_internal: [0, 1, 2, 3, 6, 7, 4, 5, 0, 0, 0, 0, 0, 0, 0, 0],
+        internal_for_output_slot: [0, 1, 2, 3, 6, 7, 4, 5, 0, 0, 0, 0, 0, 0, 0, 0],
         channels: &[
             SpeakerChannel::Left,
             SpeakerChannel::Right,
@@ -517,7 +517,7 @@ pub(crate) const LAYOUTS: [SpeakerLayout; 11] = [
         out_ch_config: 13,
         speaker_bitfield: 0x40F,
         channel_count: 8,
-        standard_from_internal: [0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 0, 0, 0, 0, 0, 0],
+        internal_for_output_slot: [0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 0, 0, 0, 0, 0, 0],
         channels: &[
             SpeakerChannel::Left,
             SpeakerChannel::Right,
@@ -640,7 +640,7 @@ pub(crate) const LAYOUTS: [SpeakerLayout; 11] = [
         out_ch_config: 14,
         speaker_bitfield: 0xA0F,
         channel_count: 10,
-        standard_from_internal: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 0, 0, 0, 0, 0],
+        internal_for_output_slot: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 0, 0, 0, 0, 0],
         channels: &[
             SpeakerChannel::Left,
             SpeakerChannel::Right,
@@ -783,7 +783,7 @@ pub(crate) const LAYOUTS: [SpeakerLayout; 11] = [
         out_ch_config: 15,
         speaker_bitfield: 0x41F,
         channel_count: 10,
-        standard_from_internal: [0, 1, 2, 3, 6, 7, 4, 5, 8, 9, 0, 0, 0, 0, 0, 0],
+        internal_for_output_slot: [0, 1, 2, 3, 6, 7, 4, 5, 8, 9, 0, 0, 0, 0, 0, 0],
         channels: &[
             SpeakerChannel::Left,
             SpeakerChannel::Right,
@@ -912,7 +912,7 @@ pub(crate) const LAYOUTS: [SpeakerLayout; 11] = [
         out_ch_config: 16,
         speaker_bitfield: 0xA1F,
         channel_count: 12,
-        standard_from_internal: [0, 1, 2, 3, 6, 7, 4, 5, 8, 9, 10, 11, 0, 0, 0, 0],
+        internal_for_output_slot: [0, 1, 2, 3, 6, 7, 4, 5, 8, 9, 10, 11, 0, 0, 0, 0],
         channels: &[
             SpeakerChannel::Left,
             SpeakerChannel::Right,
@@ -1061,7 +1061,7 @@ pub(crate) const LAYOUTS: [SpeakerLayout; 11] = [
         out_ch_config: 19,
         speaker_bitfield: 0xA9F,
         channel_count: 14,
-        standard_from_internal: [0, 1, 2, 3, 6, 7, 4, 5, 10, 11, 12, 13, 8, 9, 0, 0],
+        internal_for_output_slot: [0, 1, 2, 3, 6, 7, 4, 5, 10, 11, 12, 13, 8, 9, 0, 0],
         channels: &[
             SpeakerChannel::Left,
             SpeakerChannel::Right,
@@ -1223,7 +1223,7 @@ pub(crate) const LAYOUTS: [SpeakerLayout; 11] = [
         out_ch_config: 20,
         speaker_bitfield: 0xE9F,
         channel_count: 16,
-        standard_from_internal: [0, 1, 2, 3, 6, 7, 4, 5, 10, 11, 14, 15, 12, 13, 8, 9],
+        internal_for_output_slot: [0, 1, 2, 3, 6, 7, 4, 5, 10, 11, 14, 15, 12, 13, 8, 9],
         channels: &[
             SpeakerChannel::Left,
             SpeakerChannel::Right,

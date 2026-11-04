@@ -7,6 +7,7 @@ use gst::glib;
 use gst::glib::prelude::*;
 use gstreamer as gst;
 use gstreamer_base as gst_base;
+use salsa_codec::elements;
 
 gst::glib::wrapper! {
     pub struct DamfSrc(ObjectSubclass<source::DamfSrc>)
@@ -21,13 +22,13 @@ gst::glib::wrapper! {
 fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
     gst::Element::register(
         Some(plugin),
-        "salsadamfsrc",
+        elements::DAMF_SRC,
         gst::Rank::PRIMARY,
         DamfSrc::static_type(),
     )?;
     gst::Element::register(
         Some(plugin),
-        "salsadamfsink",
+        elements::DAMF_SINK,
         gst::Rank::PRIMARY,
         DamfSink::static_type(),
     )?;

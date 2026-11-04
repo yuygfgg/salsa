@@ -857,6 +857,8 @@ dependencies = [
  "objectaudio-damf",
  "objectaudio-ir",
  "objectaudio-meta",
+ "salsa-codec",
+ "salsa-gst",
 ]
 
 [[package]]
@@ -871,6 +873,8 @@ dependencies = [
  "objectaudio-decode",
  "objectaudio-ir",
  "objectaudio-meta",
+ "salsa-codec",
+ "salsa-gst",
 ]
 
 [[package]]
@@ -887,6 +891,8 @@ dependencies = [
  "objectaudio-meta",
  "objectaudio-oamd",
  "objectaudio-render",
+ "salsa-codec",
+ "salsa-gst",
 ]
 
 [[package]]
@@ -900,6 +906,8 @@ dependencies = [
  "objectaudio-decode",
  "objectaudio-ir",
  "objectaudio-meta",
+ "salsa-codec",
+ "salsa-gst",
  "truehd",
  "truehd-atmos",
 ]
@@ -1911,6 +1919,7 @@ dependencies = [
  "log",
  "objectaudio-hrtf",
  "objectaudio-meta",
+ "salsa-codec",
  "serde",
  "serde_json",
  "thiserror",
@@ -1927,6 +1936,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "salsa-codec"
+version = "0.1.0"
+
+[[package]]
 name = "salsa-eac3joc-encode"
 version = "0.1.0"
 dependencies = [
@@ -1936,6 +1949,10 @@ dependencies = [
  "env_logger",
  "log",
 ]
+
+[[package]]
+name = "salsa-gst"
+version = "0.1.0"
 
 [[package]]
 name = "same-file"
