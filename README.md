@@ -373,9 +373,7 @@ inference per source per frame, so it is opt-in.
 
 ### Virtual IEC 61937 audio device (macOS, experimental)
 
-This lets an unmodified mpv play E-AC-3 JOC or TrueHD Atmos through Salsa. The
-HAL driver and the Salsa service are installed separately. Install one codec
-mode at a time.
+This lets an unmodified mpv play E-AC-3 JOC or TrueHD Atmos through Salsa.
 
 Requirements: macOS 12 or newer, Xcode command-line tools, Rust 1.91 or newer,
 GStreamer and FFmpeg, and mpv 0.41 or newer.
@@ -386,31 +384,24 @@ GStreamer and FFmpeg, and mpv 0.41 or newer.
 cargo build --release -p salsa-audiod
 ```
 
-Build the driver for the codec you will play:
+Build both drivers, or just the one you need:
 
 ```sh
-# E-AC-3
-MODE=eac3 ./platform/macos/salsa-hal/build.sh
+# E-AC-3 + TrueHD
+MODE=both ./platform/macos/salsa-hal/build.sh
 
-# or TrueHD
+# or a single variant
+MODE=eac3 ./platform/macos/salsa-hal/build.sh
 MODE=truehd ./platform/macos/salsa-hal/build.sh
 ```
 
-#### 2. Install the virtual audio device
-
-E-AC-3:
+#### 2. Install the virtual audio devices
 
 ```sh
-sudo ./platform/macos/salsa-hal/install.sh \
-  platform/macos/salsa-hal/build-eac3/SalsaHAL.driver
+sudo ./platform/macos/salsa-hal/install.sh
 ```
 
-TrueHD:
-
-```sh
-sudo ./platform/macos/salsa-hal/install.sh \
-  platform/macos/salsa-hal/build-truehd/SalsaHAL.driver
-```
+This installs `SalsaHAL-EAC3.driver` and `SalsaHAL-TrueHD.driver` side by side.
 
 #### 3. Install the Salsa service
 
@@ -418,51 +409,58 @@ sudo ./platform/macos/salsa-hal/install.sh \
 ./platform/macos/salsa-audiod/install.sh
 ```
 
-#### 4. Choose where sound comes out
+This installs two LaunchAgents, `dev.salsa.audio.audiod.eac3` and
+`dev.salsa.audio.audiod.truehd`, with separate configurations
+(`audiod-eac3.json`, `audiod-truehd.json`).
+
+#### 4. Configure the services
+
+Configure each codec independently:
 
 ```sh
-salsa-audiod configure
+salsa-audiod configure --agent eac3
+salsa-audiod configure --agent truehd
 ```
 
-The command lists your physical outputs and prompts for the output device,
-render mode (speaker or binaural), and the speaker layout or binaural model
-path. Choose `0` to follow the macOS system output; then you can switch outputs
-in System Settings and start playback normally. This chooses where Salsa sends
-audio; it does not change the macOS system output.
+Follow the instructions to complete the configuration.
 
 To follow the macOS system output:
 
 ```sh
-salsa-audiod configure --device system --layout 7.1.4
+salsa-audiod configure --agent eac3 --device system --layout 7.1.4
+salsa-audiod configure --agent truehd --device system --layout 7.1.4
 ```
 
 For a fixed speaker layout without prompts:
 
 ```sh
-salsa-audiod configure --device "MacBook Pro Speakers" --layout 7.1.4
+salsa-audiod configure --agent eac3 --device "MacBook Pro Speakers" --layout 7.1.4
 ```
 
 For binaural output without prompts:
 
 ```sh
-salsa-audiod configure \
+salsa-audiod configure --agent truehd \
   --device "Airpods" \
   --render binaural \
   --binaural-model /path/to/model.personalized_headphone
 ```
 
-#### 5. Start the service
+#### 5. Start the services
 
 ```sh
 launchctl bootstrap gui/$(id -u) \
-  "$HOME/Library/LaunchAgents/dev.salsa.audio.audiod.plist"
+  "$HOME/Library/LaunchAgents/dev.salsa.audio.audiod.eac3.plist"
+launchctl bootstrap gui/$(id -u) \
+  "$HOME/Library/LaunchAgents/dev.salsa.audio.audiod.truehd.plist"
 ```
 
-The service starts at login and is restarted automatically if it exits with an
+Each service starts at login and is restarted automatically if it exits with an
 error. After changing settings later, apply them with:
 
 ```sh
-salsa-audiod configure --restart
+salsa-audiod configure --agent eac3 --restart
+salsa-audiod configure --agent truehd --restart
 ```
 
 #### 6. Play with mpv
@@ -490,24 +488,22 @@ mpv --ao=coreaudio_exclusive \
 Change the output or renderer and apply it:
 
 ```sh
-salsa-audiod configure --restart
+salsa-audiod configure --agent eac3 --restart
+salsa-audiod configure --agent truehd --restart
 ```
 
-Stop the service:
+Stop one service:
 
 ```sh
-launchctl bootout gui/$(id -u)/dev.salsa.audio.audiod
+launchctl bootout gui/$(id -u)/dev.salsa.audio.audiod.eac3
 ```
 
-Uninstall:
+Uninstall both services and both drivers:
 
 ```sh
 ./platform/macos/salsa-audiod/uninstall.sh
 sudo ./platform/macos/salsa-hal/uninstall.sh
 ```
-
-To switch between E-AC-3 and TrueHD, uninstall the current driver, build and
-install the other variant, then use the matching mpv command above.
 
 ## Salsa Studio (GUI preview player)
 

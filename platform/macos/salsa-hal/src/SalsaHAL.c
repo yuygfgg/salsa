@@ -140,7 +140,10 @@ enum
 //	multiple devices were supported, this state would need to be encapsulated in one or more structs
 //	so that each object's state can be tracked individually.
 //	Note also that we share a single mutex across all objects to be thread safe for the same reason.
-#define										kPlugIn_BundleID				"dev.salsa.audio.SalsaHAL"
+#ifndef SALSA_HAL_BUNDLE_ID
+#define SALSA_HAL_BUNDLE_ID "dev.salsa.audio.SalsaHAL"
+#endif
+#define										kPlugIn_BundleID				SALSA_HAL_BUNDLE_ID
 static pthread_mutex_t						gPlugIn_StateMutex				= PTHREAD_MUTEX_INITIALIZER;
 static UInt32								gPlugIn_RefCount				= 0;
 static AudioServerPlugInHostRef				gPlugIn_Host					= NULL;

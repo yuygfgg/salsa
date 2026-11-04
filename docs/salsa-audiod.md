@@ -62,11 +62,12 @@ salsa-audiod compare \
   --json /tmp/compare.json
 ```
 
-Choose the physical output and render settings once:
+Choose the physical output and render settings for each agent:
 
 ```sh
-salsa-audiod configure
-salsa-audiod configure --show
+salsa-audiod configure --agent eac3
+salsa-audiod configure --agent truehd
+salsa-audiod configure --agent eac3 --show
 ```
 
 The interactive setup always asks for the output device (showing the current
@@ -75,24 +76,44 @@ or binaural rendering and, for binaural, the `.personalized_headphone` model
 path. Non-interactive:
 
 ```sh
-salsa-audiod configure --device system --layout 7.1.4
-salsa-audiod configure --device "MacBook Pro Speakers" --layout 7.1.4
-salsa-audiod configure --device "MacBook Pro Speakers" \
+salsa-audiod configure --agent eac3 --device system --layout 7.1.4
+salsa-audiod configure --agent truehd --device "MacBook Pro Speakers" --layout 7.1.4
+salsa-audiod configure --agent truehd --device "MacBook Pro Speakers" \
   --render binaural --binaural-model /path/to/model.personalized_headphone
 ```
 
-Run live from the HAL ring using the saved configuration:
+### Two codec services
+
+The E-AC-3 and TrueHD virtual devices can be installed together. Each codec has
+its own service instance, carrier ring, configuration and LaunchAgent:
+
+| Agent | Configuration | Carrier ring | LaunchAgent |
+|---|---|---|---|
+| `eac3` | `audiod-eac3.json` | `/salsa-hal-carrier-eac3` | `dev.salsa.audio.audiod.eac3` |
+| `truehd` | `audiod-truehd.json` | `/salsa-hal-carrier-truehd` | `dev.salsa.audio.audiod.truehd` |
+
+Install both with `platform/macos/salsa-audiod/install.sh`, then configure each
+one:
 
 ```sh
-salsa-audiod run
+salsa-audiod configure --agent eac3 --restart
+salsa-audiod configure --agent truehd --restart
 ```
 
-The configuration lives in
-`~/Library/Application Support/Salsa/audiod.json` (or
-`$SALSA_AUDIOD_CONFIG`). CLI options override it for one run, for example:
+`--agent` is required: it selects `audiod-<agent>.json`, seeds it with the
+matching `shm_name` and `codec`, and restarts the matching LaunchAgent.
+
+Run live from the HAL ring using a saved agent configuration:
 
 ```sh
-salsa-audiod run --device "MacBook Pro Speakers" --layout 7.1.4
+salsa-audiod run --config "$HOME/Library/Application Support/Salsa/audiod-eac3.json"
+```
+
+CLI options override it for one run, for example:
+
+```sh
+salsa-audiod run --config "$HOME/Library/Application Support/Salsa/audiod-eac3.json" \
+  --device "MacBook Pro Speakers" --layout 7.1.4
 ```
 
 `salsa-audiod devices` lists outputs; `--device` accepts a list number, device
@@ -116,7 +137,7 @@ System Settings → Sound for other players).
 | Source | Use |
 |---|---|
 | `CarrierSource::File` | Captured `.spdif` bytes. |
-| `CarrierSource::Shared` | `/salsa-hal-carrier` shared-memory ring. Mirrors `SalsaCarrierShared.h`; the service copies one slot at a time and advances `tail`. |
+| `CarrierSource::Shared` | A HAL shared-memory ring (`/salsa-hal-carrier`, `/salsa-hal-carrier-eac3` or `/salsa-hal-carrier-truehd`). Mirrors `SalsaCarrierShared.h`; the service copies one slot at a time and advances `tail`. |
 | `CarrierSource::Scripted` | Pre-built chunks for lifecycle tests and diagnostics. |
 
 ## Lifecycle and recovery

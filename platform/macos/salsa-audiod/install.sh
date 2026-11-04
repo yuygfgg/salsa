@@ -7,20 +7,18 @@ BIN=${SALSA_AUDIOD_BIN:-"$REPO/target/release/salsa-audiod"}
 LABEL=dev.salsa.audio.audiod
 PREFIX="$HOME/Library/Application Support/Salsa"
 INSTALLED="$PREFIX/salsa-audiod"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/Salsa"
-CONFIG=${SALSA_AUDIOD_CONFIG:-"$PREFIX/audiod.json"}
 LOAD=0
 
 usage() {
     cat >&2 <<EOF
 usage: $0 [options]
 
-Installs the service binary and LaunchAgent. Output device and render settings
-are configured separately with `salsa-audiod configure`.
+Installs the service binary and the E-AC-3 and TrueHD LaunchAgents. Each agent
+has its own configuration and can be configured with
+`salsa-audiod configure --agent eac3|truehd`.
 
-  --config PATH   configuration file (default: $CONFIG)
-  --load          load the LaunchAgent now (explicit action)
+  --load          load both LaunchAgents now (explicit action)
   --bin PATH      service binary (default: target/release/salsa-audiod)
 EOF
     exit 2
@@ -28,7 +26,6 @@ EOF
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --config) CONFIG=$2; shift 2 ;;
         --load) LOAD=1; shift ;;
         --bin) BIN=$2; shift 2 ;;
         -h|--help) usage ;;
@@ -42,18 +39,22 @@ if [ ! -x "$BIN" ]; then
     exit 1
 fi
 
-mkdir -p "$PREFIX" "$LOG_DIR" "$(dirname "$PLIST")"
+mkdir -p "$PREFIX" "$LOG_DIR" "$HOME/Library/LaunchAgents"
 cp "$BIN" "$INSTALLED"
 chmod 0755 "$INSTALLED"
 codesign --force --sign - "$INSTALLED"
 codesign --verify --strict "$INSTALLED"
 
-SA_LABEL=$LABEL SA_BINARY=$INSTALLED SA_CONFIG=$CONFIG \
-SA_LOAD=$LOAD SA_LOG_DIR=$LOG_DIR SA_PLIST=$PLIST python3 - <<'PY'
+write_plist() {
+    label=$1
+    config=$2
+    plist=$3
+    log=$4
+    SA_LABEL="$label" SA_BINARY="$INSTALLED" SA_CONFIG="$config" \
+    SA_LOG="$log" SA_PLIST="$plist" python3 - <<'PY'
 import os
 import plistlib
 
-log = os.path.join(os.environ["SA_LOG_DIR"], "audiod.log")
 document = {
     "Label": os.environ["SA_LABEL"],
     "ProgramArguments": [
@@ -64,12 +65,27 @@ document = {
     "KeepAlive": {"SuccessfulExit": False},
     "ProcessType": "Interactive",
     "ThrottleInterval": 5,
-    "StandardOutPath": log,
-    "StandardErrorPath": log,
+    "StandardOutPath": os.environ["SA_LOG"],
+    "StandardErrorPath": os.environ["SA_LOG"],
 }
 with open(os.environ["SA_PLIST"], "wb") as handle:
     plistlib.dump(document, handle)
 PY
+}
+
+for profile in eac3 truehd; do
+    profile_config="$PREFIX/audiod-$profile.json"
+    profile_label="$LABEL.$profile"
+    profile_plist="$HOME/Library/LaunchAgents/$profile_label.plist"
+    if [ ! -f "$profile_config" ]; then
+        "$INSTALLED" configure --agent "$profile" --config "$profile_config" \
+            --device system --layout 7.1.4 --no-declare-latency
+    fi
+    write_plist "$profile_label" "$profile_config" "$profile_plist" \
+        "$LOG_DIR/audiod-$profile.log"
+    printf 'installed agent:   %s\n' "$profile_plist"
+    printf 'profile config:    %s\n' "$profile_config"
+done
 
 LINK=
 if command -v brew >/dev/null 2>&1; then
@@ -88,34 +104,28 @@ fi
 ln -sf "$INSTALLED" "$LINK"
 
 printf '%s\n' "installed service: $INSTALLED"
-printf '%s\n' "installed agent:   $PLIST"
 printf '%s\n' "command:           $LINK"
-printf '%s\n' "config:            $CONFIG"
-printf '%s\n' "log:               $LOG_DIR/audiod.log"
-case ":$PATH:" in
-    *":$(dirname "$LINK"):"*) ;;
-    *) printf 'add %s to PATH to run `salsa-audiod` directly\n' "$(dirname "$LINK")" ;;
-esac
-
-if [ ! -f "$CONFIG" ]; then
-    printf '%s\n' "no configuration yet; choose an output first:"
-    printf '%s\n' "  $INSTALLED configure"
-fi
+printf '%s\n' "log dir:           $LOG_DIR"
 
 if [ "$LOAD" -eq 1 ]; then
-    if [ ! -f "$CONFIG" ]; then
-        printf '%s\n' "--load requested but $CONFIG does not exist; the service will exit until it is configured" >&2
-    fi
-    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+    for profile in eac3 truehd; do
+        launchctl bootout "gui/$(id -u)/$LABEL.$profile" 2>/dev/null || true
+    done
     sleep 0.3
-    launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || {
-        sleep 0.5
-        launchctl bootstrap "gui/$(id -u)" "$PLIST"
-    }
-    printf '%s\n' "loaded $LABEL"
+    for profile in eac3 truehd; do
+        profile_label="$LABEL.$profile"
+        profile_plist="$HOME/Library/LaunchAgents/$profile_label.plist"
+        launchctl bootstrap "gui/$(id -u)" "$profile_plist" 2>/dev/null || {
+            sleep 0.5
+            launchctl bootstrap "gui/$(id -u)" "$profile_plist"
+        }
+        printf '%s\n' "loaded $profile_label"
+    done
 else
     printf '%s\n' "not loaded (explicit action):"
-    printf '%s\n' "  launchctl bootstrap gui/$(id -u) \"$PLIST\""
+    printf '%s\n' "  launchctl bootstrap gui/$(id -u) \"$HOME/Library/LaunchAgents/$LABEL.eac3.plist\""
+    printf '%s\n' "  launchctl bootstrap gui/$(id -u) \"$HOME/Library/LaunchAgents/$LABEL.truehd.plist\""
 fi
-printf '%s\n' "after changing settings, restart with:"
-printf '%s\n' "  launchctl kickstart -k gui/$(id -u)/$LABEL"
+printf '%s\n' "after changing a profile, restart it with:"
+printf '%s\n' "  salsa-audiod configure --agent eac3 --restart"
+printf '%s\n' "  salsa-audiod configure --agent truehd --restart"

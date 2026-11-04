@@ -13,8 +13,6 @@ use serde::{Deserialize, Serialize};
 use crate::pipeline::{Codec, RenderMode};
 use crate::service::{CarrierSource, ServiceConfig};
 
-pub const DEFAULT_CONFIG_FILE: &str = "audiod.json";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FileConfig {
@@ -41,7 +39,7 @@ pub struct FileConfig {
 impl Default for FileConfig {
     fn default() -> Self {
         Self {
-            shm_name: "/salsa-hal-carrier".to_string(),
+            shm_name: String::new(),
             device: None,
             codec: None,
             sample_rate: 48_000,
@@ -60,23 +58,39 @@ impl Default for FileConfig {
 }
 
 impl FileConfig {
-    pub fn path() -> Result<PathBuf> {
+    /// Configuration path for a per-codec service instance (`eac3`/`truehd`).
+    pub fn profile_path(profile: &str) -> Result<PathBuf> {
         if let Some(path) = env::var_os("SALSA_AUDIOD_CONFIG") {
             return Ok(PathBuf::from(path));
         }
         let home = env::var_os("HOME").context("HOME is not set")?;
         Ok(PathBuf::from(home)
             .join("Library/Application Support/Salsa")
-            .join(DEFAULT_CONFIG_FILE))
+            .join(format!("audiod-{profile}.json")))
+    }
+
+    /// Defaults for a per-codec service instance. The shared-memory names must
+    /// match `platform/macos/salsa-hal/build.sh`.
+    pub fn profile_default(profile: &str) -> Self {
+        let mut config = Self::default();
+        match profile {
+            "eac3" => {
+                config.shm_name = "/salsa-hal-carrier-eac3".to_string();
+                config.codec = Some("eac3".to_string());
+            }
+            "truehd" => {
+                config.shm_name = "/salsa-hal-carrier-truehd".to_string();
+                config.codec = Some("truehd".to_string());
+            }
+            _ => {}
+        }
+        config
     }
 
     pub fn load(path: &Path) -> Result<Self> {
-        match std::fs::read(path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .with_context(|| format!("cannot parse {}", path.display())),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(error) => Err(error).with_context(|| format!("cannot read {}", path.display())),
-        }
+        let bytes =
+            std::fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
+        serde_json::from_slice(&bytes).with_context(|| format!("cannot parse {}", path.display()))
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -157,6 +171,16 @@ mod tests {
             RenderMode::Speaker { .. }
         ));
         assert!(config.device.is_none());
+    }
+
+    #[test]
+    fn profile_defaults_match_the_hal_carriers() {
+        let eac3 = FileConfig::profile_default("eac3");
+        assert_eq!(eac3.shm_name, "/salsa-hal-carrier-eac3");
+        assert_eq!(eac3.codec().unwrap(), Some(Codec::Eac3));
+        let truehd = FileConfig::profile_default("truehd");
+        assert_eq!(truehd.shm_name, "/salsa-hal-carrier-truehd");
+        assert_eq!(truehd.codec().unwrap(), Some(Codec::TrueHd));
     }
 
     #[test]

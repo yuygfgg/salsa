@@ -20,27 +20,29 @@ channels.
 
 ## Device identities
 
-| Build | Device UID | Name | Carrier |
-|---|---|---|---|
-| `MODE=eac3` | `salsa-atmos-eac3` | Salsa Atmos E-AC-3 | 2 ch, 6144 frames/packet |
-| `MODE=truehd` | `salsa-atmos-truehd` | Salsa Atmos TrueHD | 8 ch, 3840 frames/packet |
-| `MODE=native` (default) | `salsa-atmos` | Salsa Atmos | variable 2/8 ch, for comparison |
-| `MODE=native8` | `salsa-atmos` | Salsa Atmos | fixed 8 ch, for comparison |
-| `MODE=pcm` | `salsa-atmos` | Salsa Atmos | S16 PCM carrier, for comparison |
-| `MODE=frame` | `salsa-atmos` | Salsa Atmos | one-frame negative control |
+| Build | Device UID | Bundle identifier | Carrier SHM | Carrier |
+|---|---|---|---|---|
+| `MODE=eac3` | `salsa-atmos-eac3` | `dev.salsa.audio.SalsaHAL.eac3` | `/salsa-hal-carrier-eac3` | 2 ch, 6144 frames/packet |
+| `MODE=truehd` | `salsa-atmos-truehd` | `dev.salsa.audio.SalsaHAL.truehd` | `/salsa-hal-carrier-truehd` | 8 ch, 3840 frames/packet |
+| `MODE=native` | `salsa-atmos` | `dev.salsa.audio.SalsaHAL` | `/salsa-hal-carrier` | variable 2/8 ch, capture test |
+| `MODE=native8` | `salsa-atmos` | `dev.salsa.audio.SalsaHAL` | `/salsa-hal-carrier` | fixed 8 ch, capture test |
+| `MODE=pcm` | `salsa-atmos` | `dev.salsa.audio.SalsaHAL` | `/salsa-hal-carrier` | S16 PCM carrier, capture test |
+| `MODE=frame` | `salsa-atmos` | `dev.salsa.audio.SalsaHAL` | `/salsa-hal-carrier` | one-frame negative control |
 
-Install one variant at a time. Only the fixed `eac3` and `truehd` builds are
-recommended for normal playback. The diagnostic `native`, `pcm`, and `frame`
-builds remain available for capture tests.
+The `eac3` and `truehd` builds have distinct bundle identifiers, CFPlugIn
+factory UUIDs, device UIDs and carrier rings, so they are **installed together**.
+The `native`, `native8`, `pcm`, and `frame` builds are capture-test tools and
+are not installed by `install.sh`.
 
 ## Build
 
 Run commands from this directory:
 
 ```sh
+MODE=both ./build.sh        # build eac3 and truehd
 MODE=eac3 ./build.sh
 MODE=truehd ./build.sh
-./build.sh
+MODE=native ./build.sh      # capture test only
 MODE=native8 ./build.sh
 MODE=pcm ./build.sh
 MODE=frame ./build.sh
@@ -62,13 +64,14 @@ sh tools/test_driver.sh
 ## Install and diagnose
 
 ```sh
-sudo ./install.sh build-eac3/SalsaHAL.driver
+sudo ./install.sh
 ./diagnose.sh
 ```
 
-`install.sh` copies an explicitly selected, already-built bundle, fixes
-permissions, verifies the signature, and restarts `coreaudiod`. It does not
-rebuild a different variant.
+`install.sh` installs both codec bundles by default, or the explicit codec
+bundles passed as arguments. It fixes permissions, verifies the signature, maps
+the bundle identifier to `SalsaHAL-EAC3.driver` or `SalsaHAL-TrueHD.driver`, and
+restarts `coreaudiod`. `uninstall.sh` removes both.
 
 ## Fixtures
 

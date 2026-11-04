@@ -53,6 +53,29 @@ enum RenderArg {
     Binaural,
 }
 
+/// One of the two independently installable virtual-device services.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum AgentArg {
+    Eac3,
+    Truehd,
+}
+
+impl AgentArg {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Eac3 => "eac3",
+            Self::Truehd => "truehd",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Eac3 => "dev.salsa.audio.audiod.eac3",
+            Self::Truehd => "dev.salsa.audio.audiod.truehd",
+        }
+    }
+}
+
 impl From<CodecArg> for Codec {
     fn from(value: CodecArg) -> Self {
         match value {
@@ -283,10 +306,9 @@ enum Command {
     },
     /// Run the live service from the HAL shared-memory ring.
     Run {
-        /// Configuration file (default: `$SALSA_AUDIOD_CONFIG` or
-        /// `~/Library/Application Support/Salsa/audiod.json`).
+        /// Configuration file for one codec agent.
         #[arg(long, env = "SALSA_AUDIOD_CONFIG")]
-        config: Option<PathBuf>,
+        config: PathBuf,
         /// Write the JSON render report at exit.
         #[arg(long)]
         json: Option<PathBuf>,
@@ -301,6 +323,10 @@ enum Command {
         /// Configuration file to write.
         #[arg(long, env = "SALSA_AUDIOD_CONFIG")]
         config: Option<PathBuf>,
+        /// Per-codec service instance. Selects `audiod-<agent>.json` and the
+        /// matching LaunchAgent.
+        #[arg(long, value_enum)]
+        agent: AgentArg,
         /// Print the saved configuration instead of changing it.
         #[arg(long)]
         show: bool,
@@ -407,12 +433,20 @@ fn main() -> Result<()> {
         }
         Command::Configure {
             config,
+            agent,
             show,
             restart,
             overrides,
         } => {
-            let path = config.unwrap_or(FileConfig::path()?);
-            let mut file = FileConfig::load(&path)?;
+            let path = match config {
+                Some(path) => path,
+                None => FileConfig::profile_path(agent.name())?,
+            };
+            let mut file = if path.exists() {
+                FileConfig::load(&path)?
+            } else {
+                FileConfig::profile_default(agent.name())
+            };
             overrides.apply(&mut file)?;
             if show {
                 println!("{}", serde_json::to_string_pretty(&file)?);
@@ -500,11 +534,12 @@ fn main() -> Result<()> {
             #[cfg(target_os = "macos")]
             {
                 let uid = unsafe { libc::getuid() };
-                let label = format!("gui/{uid}/dev.salsa.audio.audiod");
+                let label_name = agent.label();
+                let label = format!("gui/{uid}/{label_name}");
                 let plist = std::env::var_os("HOME")
                     .map(PathBuf::from)
                     .unwrap_or_default()
-                    .join("Library/LaunchAgents/dev.salsa.audio.audiod.plist");
+                    .join(format!("Library/LaunchAgents/{label_name}.plist"));
                 let loaded = std::process::Command::new("launchctl")
                     .args(["print", &label])
                     .stdout(std::process::Stdio::null())
@@ -558,9 +593,7 @@ fn main() -> Result<()> {
                     println!("  launchctl kickstart -k {label}");
                 } else if plist.exists() {
                     println!("start the service to apply the new settings:");
-                    println!(
-                        "  launchctl bootstrap gui/{uid} \"$HOME/Library/LaunchAgents/dev.salsa.audio.audiod.plist\""
-                    );
+                    println!("  launchctl bootstrap gui/{uid} \"{}\"", plist.display());
                 } else {
                     println!("service is not installed; run the install script first");
                 }
@@ -577,7 +610,7 @@ fn main() -> Result<()> {
             idle_timeout_s,
             overrides,
         } => {
-            let path = config.unwrap_or(FileConfig::path()?);
+            let path = config;
             let mut file = FileConfig::load(&path)?;
             overrides.apply(&mut file)?;
             let device = match file.device.clone() {

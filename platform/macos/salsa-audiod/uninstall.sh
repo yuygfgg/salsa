@@ -4,7 +4,7 @@ set -eu
 LABEL=dev.salsa.audio.audiod
 PREFIX="$HOME/Library/Application Support/Salsa"
 INSTALLED="$PREFIX/salsa-audiod"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LOG_DIR="$HOME/Library/Logs/Salsa"
 
 PURGE=0
 if [ "${1:-}" = "--purge" ]; then
@@ -12,7 +12,10 @@ if [ "${1:-}" = "--purge" ]; then
     shift
 fi
 
-launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+for profile in eac3 truehd; do
+    launchctl bootout "gui/$(id -u)/$LABEL.$profile" 2>/dev/null || true
+done
+
 BREW_LINK=
 if command -v brew >/dev/null 2>&1; then
     BREW_LINK="$(brew --prefix)/bin/salsa-audiod"
@@ -22,14 +25,18 @@ for link in "$BREW_LINK" /usr/local/bin/salsa-audiod "$HOME/.local/bin/salsa-aud
         rm -f "$link"
     fi
 done
-rm -f "$PLIST"
+
+for profile in eac3 truehd; do
+    rm -f "$HOME/Library/LaunchAgents/$LABEL.$profile.plist"
+    printf 'removed %s\n' "$HOME/Library/LaunchAgents/$LABEL.$profile.plist"
+done
 rm -f "$INSTALLED"
+
 if [ "$PURGE" -eq 1 ]; then
-    rm -rf "$HOME/Library/Logs/Salsa"
-    rm -f "$PREFIX/audiod.json"
+    rm -rf "$LOG_DIR"
+    rm -f "$PREFIX/audiod-eac3.json" "$PREFIX/audiod-truehd.json"
 fi
 rmdir "$PREFIX" 2>/dev/null || true
 
 printf '%s\n' "removed $INSTALLED"
-printf '%s\n' "removed $PLIST"
 printf '%s\n' "the HAL driver is separate: sudo platform/macos/salsa-hal/uninstall.sh"
