@@ -23,7 +23,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <math.h>
-#include "../src/SalsaCarrierShared.h"
+#include "../../../common/salsa_carrier_shared.h"
 
 #define CARRIER_RATE 192000.0
 #define OUTPUT_RATE 48000.0

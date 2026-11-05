@@ -3,19 +3,20 @@
 `salsa-audiod` receives an IEC 61937 carrier (E-AC-3 JOC or TrueHD in MAT),
 recovers the codec payload, runs the existing Salsa parsers/decoders and
 renderers, and hands PCM to a bounded output scheduler. It can read an offline
-carrier capture or the HAL shared-memory ring.
+carrier capture or the shared-memory ring written by the macOS HAL or the Linux
+ALSA plug-in.
 
 The codec path is shared with the rest of Salsa. The service does not implement
 a second decoder or metadata path, and it derives GStreamer timestamps from
 carrier sample positions.
 
-See [macOS packaging](macos-packaging.md) for installation, device identities,
+See the repository README for macOS and Linux installation, device identities,
 player settings, diagnostics, and uninstallation.
 
 ## Signal path
 
 ```text
-carrier file or HAL ring
+carrier file or HAL/ALSA ring
     -> iec61937 (bursts, E-AC-3 syncframes, TrueHD MAT access units)
     -> appsrc
     -> salsaeac3jocparse / salsatruehdparse
@@ -52,6 +53,15 @@ salsa-audiod render \
   --filterbank 2 --output /tmp/truehd_binaural.wav
 ```
 
+Capture a live shared-memory ring to WAV for diagnostics:
+
+```sh
+salsa-audiod render \
+  --carrier-shm /salsa-hal-carrier-eac3 \
+  --codec eac3 --layout 7.1.4 \
+  --output /tmp/live-eac3.wav --json /tmp/live-eac3.json
+```
+
 Compare recovered carrier rendering with direct GStreamer input:
 
 ```sh
@@ -71,7 +81,7 @@ salsa-audiod configure --agent eac3 --show
 ```
 
 The interactive setup always asks for the output device (showing the current
-one as the default; choose `0` to follow the macOS system output), then speaker
+one as the default; choose `0` to follow the system output), then speaker
 or binaural rendering and, for binaural, the `.personalized_headphone` model
 path. Non-interactive:
 
@@ -85,15 +95,15 @@ salsa-audiod configure --agent truehd --device "MacBook Pro Speakers" \
 ### Two codec services
 
 The E-AC-3 and TrueHD virtual devices can be installed together. Each codec has
-its own service instance, carrier ring, configuration and LaunchAgent:
+its own service instance, carrier ring, configuration and service unit:
 
-| Agent | Configuration | Carrier ring | LaunchAgent |
+| Agent | Configuration | Carrier ring | Service |
 |---|---|---|---|
-| `eac3` | `audiod-eac3.json` | `/salsa-hal-carrier-eac3` | `dev.salsa.audio.audiod.eac3` |
-| `truehd` | `audiod-truehd.json` | `/salsa-hal-carrier-truehd` | `dev.salsa.audio.audiod.truehd` |
+| `eac3` | `audiod-eac3.json` | `/salsa-hal-carrier-eac3` | macOS LaunchAgent `dev.salsa.audio.audiod.eac3`; Linux `salsa-audiod-eac3.service` |
+| `truehd` | `audiod-truehd.json` | `/salsa-hal-carrier-truehd` | macOS LaunchAgent `dev.salsa.audio.audiod.truehd`; Linux `salsa-audiod-truehd.service` |
 
-Install both with `platform/macos/salsa-audiod/install.sh`, then configure each
-one:
+Install both with `platform/macos/salsa-audiod/install.sh` on macOS or
+`platform/linux/salsa-audiod/install.sh` on Linux, then configure each one:
 
 ```sh
 salsa-audiod configure --agent eac3 --restart
@@ -101,12 +111,17 @@ salsa-audiod configure --agent truehd --restart
 ```
 
 `--agent` is required: it selects `audiod-<agent>.json`, seeds it with the
-matching `shm_name` and `codec`, and restarts the matching LaunchAgent.
+matching `shm_name` and `codec`, and restarts the matching LaunchAgent or
+systemd unit.
 
-Run live from the HAL ring using a saved agent configuration:
+Run live from the carrier ring using a saved agent configuration:
 
 ```sh
+# macOS
 salsa-audiod run --config "$HOME/Library/Application Support/Salsa/audiod-eac3.json"
+
+# Linux
+salsa-audiod run --config "${XDG_CONFIG_HOME:-$HOME/.config}/salsa/audiod-eac3.json"
 ```
 
 CLI options override it for one run, for example:
@@ -119,7 +134,7 @@ salsa-audiod run --config "$HOME/Library/Application Support/Salsa/audiod-eac3.j
 `salsa-audiod devices` lists outputs; `--device` accepts a list number, device
 name, unique ID, or `default`. The service refuses the Salsa virtual device so
 it cannot create a loop. This setting chooses where the service sends audio; it
-does not change the macOS system output. Use the Salsa device in mpv (or in
+does not change the system output. Use the Salsa device in mpv (or in
 System Settings → Sound for other players).
 
 ### Live timing options
@@ -137,13 +152,14 @@ System Settings → Sound for other players).
 | Source | Use |
 |---|---|
 | `CarrierSource::File` | Captured `.spdif` bytes. |
-| `CarrierSource::Shared` | A HAL shared-memory ring (`/salsa-hal-carrier`, `/salsa-hal-carrier-eac3` or `/salsa-hal-carrier-truehd`). Mirrors `SalsaCarrierShared.h`; the service copies one slot at a time and advances `tail`. |
+| `CarrierSource::Shared` | A HAL/ALSA shared-memory ring (`/salsa-hal-carrier`, `/salsa-hal-carrier-eac3` or `/salsa-hal-carrier-truehd`). Mirrors `platform/common/salsa_carrier_shared.h`; the service copies one slot at a time and advances `tail`. |
 | `CarrierSource::Scripted` | Pre-built chunks for lifecycle tests and diagnostics. |
 
 ## Lifecycle and recovery
 
-A HAL `StartIO` after a stop, or an output format change, increments the shared
-session generation. A `DISCONTINUITY`/`DROPPED` slot flag also marks a break.
+A HAL `StartIO` or an ALSA `prepare` after a stop, or an output format change,
+increments the shared session generation. A `DISCONTINUITY`/`DROPPED` slot flag
+also marks a break.
 On either event the service:
 
 1. resets the IEC 61937 depacketizer and the timestamp timeline;
@@ -220,16 +236,23 @@ through a bounded `sync_channel` (capacity 8).
 | `Wav` | IEEE-float WAV for offline inspection. |
 | `Null` | Throughput and statistics without I/O. |
 | `Memory` | Comparison and lifecycle tests. |
-| `CoreAudio` | Maps carrier host time to the device clock and sends PCM through a bounded queue to `osxaudiosink`. |
+| `Physical` | Maps carrier host time to the device clock and sends PCM through a bounded queue to `osxaudiosink` on macOS, or `pulsesink`/`pipewiresink`/`alsasink` on Linux. |
 
 `appsink` runs with `sync=false`; the physical scheduler decides when samples
-play. The renderer emits F32LE interleaved PCM in its standard layout order.
+play. On Linux, `--device system` selects `pulsesink` when a PulseAudio/PipeWire
+socket is available, otherwise `alsasink`; use `alsa:<name>`, `pulse:<sink>`, or
+`pipewire:<target>` to force a backend. The Linux sink does not provide the
+pipeline clock (`provide-clock=false`) and runs with `slave-method=none`, so
+`sync=true` uses the system monotonic clock that also timestamps the carrier.
+Letting PulseAudio/PipeWire provide the clock made long Bluetooth streams drift
+away from the carrier timeline and fall silent. The renderer emits F32LE interleaved PCM in its standard layout order.
 PCM chunks retain the full negotiated caps, including the channel mask.
 Both appsrc queues wait for capacity and check cancellation and pipeline errors.
 The codec input queue is limited to 4 MiB; the physical PCM queue is limited to
 512 KiB. A buffer larger than its queue limit returns an error.
 
-For live playback, each session carries a host-time anchor from the HAL.
+For live playback, each session carries a host-time anchor from the HAL or
+ALSA plug-in.
 The physical output adds the ledger's scheduling allowance to that timeline.
 The PCM already contains codec and renderer signal delay. The ledger adds those
 signal delays and the measured physical device latency once when it declares

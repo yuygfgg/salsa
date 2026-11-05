@@ -512,6 +512,106 @@ Uninstall both services and both drivers:
 sudo ./platform/macos/salsa-hal/uninstall.sh
 ```
 
+### Virtual IEC 61937 audio device (Linux, experimental)
+
+Requirements: ALSA development files, Rust 1.91 or newer, GStreamer and FFmpeg,
+and mpv 0.41 or newer.
+
+#### 1. Build
+
+```sh
+cargo build --release -p salsa-audiod
+./platform/linux/salsa-alsa/build.sh
+```
+
+#### 2. Install the ALSA plug-in
+
+System-wide:
+
+```sh
+sudo ./platform/linux/salsa-alsa/install.sh
+```
+
+Or per-user without root:
+
+```sh
+./platform/linux/salsa-alsa/install.sh --user
+```
+
+This defines `salsa_atmos_eac3` (two-channel E-AC-3 carrier) and
+`salsa_atmos_truehd` (eight-channel TrueHD MAT carrier).
+
+#### 3. Install the Salsa service
+
+```sh
+./platform/linux/salsa-audiod/install.sh --load
+```
+
+Without `--load`, the script writes the two systemd user units and prints the
+commands to enable them. On systems without systemd user services, run the
+service directly:
+
+```sh
+salsa-audiod run --config "${XDG_CONFIG_HOME:-$HOME/.config}/salsa/audiod-eac3.json"
+```
+
+#### 4. Configure the services
+
+```sh
+salsa-audiod configure --agent eac3
+salsa-audiod configure --agent truehd
+```
+
+For a fixed output without prompts:
+
+```sh
+salsa-audiod configure --agent eac3 --device system --layout 7.1.4
+salsa-audiod configure --agent truehd --device system --layout 7.1.4
+```
+
+For binaural output:
+
+```sh
+salsa-audiod configure --agent truehd \
+  --device system \
+  --render binaural \
+  --binaural-model /path/to/model.personalized_headphone
+```
+
+`--device` also accepts the list number, the ALSA PCM name, `alsa:<name>`,
+`pulse:<sink>`, or `pipewire:<target>`.
+
+#### 5. Play with mpv
+
+E-AC-3:
+
+```sh
+mpv --ao=alsa \
+    --audio-device=alsa/salsa_atmos_eac3 \
+    --audio-spdif=eac3 \
+    movie.mkv
+```
+
+TrueHD:
+
+```sh
+mpv --ao=alsa \
+    --audio-device=alsa/salsa_atmos_truehd \
+    --audio-spdif=truehd \
+    movie.mlp
+```
+
+#### Change settings, stop, or uninstall
+
+```sh
+salsa-audiod configure --agent eac3 --restart
+salsa-audiod configure --agent truehd --restart
+
+systemctl --user stop salsa-audiod-eac3.service
+./platform/linux/salsa-audiod/uninstall.sh
+sudo ./platform/linux/salsa-alsa/uninstall.sh
+```
+
 ## Salsa Studio (GUI preview player)
 
 `crates/apps/salsa-gui/` is a small eframe/egui preview player built on the Salsa
@@ -591,7 +691,7 @@ brew install pkg-config gstreamer ffmpeg
 
 # Debian / Ubuntu
 sudo apt-get install pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-  libavcodec-dev libavformat-dev libavutil-dev libswresample-dev \
+  libasound2-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev \
   libavfilter-dev libswscale-dev
 ```
 

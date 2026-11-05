@@ -56,7 +56,7 @@ rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 
 clang -bundle -fPIC -O2 -Wall -Wextra -Wno-unused-parameter \
-    -isysroot "$SDK" \
+    -isysroot "$SDK" -I "$ROOT/../../common" \
     "$@" -DSALSA_HAL_LATENCY_FRAMES="${LATENCY_FRAMES:-0}" \
     "-DSALSA_HAL_BUNDLE_ID=\"$BUNDLE_ID\"" \
     -o "$BUNDLE/Contents/MacOS/SalsaHAL" "$ROOT/src/SalsaHAL.c" \

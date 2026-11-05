@@ -30,7 +30,7 @@ A minimal user-space driver.
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
-#include "SalsaCarrierShared.h"
+#include "salsa_carrier_shared.h"
 #include "SalsaHALProbe.h"
 
 //==================================================================================================

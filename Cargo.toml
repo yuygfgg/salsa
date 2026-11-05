@@ -36,6 +36,11 @@ rust-version = "1.91"
 license = "MPL-2.0"
 publish = false
 
+# The 0.7.2 release generates both Huffman reader and writer code; the writer
+# makes a release build of truehd peak above 13 GB. This commit removes it.
+[patch.crates-io]
+truehd = { git = "https://github.com/truehdd/truehdd", rev = "77ddc52e6ab41c59d8964cfe8e44140afa82342c" }
+
 [workspace.dependencies]
 salsa-codec = { path = "crates/libs/core/salsa-codec" }
 salsa-bitstream = { path = "crates/libs/core/salsa-bitstream" }

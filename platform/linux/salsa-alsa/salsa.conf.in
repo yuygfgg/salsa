@@ -1,0 +1,40 @@
+# Salsa virtual IEC 61937 PCM devices.
+#
+# Install this file in /etc/alsa/conf.d/ or include it from
+# ~/.config/alsa/asoundrc. The library path is filled in by install.sh.
+
+pcm_type.salsa {
+    lib "@SALSA_ALSA_LIB@"
+    open "_snd_pcm_salsa_open"
+}
+
+pcm.salsa_atmos_eac3 {
+    type salsa
+    shm "/salsa-hal-carrier-eac3"
+    channels 2
+    # mpv appends the S/PDIF AES parameters to the device name.
+    @args [ AES0 AES1 AES2 AES3 ]
+    @args.AES0 { type integer default 0 }
+    @args.AES1 { type integer default 0 }
+    @args.AES2 { type integer default 0 }
+    @args.AES3 { type integer default 0 }
+    hint {
+        show on
+        description "Salsa Atmos E-AC-3"
+    }
+}
+
+pcm.salsa_atmos_truehd {
+    type salsa
+    shm "/salsa-hal-carrier-truehd"
+    channels 8
+    @args [ AES0 AES1 AES2 AES3 ]
+    @args.AES0 { type integer default 0 }
+    @args.AES1 { type integer default 0 }
+    @args.AES2 { type integer default 0 }
+    @args.AES3 { type integer default 0 }
+    hint {
+        show on
+        description "Salsa Atmos TrueHD"
+    }
+}

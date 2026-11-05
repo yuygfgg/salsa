@@ -1,7 +1,8 @@
 //! Carrier input sources for the service.
 //!
-//! The production source is the bounded shared-memory ring written by the HAL
-//! plug-in (`SalsaCarrierShared.h`). Offline validation reads an IEC 61937
+//! The production source is the bounded shared-memory ring written by the
+//! macOS HAL or the Linux ALSA plug-in (`platform/common/salsa_carrier_shared.h`).
+//! Offline validation reads an IEC 61937
 //! capture (the `.spdif` fixtures) from a file. Both sources return one chunk at
 //! a time; the depacketizer owns all framing and byte-order handling.
 
@@ -90,7 +91,7 @@ pub struct CarrierChunk {
     pub start_sample: Option<u64>,
     /// Host time of the first carrier frame, when known.
     pub host_time: Option<u64>,
-    /// Carrier byte stride reported by the HAL, when known.
+    /// Carrier byte stride reported by the carrier producer, when known.
     pub bytes_per_frame: Option<u32>,
     pub generation: u64,
     pub flags: u32,
@@ -230,10 +231,14 @@ impl SharedInput {
     pub fn open(name: &str, stop: Arc<AtomicBool>) -> Result<Self> {
         let cname = std::ffi::CString::new(name)
             .with_context(|| format!("invalid shared-memory name {name}"))?;
-        let fd = unsafe { libc::shm_open(cname.as_ptr(), libc::O_RDWR, 0o666) };
+        #[cfg(target_os = "linux")]
+        let flags = libc::O_CREAT | libc::O_RDWR;
+        #[cfg(not(target_os = "linux"))]
+        let flags = libc::O_RDWR;
+        let fd = unsafe { libc::shm_open(cname.as_ptr(), flags, 0o666) };
         if fd < 0 {
             bail!(
-                "cannot open {name}: {} (is the Salsa HAL installed and running?)",
+                "cannot open {name}: {} (is the Salsa carrier producer installed?)",
                 std::io::Error::last_os_error()
             );
         }
@@ -268,7 +273,7 @@ impl SharedInput {
                 .with_context(|| format!("cannot map {name}"));
         }
         let shared = pointer.cast::<Shared>();
-        // Initialize only a fresh segment. A running HAL keeps its state.
+        // Initialize only a fresh segment. A running producer keeps its state.
         let magic = unsafe { (*shared).control.magic.load(Ordering::Acquire) };
         let version = unsafe { (*shared).control.version.load(Ordering::Acquire) };
         if magic != SHM_MAGIC || version != SHM_VERSION {
@@ -384,7 +389,7 @@ impl SharedInput {
         self.skipped
     }
 
-    /// Publish a physical-output clock mapping for the HAL zero timestamp.
+    /// Publish a physical-output clock mapping for the carrier producer.
     pub fn publish_clock(&self, sample: u64, host: u64, seed: u64) {
         let control = unsafe { &(*self.shared).control };
         control.clock_sequence.fetch_add(1, Ordering::AcqRel);
@@ -411,7 +416,7 @@ impl SharedInput {
         )
     }
 
-    /// Carrier frames dropped by the HAL because the ring was full.
+    /// Carrier frames dropped by the producer because the ring was full.
     pub fn dropped_frames(&self) -> u64 {
         unsafe {
             (*self.shared)

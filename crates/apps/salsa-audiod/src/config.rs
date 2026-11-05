@@ -1,6 +1,6 @@
 //! Persistent service configuration.
 //!
-//! Installation only places the binary and LaunchAgent. Output device and
+//! Installation only places the binary and service unit. Output device and
 //! render settings live here and are changed at runtime with
 //! `salsa-audiod configure`.
 
@@ -64,13 +64,19 @@ impl FileConfig {
             return Ok(PathBuf::from(path));
         }
         let home = env::var_os("HOME").context("HOME is not set")?;
-        Ok(PathBuf::from(home)
-            .join("Library/Application Support/Salsa")
-            .join(format!("audiod-{profile}.json")))
+        #[cfg(target_os = "macos")]
+        let base = PathBuf::from(home).join("Library/Application Support/Salsa");
+        #[cfg(not(target_os = "macos"))]
+        let base = env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or_else(|| PathBuf::from(home).join(".config"))
+            .join("salsa");
+        Ok(base.join(format!("audiod-{profile}.json")))
     }
 
     /// Defaults for a per-codec service instance. The shared-memory names must
-    /// match `platform/macos/salsa-hal/build.sh`.
+    /// match the macOS HAL and the Linux ALSA plug-in.
     pub fn profile_default(profile: &str) -> Self {
         let mut config = Self::default();
         match profile {

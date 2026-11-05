@@ -11,7 +11,7 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include "../src/SalsaCarrierShared.h"
+#include "../../../common/salsa_carrier_shared.h"
 #include "../src/SalsaHALProbe.h"
 
 static volatile sig_atomic_t gStop;

@@ -10,6 +10,9 @@ lcov.info
 *.app/
 *.driver/
 
+# Platform build output
+platform/linux/salsa-alsa/build/
+
 # Test artifacts and local run output
 proptest-regressions/
 results/

@@ -69,9 +69,19 @@ impl AgentArg {
     }
 
     fn label(self) -> &'static str {
-        match self {
-            Self::Eac3 => "dev.salsa.audio.audiod.eac3",
-            Self::Truehd => "dev.salsa.audio.audiod.truehd",
+        #[cfg(target_os = "macos")]
+        {
+            match self {
+                Self::Eac3 => "dev.salsa.audio.audiod.eac3",
+                Self::Truehd => "dev.salsa.audio.audiod.truehd",
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            match self {
+                Self::Eac3 => "salsa-audiod-eac3.service",
+                Self::Truehd => "salsa-audiod-truehd.service",
+            }
         }
     }
 }
@@ -102,7 +112,7 @@ struct RenderArgs {
     /// Fixed scheduling allowance added to the presentation delay.
     #[arg(long, default_value_t = 50.0)]
     scheduling_allowance_ms: f64,
-    /// Measured physical output latency (for example a CoreAudio device).
+    /// Measured physical output latency (for example a CoreAudio or ALSA device).
     #[arg(long, default_value_t = 0.0)]
     physical_latency_ms: f64,
     /// Offline pipeline stall timeout.
@@ -145,7 +155,7 @@ impl RenderArgs {
 
 #[derive(Debug, Clone, Default, Args)]
 struct ConfigOverrides {
-    /// HAL carrier shared-memory name.
+    /// Carrier shared-memory name.
     #[arg(long)]
     shm_name: Option<String>,
     /// Physical output: list number, device name, unique ID, or `default`.
@@ -180,10 +190,10 @@ struct ConfigOverrides {
     deadline_timeout_ms: Option<f64>,
     #[arg(long)]
     hard_stall_timeout_ms: Option<f64>,
-    /// Publish the fixed-delay contract to the HAL.
+    /// Publish the fixed-delay contract to the carrier producer.
     #[arg(long)]
     declare_latency: bool,
-    /// Do not publish the fixed-delay contract to the HAL.
+    /// Do not publish the fixed-delay contract to the carrier producer.
     #[arg(long)]
     no_declare_latency: bool,
 }
@@ -288,8 +298,15 @@ enum Command {
     /// Render an offline IEC 61937 capture through the Salsa path.
     Render {
         /// Captured carrier bytes (`.spdif`).
-        #[arg(long)]
-        carrier: PathBuf,
+        #[arg(
+            long,
+            conflicts_with = "carrier_shm",
+            required_unless_present = "carrier_shm"
+        )]
+        carrier: Option<PathBuf>,
+        /// Render live carrier bytes from a shared-memory ring.
+        #[arg(long, value_name = "NAME")]
+        carrier_shm: Option<String>,
         /// Require a codec instead of auto-detecting it.
         #[arg(long, value_enum)]
         codec: Option<CodecArg>,
@@ -304,7 +321,7 @@ enum Command {
         #[command(flatten)]
         render: RenderArgs,
     },
-    /// Run the live service from the HAL shared-memory ring.
+    /// Run the live service from the carrier shared-memory ring.
     Run {
         /// Configuration file for one codec agent.
         #[arg(long, env = "SALSA_AUDIOD_CONFIG")]
@@ -324,19 +341,19 @@ enum Command {
         #[arg(long, env = "SALSA_AUDIOD_CONFIG")]
         config: Option<PathBuf>,
         /// Per-codec service instance. Selects `audiod-<agent>.json` and the
-        /// matching LaunchAgent.
+        /// matching service.
         #[arg(long, value_enum)]
         agent: AgentArg,
         /// Print the saved configuration instead of changing it.
         #[arg(long)]
         show: bool,
-        /// Restart the installed LaunchAgent after saving.
+        /// Restart the installed service after saving.
         #[arg(long)]
         restart: bool,
         #[command(flatten)]
         overrides: ConfigOverrides,
     },
-    /// List or choose a physical CoreAudio output device.
+    /// List or choose a physical output device.
     Devices {
         /// Include Salsa's virtual carrier device in the list.
         #[arg(long)]
@@ -414,13 +431,19 @@ fn main() -> Result<()> {
         }
         Command::Render {
             carrier,
+            carrier_shm,
             codec,
             sample_rate,
             output,
             json,
             render: render_args,
         } => {
-            let mut config = ServiceConfig::new(CarrierSource::File(carrier));
+            let source = match (carrier, carrier_shm) {
+                (Some(path), None) => CarrierSource::File(path),
+                (None, Some(name)) => CarrierSource::Shared(name),
+                _ => bail!("exactly one of --carrier or --carrier-shm is required"),
+            };
+            let mut config = ServiceConfig::new(source);
             config.codec = codec.map(Into::into);
             config.sample_rate = sample_rate;
             config.output = match output {
@@ -428,6 +451,9 @@ fn main() -> Result<()> {
                 None => OutputConfig::Null,
             };
             render_args.apply(&mut config);
+            let stop = Arc::new(AtomicBool::new(false));
+            install_signal_handler(&stop);
+            config.stop = stop;
             let outcome = render(config)?;
             print_report(&outcome.report, json.as_ref())?;
         }
@@ -471,6 +497,14 @@ fn main() -> Result<()> {
             if let Some(device) = &file.device
                 && !device.is_empty()
                 && device != "system"
+            {
+                file.device = Some(resolve_selector(device)?);
+            }
+            #[cfg(target_os = "linux")]
+            if let Some(device) = &file.device
+                && !device.is_empty()
+                && device != "system"
+                && !device.contains(':')
             {
                 file.device = Some(resolve_selector(device)?);
             }
@@ -598,10 +632,37 @@ fn main() -> Result<()> {
                     println!("service is not installed; run the install script first");
                 }
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(target_os = "linux")]
+            {
+                let unit = agent.label();
+                let loaded = std::process::Command::new("systemctl")
+                    .args(["--user", "is-active", "--quiet", unit])
+                    .status()
+                    .map(|status| status.success())
+                    .unwrap_or(false);
+                if restart {
+                    let status = std::process::Command::new("systemctl")
+                        .args(["--user", "restart", unit])
+                        .status()
+                        .map(|status| status.success())
+                        .unwrap_or(false);
+                    if status {
+                        println!("service restarted");
+                    } else {
+                        println!("could not restart {unit}; run the Linux install script first");
+                    }
+                } else if loaded {
+                    println!("restart the service to apply the new settings:");
+                    println!("  systemctl --user restart {unit}");
+                } else {
+                    println!("start the service to apply the new settings:");
+                    println!("  systemctl --user enable --now {unit}");
+                }
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
                 let _ = restart;
-                println!("service restart is only supported on macOS");
+                println!("service restart is only supported on macOS and Linux");
             }
         }
         Command::Run {
@@ -628,7 +689,7 @@ fn main() -> Result<()> {
                 }
             };
             let output_label = device.as_deref().unwrap_or("system default");
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             if device.is_none()
                 && list_output_devices(true).is_ok_and(|devices| {
                     devices
@@ -638,14 +699,14 @@ fn main() -> Result<()> {
                 })
             {
                 bail!(
-                    "the macOS system output is the Salsa virtual device; choose a physical output with `salsa-audiod configure`"
+                    "the system output is the Salsa virtual device; choose a physical output with `salsa-audiod configure`"
                 );
             }
             let stop = Arc::new(AtomicBool::new(false));
             install_signal_handler(&stop);
             let mut config = ServiceConfig::new(CarrierSource::Shared(file.shm_name.clone()));
             file.apply(&mut config)?;
-            config.output = OutputConfig::CoreAudio {
+            config.output = OutputConfig::Physical {
                 device: device.clone(),
             };
             config.stop = stop;

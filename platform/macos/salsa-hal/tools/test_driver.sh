@@ -26,7 +26,7 @@ for mode in native pcm frame native8 eac3 truehd; do
             ;;
     esac
     clang -O1 -g -fsanitize=address,undefined -Wall -Wextra -Wno-unused-parameter \
-        -isysroot "$SDK" "$@" -USALSA_HAL_OUTPUT_ONLY -DSALSA_CARRIER_SHM_NAME=\"$SHM_NAME\" "$ROOT/tools/test_driver.c" \
+        -isysroot "$SDK" -I "$ROOT/../../common" "$@" -USALSA_HAL_OUTPUT_ONLY -DSALSA_CARRIER_SHM_NAME=\"$SHM_NAME\" "$ROOT/tools/test_driver.c" \
         -framework CoreAudio -framework CoreFoundation -framework IOKit -framework AudioUnit \
         -o "$ROOT/build/test-driver-$mode"
     printf 'mode: %s\n' "$mode"
@@ -35,7 +35,7 @@ done
 
 SHM_NAME="/salsa-hal-test-output-$$"
 clang -O1 -g -fsanitize=address,undefined -Wall -Wextra -Wno-unused-parameter \
-    -isysroot "$SDK" -DSALSA_HAL_FIXED_CHANNELS=2 -DSALSA_HAL_OUTPUT_ONLY=1 \
+    -isysroot "$SDK" -I "$ROOT/../../common" -DSALSA_HAL_FIXED_CHANNELS=2 -DSALSA_HAL_OUTPUT_ONLY=1 \
     -DSALSA_CARRIER_SHM_NAME=\"$SHM_NAME\" "$ROOT/tools/test_driver.c" \
     -framework CoreAudio -framework CoreFoundation -framework IOKit -framework AudioUnit \
     -o "$ROOT/build/test-driver-output-only"

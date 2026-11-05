@@ -28,7 +28,7 @@ use crate::pipeline::{
 pub enum CarrierSource {
     /// Offline IEC 61937 capture (`.spdif` fixture or recorded carrier).
     File(PathBuf),
-    /// Shared-memory ring written by the HAL plug-in.
+    /// Shared-memory ring written by the macOS HAL or Linux ALSA plug-in.
     Shared(String),
     /// Pre-built chunks for lifecycle tests and diagnostic injection.
     Scripted(Vec<CarrierChunk>),
@@ -54,7 +54,7 @@ pub struct ServiceConfig {
     pub hard_stall_timeout: Duration,
     /// Optional stop flag (SIGINT or tests).
     pub stop: Arc<AtomicBool>,
-    /// Publish the computed contract to the HAL shared control block.
+    /// Publish the computed contract to the carrier shared control block.
     pub declare_latency: bool,
 }
 
@@ -143,9 +143,9 @@ pub struct ComparisonReport {
 pub struct LifecycleReport {
     /// Carrier chunks consumed from the input.
     pub input_chunks: u64,
-    /// Distinct HAL session generations observed.
+    /// Distinct carrier-producer session generations observed.
     pub sessions: u64,
-    /// Resets caused by a new HAL session generation.
+    /// Resets caused by a new carrier-producer session generation.
     pub session_resets: u64,
     /// Resets requested by a carrier discontinuity/drop flag.
     pub carrier_discontinuities: u64,
@@ -161,7 +161,7 @@ pub struct LifecycleReport {
     pub max_scheduling_lateness_ms: f64,
     /// Physical output stalls recovered by rebuilding the sink.
     pub output_recoveries: u64,
-    /// Carrier frames the HAL dropped because the ring was full.
+    /// Carrier frames the producer dropped because the ring was full.
     pub carrier_dropped_frames: u64,
     /// Ring slots the reader skipped after a producer reset/overflow.
     pub skipped_slots: u64,
@@ -244,7 +244,7 @@ impl Timeline {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResetKind {
     None,
-    /// The HAL started a new output session.
+    /// The carrier producer started a new output session.
     Session,
     /// The carrier itself signalled a discontinuity or drop.
     Discontinuity,
@@ -483,9 +483,9 @@ fn output_label(config: &OutputConfig) -> String {
         OutputConfig::Wav(path) => format!("wav:{}", path.display()),
         OutputConfig::Null => "null".to_string(),
         OutputConfig::Memory => "memory".to_string(),
-        OutputConfig::CoreAudio { device } => match device {
-            Some(device) => format!("coreaudio:{device}"),
-            None => "coreaudio".to_string(),
+        OutputConfig::Physical { device } => match device {
+            Some(device) => format!("device:{device}"),
+            None => "device".to_string(),
         },
     }
 }
@@ -713,7 +713,9 @@ pub fn render(config: ServiceConfig) -> Result<RenderOutcome> {
                 pushed_any = true;
             }
         }
-        pipeline.end_of_stream()?;
+        if !config.stop.load(Ordering::Relaxed) {
+            pipeline.end_of_stream()?;
+        }
         Ok(())
     })();
 
@@ -1069,7 +1071,7 @@ mod tests {
         assert_eq!(
             tracker.observe(&chunk(1, 4, 0)),
             ResetKind::Session,
-            "a HAL session generation change is a hard reset"
+            "a carrier-producer session generation change is a hard reset"
         );
         assert_eq!(tracker.sessions, 2);
         assert_eq!(tracker.session_resets, 1);

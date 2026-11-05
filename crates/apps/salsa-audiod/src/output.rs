@@ -2,8 +2,8 @@
 //!
 //! The decode/render pipeline hands buffers to a single writer thread through a
 //! bounded channel. File and null writers are deterministic offline backends;
-//! the CoreAudio backend uses `osxaudiosink` (which owns the device clock and
-//! scheduling) from a second bounded `appsrc`.
+//! the physical backend uses `osxaudiosink` on macOS or a PulseAudio/ALSA sink
+//! on Linux from a second bounded `appsrc`.
 
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
@@ -14,16 +14,13 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use crate::clock::CarrierClock;
-#[cfg(target_os = "macos")]
-use crate::clock::{PlaybackClock, host_now_ns};
-#[cfg(target_os = "macos")]
+use crate::clock::{CarrierClock, PlaybackClock, host_now_ns};
 use crate::queue::BoundedAppSrc;
 use anyhow::{Context, Result, bail};
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 use gst::prelude::*;
 use gstreamer as gst;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 use gstreamer_app::AppSrc;
 
 #[derive(Debug, Clone)]
@@ -32,7 +29,8 @@ pub enum OutputConfig {
     Null,
     /// Collect interleaved f32 PCM in memory. Used by the comparison gate.
     Memory,
-    CoreAudio {
+    /// A physical audio sink. macOS uses `osxaudiosink`, Linux uses ALSA.
+    Physical {
         device: Option<String>,
     },
 }
@@ -116,8 +114,8 @@ enum Inner {
     Wav(WavWriter),
     Null,
     Memory,
-    #[cfg(target_os = "macos")]
-    CoreAudio(CoreAudioWriter),
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    Physical(PhysicalWriter),
 }
 
 impl OutputSink {
@@ -135,20 +133,20 @@ impl OutputSink {
             OutputConfig::Wav(path) => Inner::Wav(WavWriter::create(path)?),
             OutputConfig::Null => Inner::Null,
             OutputConfig::Memory => Inner::Memory,
-            OutputConfig::CoreAudio { device } => {
-                #[cfg(target_os = "macos")]
+            OutputConfig::Physical { device } => {
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 {
-                    Inner::CoreAudio(CoreAudioWriter::new(
+                    Inner::Physical(PhysicalWriter::new(
                         device.clone(),
                         stop,
                         allowance_ns,
                         push_timeout,
                     )?)
                 }
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
                 {
                     let _ = (device, stop, allowance_ns, push_timeout);
-                    bail!("the CoreAudio output is only available on macOS");
+                    bail!("the physical output is only available on macOS and Linux");
                 }
             }
         };
@@ -190,8 +188,8 @@ impl OutputSink {
                     .samples
                     .extend(samples.iter().map(|bytes| f32::from_le_bytes(*bytes)));
             }
-            #[cfg(target_os = "macos")]
-            Inner::CoreAudio(writer) => {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            Inner::Physical(writer) => {
                 // A full output queue means the physical device stopped
                 // consuming. Rebuild the sink and drop the late buffer instead
                 // of exiting the service.
@@ -210,8 +208,8 @@ impl OutputSink {
     /// The service calls this when the carrier session changes so pre-seek
     /// audio cannot leak into the new timeline.
     pub fn flush(&mut self) -> Result<()> {
-        #[cfg(target_os = "macos")]
-        if let Inner::CoreAudio(writer) = &mut self.inner
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Inner::Physical(writer) = &mut self.inner
             && writer.configured
         {
             let caps = self
@@ -235,8 +233,8 @@ impl OutputSink {
         if let Inner::Wav(writer) = &mut self.inner {
             writer.configure(info)?;
         }
-        #[cfg(target_os = "macos")]
-        if let Inner::CoreAudio(writer) = &mut self.inner {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Inner::Physical(writer) = &mut self.inner {
             if writer.configured {
                 writer.restart(caps)?;
             } else {
@@ -250,11 +248,11 @@ impl OutputSink {
         match &mut self.inner {
             Inner::Wav(writer) => writer.finish()?,
             Inner::Null | Inner::Memory => {}
-            #[cfg(target_os = "macos")]
-            Inner::CoreAudio(writer) => writer.finish()?,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            Inner::Physical(writer) => writer.finish()?,
         }
-        #[cfg(target_os = "macos")]
-        if let Inner::CoreAudio(writer) = &self.inner {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Inner::Physical(writer) = &self.inner {
             let (late_buffers, max_lateness_ns) = writer.clock_stats();
             self.late_buffers = late_buffers;
             self.max_lateness_ns = max_lateness_ns;
@@ -347,8 +345,8 @@ impl WavWriter {
     }
 }
 
-#[cfg(target_os = "macos")]
-struct CoreAudioWriter {
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct PhysicalWriter {
     device: Option<String>,
     pipeline: gst::Pipeline,
     appsrc: BoundedAppSrc,
@@ -362,15 +360,13 @@ struct CoreAudioWriter {
     configured: bool,
 }
 
-#[cfg(target_os = "macos")]
-impl CoreAudioWriter {
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl PhysicalWriter {
     fn build(
         device: &Option<String>,
         stop: Arc<AtomicBool>,
     ) -> Result<(gst::Pipeline, BoundedAppSrc, gst::Element)> {
-        let sink = gst::ElementFactory::make("osxaudiosink")
-            .build()
-            .context("osxaudiosink is unavailable")?;
+        let sink = physical_sink(device)?;
         Self::build_with_sink(device, stop, sink)
     }
 
@@ -398,12 +394,23 @@ impl CoreAudioWriter {
         let filter = gst::ElementFactory::make("capsfilter")
             .build()
             .context("capsfilter is unavailable")?;
-        sink.set_property("sync", true);
-        if let Some(device) = device {
-            // `device` is an integer property; the persistent UID is exposed as
-            // `unique-id` by the osxaudio sink and provider.
-            sink.set_property("unique-id", device);
+        // On Linux, do not let the sink provide the pipeline clock. The
+        // carrier is timestamped from CLOCK_MONOTONIC; using the
+        // PulseAudio/PipeWire stream clock here made Bluetooth sinks drift
+        // away from that timeline and fall silent. With `provide-clock=false`
+        // GStreamer uses the system monotonic clock. Disable audio-clock
+        // slaving as well so GStreamer does not try to resync against the
+        // sink's buffered sample position; `sync=true` still honours the
+        // carrier timestamps and preserves audio/video timing.
+        #[cfg(target_os = "linux")]
+        {
+            sink.set_property("provide-clock", false);
+            sink.set_property_from_str("slave-method", "none");
+            sink.set_property("sync", true);
         }
+        #[cfg(target_os = "macos")]
+        sink.set_property("sync", true);
+        configure_sink_device(&sink, device)?;
         pipeline.add_many([appsrc.upcast_ref(), &convert, &resample, &filter, &sink])?;
         gst::Element::link_many([appsrc.upcast_ref(), &convert, &resample, &filter, &sink])?;
         // PTS already includes the service's scheduling budget. Do not add a
@@ -452,7 +459,7 @@ impl CoreAudioWriter {
         self.appsrc.source().set_caps(Some(caps));
         self.pipeline
             .set_state(gst::State::Playing)
-            .context("cannot start the CoreAudio output pipeline")?;
+            .context("cannot start the physical output pipeline")?;
         self.configured = true;
         Ok(())
     }
@@ -541,6 +548,10 @@ impl CoreAudioWriter {
         if !self.configured {
             return Ok(());
         }
+        if self.stop.load(Ordering::Relaxed) {
+            let _ = self.pipeline.set_state(gst::State::Null);
+            return Ok(());
+        }
         self.appsrc.end_of_stream()?;
         let bus = self.pipeline.bus().context("output pipeline has no bus")?;
         let deadline = std::time::Instant::now()
@@ -555,23 +566,96 @@ impl CoreAudioWriter {
                 match message.view() {
                     gst::MessageView::Eos(_) => return Ok(()),
                     gst::MessageView::Error(error) => {
-                        bail!("CoreAudio output error: {}", error.error())
+                        bail!("physical output error: {}", error.error())
                     }
                     _ => {}
                 }
             }
             if std::time::Instant::now() >= deadline {
-                bail!("CoreAudio output timed out before EOS");
+                bail!("physical output timed out before EOS");
             }
         }
     }
 }
 
-#[cfg(target_os = "macos")]
-impl Drop for CoreAudioWriter {
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for PhysicalWriter {
     fn drop(&mut self) {
         let _ = self.pipeline.set_state(gst::State::Null);
     }
+}
+
+#[cfg(target_os = "macos")]
+fn physical_sink(_device: &Option<String>) -> Result<gst::Element> {
+    gst::ElementFactory::make("osxaudiosink")
+        .build()
+        .context("osxaudiosink is unavailable")
+}
+
+#[cfg(target_os = "linux")]
+fn physical_sink(device: &Option<String>) -> Result<gst::Element> {
+    let (factory, _) = linux_sink_target(device);
+    gst::ElementFactory::make(factory)
+        .build()
+        .with_context(|| format!("{factory} is unavailable"))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_sink_target(device: &Option<String>) -> (&'static str, Option<String>) {
+    match device.as_deref() {
+        Some(value) if value.starts_with("pipewire:") => {
+            ("pipewiresink", Some(value["pipewire:".len()..].to_string()))
+        }
+        Some(value) if value.starts_with("pulse:") => {
+            ("pulsesink", Some(value["pulse:".len()..].to_string()))
+        }
+        Some(value) if value.starts_with("alsa:") => {
+            ("alsasink", Some(value["alsa:".len()..].to_string()))
+        }
+        Some("system") | Some("default") | Some("") | None => {
+            if pulse_server_available() {
+                ("pulsesink", None)
+            } else {
+                ("alsasink", None)
+            }
+        }
+        Some(value) => ("alsasink", Some(value.to_string())),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn pulse_server_available() -> bool {
+    if std::env::var_os("PULSE_SERVER").is_some_and(|value| !value.is_empty()) {
+        return true;
+    }
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(|dir| std::path::Path::new(&dir).join("pulse/native").exists())
+        .unwrap_or(false)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn configure_sink_device(sink: &gst::Element, device: &Option<String>) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(device) = device {
+            // `device` is an integer property; the persistent UID is exposed as
+            // `unique-id` by the osxaudio sink and provider.
+            sink.set_property("unique-id", device);
+        }
+        let _ = sink;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let (factory, target) = linux_sink_target(device);
+        if let Some(target) = target {
+            if factory == "pipewiresink" {
+                sink.set_property("target-object", target);
+            } else {
+                sink.set_property("device", target);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Pull rendered samples from an `appsink` until EOS/error and forward them to
@@ -911,9 +995,9 @@ mod coreaudio_tests {
             let sink = AppSink::builder().build();
             let stop = Arc::default();
             let (pipeline, appsrc, capsfilter) =
-                CoreAudioWriter::build_with_sink(&None, Arc::clone(&stop), sink.clone().upcast())
+                PhysicalWriter::build_with_sink(&None, Arc::clone(&stop), sink.clone().upcast())
                     .unwrap();
-            let mut writer = CoreAudioWriter {
+            let mut writer = PhysicalWriter {
                 device: None,
                 pipeline,
                 appsrc,

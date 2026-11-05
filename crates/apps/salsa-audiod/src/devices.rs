@@ -1,4 +1,5 @@
-//! CoreAudio output discovery through the GStreamer device monitor.
+//! Physical output discovery. macOS uses the GStreamer device monitor;
+//! Linux reads the ALSA PCM name hints directly.
 
 use std::io::{BufRead, IsTerminal, Write};
 
@@ -34,7 +35,7 @@ impl AudioDevice {
     pub fn is_salsa_virtual(&self) -> bool {
         self.unique_id
             .as_deref()
-            .is_some_and(|id| id.starts_with("salsa-atmos"))
+            .is_some_and(|id| id.starts_with("salsa-atmos") || id.starts_with("salsa_atmos"))
             || self.name.contains("Salsa Atmos")
     }
 
@@ -56,20 +57,117 @@ impl AudioDevice {
 /// List devices that can be used as a physical output. Salsa's own virtual
 /// carrier device is hidden unless `include_virtual` is set.
 pub fn list_output_devices(include_virtual: bool) -> Result<Vec<AudioDevice>> {
-    gstreamer::init().context("GStreamer init failed")?;
-    let devices = salsa_gst::device::enumerate()
-        .context("cannot start the GStreamer device monitor")?
-        .into_iter()
-        .map(|entry| AudioDevice {
-            index: 0,
-            name: entry.display_name,
-            unique_id: entry.unique_id,
-            is_default: entry.is_default,
-            transport: entry.transport,
-            max_channels: entry.max_channels,
-        })
-        .collect();
+    #[cfg(target_os = "linux")]
+    let devices = alsa_devices()?;
+    #[cfg(not(target_os = "linux"))]
+    let devices = {
+        gstreamer::init().context("GStreamer init failed")?;
+        salsa_gst::device::enumerate()
+            .context("cannot start the GStreamer device monitor")?
+            .into_iter()
+            .map(|entry| AudioDevice {
+                index: 0,
+                name: entry.display_name,
+                unique_id: entry.unique_id,
+                is_default: entry.is_default,
+                transport: entry.transport,
+                max_channels: entry.max_channels,
+            })
+            .collect()
+    };
     Ok(prepare_devices(devices, include_virtual))
+}
+
+#[cfg(target_os = "linux")]
+fn alsa_devices() -> Result<Vec<AudioDevice>> {
+    use std::ffi::{CStr, CString};
+    use std::os::raw::{c_char, c_int, c_void};
+
+    #[link(name = "asound")]
+    unsafe extern "C" {
+        fn snd_device_name_hint(
+            card: c_int,
+            iface: *const c_char,
+            hints: *mut *mut *mut c_void,
+        ) -> c_int;
+        fn snd_device_name_get_hint(hint: *mut c_void, id: *const c_char) -> *mut c_char;
+        fn snd_device_name_free_hint(hints: *mut *mut c_void) -> c_int;
+        fn free(ptr: *mut c_void);
+    }
+
+    fn hint_string(hint: *mut c_void, id: &CStr) -> Option<String> {
+        // SAFETY: `id` is a NUL-terminated string, and the returned pointer is
+        // owned by ALSA and released with `free`.
+        unsafe {
+            let value = snd_device_name_get_hint(hint, id.as_ptr());
+            if value.is_null() {
+                return None;
+            }
+            let text = CStr::from_ptr(value).to_string_lossy().into_owned();
+            free(value.cast());
+            Some(text)
+        }
+    }
+
+    let iface = CString::new("pcm").expect("interface name has no NUL");
+    let mut raw: *mut *mut c_void = std::ptr::null_mut();
+    // SAFETY: `raw` points to storage owned by this function, and the hint
+    // strings are copied before `snd_device_name_free_hint` is called.
+    unsafe {
+        if snd_device_name_hint(-1, iface.as_ptr(), &mut raw) < 0 {
+            bail!("cannot enumerate ALSA PCM devices");
+        }
+        let mut devices = Vec::new();
+        if !raw.is_null() {
+            let mut index = 0isize;
+            loop {
+                let hint = *raw.offset(index);
+                if hint.is_null() {
+                    break;
+                }
+                index += 1;
+                let Some(name) = hint_string(hint, c"NAME") else {
+                    continue;
+                };
+                if let Some(io) = hint_string(hint, c"IOID")
+                    && io != "Output"
+                {
+                    continue;
+                }
+                if name.is_empty() || name == "null" {
+                    continue;
+                }
+                let description = hint_string(hint, c"DESC").unwrap_or_else(|| name.clone());
+                devices.push(AudioDevice {
+                    index: 0,
+                    name: description.replace('\n', " / "),
+                    unique_id: Some(name),
+                    is_default: false,
+                    transport: Some("alsa".to_string()),
+                    max_channels: None,
+                });
+            }
+            snd_device_name_free_hint(raw);
+        }
+        devices.sort_by(|left, right| left.unique_id.cmp(&right.unique_id));
+        devices.dedup_by(|left, right| left.unique_id == right.unique_id);
+        if let Some(device) = devices
+            .iter_mut()
+            .find(|device| device.unique_id.as_deref() == Some("default"))
+        {
+            device.is_default = true;
+        } else if devices.is_empty() {
+            devices.push(AudioDevice {
+                index: 0,
+                name: "Default Audio Device".to_string(),
+                unique_id: Some("default".to_string()),
+                is_default: true,
+                transport: Some("alsa".to_string()),
+                max_channels: None,
+            });
+        }
+        Ok(devices)
+    }
 }
 
 fn prepare_devices(mut devices: Vec<AudioDevice>, include_virtual: bool) -> Vec<AudioDevice> {
@@ -166,6 +264,11 @@ pub fn choose_output_device_with_default(current: Option<&str>) -> Result<String
         bail!("no physical output devices were found");
     }
     let follow_system = current.is_none_or(|value| value.is_empty() || value == "system");
+    let system_label = if cfg!(target_os = "macos") {
+        "Follow the macOS system output"
+    } else {
+        "Follow the system default output"
+    };
     let current_index = current.and_then(|current| {
         devices
             .iter()
@@ -193,7 +296,8 @@ pub fn choose_output_device_with_default(current: Option<&str>) -> Result<String
     writeln!(stderr, "Available physical outputs:")?;
     writeln!(
         stderr,
-        "   0. Follow the macOS system output{}",
+        "   0. {}{}",
+        system_label,
         if follow_system { "  <- current" } else { "" }
     )?;
     for device in &devices {
@@ -233,7 +337,7 @@ pub fn choose_output_device_with_default(current: Option<&str>) -> Result<String
         query.to_string()
     };
     if query == "0" || query.eq_ignore_ascii_case("system") {
-        eprintln!("Selected: follow the macOS system output");
+        eprintln!("Selected: {system_label}");
         return Ok("system".to_string());
     }
     let selected = resolve_from(&query, &devices)
@@ -279,6 +383,8 @@ mod tests {
     fn detects_salsa_devices_and_ambiguous_names() {
         let salsa = device(1, "Salsa Atmos E-AC-3", "salsa-atmos-eac3", false);
         assert!(salsa.is_salsa_virtual());
+        let alsa = device(1, "Salsa Atmos E-AC-3", "salsa_atmos_eac3", false);
+        assert!(alsa.is_salsa_virtual());
 
         let devices = [
             device(1, "Output A", "a", false),

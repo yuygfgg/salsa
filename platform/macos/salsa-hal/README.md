@@ -157,6 +157,7 @@ and fixture tests do not verify physical latency or A/V synchronization.
 |---|---|
 | `src/SalsaHAL.c` | Audio Server plug-in: formats, ring, loopback, diagnostic recording |
 | `src/SalsaHALProbe.h` | Custom property identifiers and diagnostic counters |
+| `../../common/salsa_carrier_shared.h` | Shared-memory carrier ABI used by the macOS HAL and Linux ALSA plug-in |
 | `tools/salsa_carrier_capture.c` | HAL probe, driver record reader, optional loopback capture |
 | `tools/compare_carrier.py` | Complete fixture comparison; only zero padding is allowed |
 | `tools/test_driver.c` | Direct driver contract tests with a mock host |

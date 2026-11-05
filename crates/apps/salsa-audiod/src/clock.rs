@@ -1,6 +1,5 @@
 //! Map carrier presentation positions to the physical pipeline's running time.
 
-#[cfg(any(target_os = "macos", test))]
 use anyhow::{Context, Result};
 use gstreamer as gst;
 
@@ -10,7 +9,6 @@ pub struct CarrierClock {
     pub host_ns: u64,
 }
 
-#[cfg(any(target_os = "macos", test))]
 #[derive(Default)]
 pub(crate) struct PlaybackClock {
     file_anchor: Option<CarrierClock>,
@@ -22,7 +20,6 @@ pub(crate) struct PlaybackClock {
     max_late_ns: u64,
 }
 
-#[cfg(any(target_os = "macos", test))]
 impl PlaybackClock {
     pub(crate) fn schedule(
         &mut self,
@@ -112,7 +109,25 @@ pub(crate) fn host_now_ns() -> u64 {
     host_ticks_to_ns(host_now_ticks())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+pub(crate) fn host_now_ticks() -> u64 {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `clock_gettime` only writes the provided timespec.
+    unsafe {
+        libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now);
+    }
+    (now.tv_sec as u64) * 1_000_000_000 + now.tv_nsec as u64
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn host_now_ns() -> u64 {
+    host_now_ticks()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(crate) fn host_now_ns() -> u64 {
     0
 }
