@@ -84,7 +84,6 @@ bed-position injection.
 | `layout` | `5.1` | Target layout. A recognized downstream `channel-mask` wins, so a 5.1 mask with `layout=7.1.4` renders 5.1. Set it before the pipeline reaches PAUSED; the renderer is built in `set_caps`. |
 | `metadata-offset` | `0` | Extra sample offset for spatial snapshots and events. Clamped to the input buffer length. |
 | `limiter-enable` | `false` | Scale a buffer by `1/peak` when its peak exceeds 0 dBFS. This is a safety normalizer, not Dolby DRC. |
-| `discard-latency` | `false` | Compatibility property with no effect. Output remains sample-aligned. |
 
 Caps:
 

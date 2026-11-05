@@ -28,7 +28,6 @@ const MAX_OBJECT_CHANNELS: i32 = 1024;
 struct State {
     layout: String,
     limiter_enable: bool,
-    discard_latency: bool,
     metadata_offset: u32,
     renderer: Option<SpeakerRenderer>,
     runtime: RuntimeState,
@@ -57,7 +56,6 @@ impl Default for State {
         Self {
             layout: DEFAULT_LAYOUT.to_string(),
             limiter_enable: false,
-            discard_latency: false,
             metadata_offset: DEFAULT_METADATA_OFFSET,
             renderer: None,
             runtime: RuntimeState::default(),
@@ -266,12 +264,6 @@ impl ObjectImpl for Oar {
                     .default_value(false)
                     .readwrite()
                     .build(),
-                glib::ParamSpecBoolean::builder("discard-latency")
-                    .nick("Discard latency")
-                    .blurb("Kept for Dolby oar compatibility; output remains sample-aligned")
-                    .default_value(false)
-                    .readwrite()
-                    .build(),
                 glib::ParamSpecUInt::builder("metadata-offset")
                     .nick("Metadata offset")
                     .blurb("Sample offset inside each buffer where the OAMD snapshot is applied")
@@ -292,9 +284,6 @@ impl ObjectImpl for Oar {
             "limiter-enable" => {
                 salsa_gst::lock(&self.state).limiter_enable = value.get().unwrap_or(false);
             }
-            "discard-latency" => {
-                salsa_gst::lock(&self.state).discard_latency = value.get().unwrap_or(false);
-            }
             "metadata-offset" => {
                 salsa_gst::lock(&self.state).metadata_offset =
                     value.get().unwrap_or(DEFAULT_METADATA_OFFSET);
@@ -308,7 +297,6 @@ impl ObjectImpl for Oar {
         match pspec.name() {
             "layout" => state.layout.to_value(),
             "limiter-enable" => state.limiter_enable.to_value(),
-            "discard-latency" => state.discard_latency.to_value(),
             "metadata-offset" => state.metadata_offset.to_value(),
             _ => pspec.default_value().clone(),
         }
