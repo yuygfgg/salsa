@@ -2,7 +2,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -15,11 +15,16 @@ fn init() {
 }
 
 fn unique_dir() -> PathBuf {
-    let nonce = SystemTime::now()
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let nonce = NEXT.fetch_add(1, Ordering::Relaxed);
+    let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("salsa-gst-damf-{}-{nonce}", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "salsa-gst-damf-{}-{stamp}-{nonce}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&path).unwrap();
     path
 }
