@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use objectaudio_render::{layout_by_name, layouts};
-use salsa_codec::{Codec as StreamCodec, elements};
+use salsa_codec::Codec as StreamCodec;
+use salsa_gst_registry::{codec_elements, elements};
 use serde::{Deserialize, Serialize};
 
 /// A file the GUI can open: a compressed stream known to `salsa-codec`, or a
@@ -297,8 +298,9 @@ pub fn build_pipeline(
             let filesrc = element("filesrc")?;
             filesrc.set_property("location", path.to_string_lossy().to_string());
             filesrc.set_property("blocksize", 1_048_576u32);
-            let parser = element(stream.spec().parser)?;
-            let decoder = element(stream.spec().decoder)?;
+            let spec = codec_elements(stream);
+            let parser = element(spec.parser)?;
+            let decoder = element(spec.decoder)?;
             chain.push(filesrc);
             chain.push(parser.clone());
             chain.push(decoder.clone());
@@ -404,7 +406,7 @@ pub fn scan_duration(
             let filesrc = element("filesrc").ok()?;
             filesrc.set_property("location", path.to_string_lossy().to_string());
             filesrc.set_property("blocksize", 8_388_608u32);
-            let parser = element(stream.spec().parser).ok()?;
+            let parser = element(codec_elements(stream).parser).ok()?;
             pipeline.add_many([&filesrc, &parser]).ok()?;
             gst::Element::link_many([&filesrc, &parser]).ok()?;
             (Some(filesrc), parser)

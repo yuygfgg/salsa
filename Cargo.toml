@@ -4,7 +4,7 @@ members = [
     "crates/libs/core/salsa-codec",
     "crates/libs/core/salsa-bitstream",
     "crates/libs/gst/salsa-gst",
-    "crates/libs/gst/salsa-gst-registry",
+    "crates/libs/gst/salsa-gst-macros",
     "crates/libs/audio/objectaudio-ir",
     "crates/libs/audio/objectaudio-oamd",
     "crates/libs/decoder/eac3joc/eac3joc",
@@ -21,6 +21,7 @@ members = [
     "crates/gst-plugins/gst-truehd",
     "crates/gst-plugins/gst-objectaudio",
     "crates/gst-plugins/gst-damf",
+    "crates/gst-plugins/salsa-gst-registry",
     "crates/libs/encoder/eac3joc-encoder",
     "crates/libs/encoder/atmos-cluster",
     "crates/apps/salsa-eac3joc-encode",
@@ -45,7 +46,8 @@ truehd = { git = "https://github.com/truehdd/truehdd", rev = "77ddc52e6ab41c59d8
 salsa-codec = { path = "crates/libs/core/salsa-codec" }
 salsa-bitstream = { path = "crates/libs/core/salsa-bitstream" }
 salsa-gst = { path = "crates/libs/gst/salsa-gst" }
-salsa-gst-registry = { path = "crates/libs/gst/salsa-gst-registry" }
+salsa-gst-macros = { path = "crates/libs/gst/salsa-gst-macros" }
+salsa-gst-registry = { path = "crates/gst-plugins/salsa-gst-registry" }
 objectaudio-ir = { path = "crates/libs/audio/objectaudio-ir" }
 eac3joc-encoder = { path = "crates/libs/encoder/eac3joc-encoder" }
 atmos-cluster = { path = "crates/libs/encoder/atmos-cluster" }
@@ -65,6 +67,9 @@ anyhow = "1"
 libc = "0.2"
 thiserror = "2"
 proptest = "1"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
 rustfft = "6"
 num-complex = "0.4"
 log = "0.4"

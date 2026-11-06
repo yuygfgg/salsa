@@ -3,37 +3,17 @@
 mod decoder;
 mod parse;
 
-use gst::glib;
-use gst::glib::prelude::*;
 use gstreamer as gst;
 use gstreamer_audio as gst_audio;
 use gstreamer_base as gst_base;
-use salsa_codec::elements;
 
-gst::glib::wrapper! {
-    pub struct TrueHdParse(ObjectSubclass<parse::TrueHdParse>)
-        @extends gst_base::BaseParse, gst::Element, gst::Object;
-}
+salsa_gst::plugin_elements! {
+    caps = "audio/x-true-hd";
 
-gst::glib::wrapper! {
-    pub struct TrueHdAtmosDec(ObjectSubclass<decoder::TrueHdAtmosDec>)
-        @extends gst_audio::AudioDecoder, gst::Element, gst::Object;
-}
-
-fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
-    gst::Element::register(
-        Some(plugin),
-        elements::TRUEHD_PARSE,
-        gst::Rank::PRIMARY,
-        TrueHdParse::static_type(),
-    )?;
-    gst::Element::register(
-        Some(plugin),
-        elements::TRUEHD_DEC,
-        gst::Rank::PRIMARY,
-        TrueHdAtmosDec::static_type(),
-    )?;
-    Ok(())
+    TrueHdParse(parse::TrueHdParse)
+        extends gst_base::BaseParse = "salsatruehdparse" as TRUEHD_PARSE;
+    TrueHdAtmosDec(decoder::TrueHdAtmosDec)
+        extends gst_audio::AudioDecoder = "salsatruehdatmosdec" as TRUEHD_DEC;
 }
 
 gst::plugin_define!(
@@ -51,6 +31,8 @@ gst::plugin_define!(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gst::glib;
+    use gst::glib::prelude::*;
 
     #[test]
     fn builds_the_element() {

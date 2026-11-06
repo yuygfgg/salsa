@@ -3,37 +3,17 @@
 mod decoder;
 mod parse;
 
-use gst::glib;
-use gst::glib::prelude::*;
 use gstreamer as gst;
 use gstreamer_audio as gst_audio;
 use gstreamer_base as gst_base;
-use salsa_codec::elements;
 
-gst::glib::wrapper! {
-    pub struct Eac3JocParse(ObjectSubclass<parse::Eac3JocParse>)
-        @extends gst_base::BaseParse, gst::Element, gst::Object;
-}
+salsa_gst::plugin_elements! {
+    caps = "audio/x-eac3";
 
-gst::glib::wrapper! {
-    pub struct Eac3JocDec(ObjectSubclass<decoder::Eac3JocDec>)
-        @extends gst_audio::AudioDecoder, gst::Element, gst::Object;
-}
-
-fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
-    gst::Element::register(
-        Some(plugin),
-        elements::EAC3_PARSE,
-        gst::Rank::PRIMARY,
-        Eac3JocParse::static_type(),
-    )?;
-    gst::Element::register(
-        Some(plugin),
-        elements::EAC3_DEC,
-        gst::Rank::PRIMARY,
-        Eac3JocDec::static_type(),
-    )?;
-    Ok(())
+    Eac3JocParse(parse::Eac3JocParse)
+        extends gst_base::BaseParse = "salsaeac3jocparse" as EAC3_PARSE;
+    Eac3JocDec(decoder::Eac3JocDec)
+        extends gst_audio::AudioDecoder = "salsaeac3jocdec" as EAC3_DEC;
 }
 
 gst::plugin_define!(
@@ -51,6 +31,8 @@ gst::plugin_define!(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gst::glib;
+    use gst::glib::prelude::*;
 
     #[test]
     fn builds_both_elements() {

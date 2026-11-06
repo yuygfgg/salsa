@@ -1,9 +1,8 @@
-//! Codec identity and the timing/transport data shared by every Salsa app and
-//! GStreamer plugin.
+//! Codec identity and timing data shared by every Salsa app.
 //!
-//! The carrier, decoder and UI layers used to keep independent `Codec` enums,
-//! parser/decoder names, caps strings and delay constants. Keeping them here
-//! means a codec is described in one place.
+//! The carrier, decoder and UI layers used to keep independent `Codec` enums
+//! and delay constants. Keeping them here means a codec is described in one
+//! place without pulling GStreamer into the generic libraries.
 
 /// A compressed audio codec understood by the Salsa pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,16 +40,12 @@ impl Codec {
         }
     }
 
-    /// Static pipeline description for this codec.
+    /// Static timing description for this codec.
     pub const fn spec(self) -> CodecSpec {
         match self {
             Self::Eac3 => EAC3_SPEC,
             Self::TrueHd => TRUEHD_SPEC,
         }
-    }
-
-    pub const fn appsrc_caps(self) -> &'static str {
-        self.spec().caps
     }
 
     /// Decoder signal delay, in samples, folded into the timestamps.
@@ -65,14 +60,11 @@ impl Codec {
     }
 }
 
-/// Static description of a codec's GStreamer transport and timing.
+/// Static description of a codec's timing and framing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CodecSpec {
     pub codec: Codec,
     pub label: &'static str,
-    pub caps: &'static str,
-    pub parser: &'static str,
-    pub decoder: &'static str,
     pub signal_delay_samples: u32,
     pub parser_lookahead_samples: u32,
     pub frame_samples: u32,
@@ -91,9 +83,6 @@ pub const CARRIER_SAMPLE_RATE: u32 = 192_000;
 pub const EAC3_SPEC: CodecSpec = CodecSpec {
     codec: Codec::Eac3,
     label: "eac3",
-    caps: "audio/x-eac3",
-    parser: elements::EAC3_PARSE,
-    decoder: elements::EAC3_DEC,
     signal_delay_samples: EAC3_DECODER_DELAY,
     parser_lookahead_samples: EAC3_FRAME_SAMPLES,
     frame_samples: EAC3_FRAME_SAMPLES,
@@ -103,27 +92,11 @@ pub const EAC3_SPEC: CodecSpec = CodecSpec {
 pub const TRUEHD_SPEC: CodecSpec = CodecSpec {
     codec: Codec::TrueHd,
     label: "truehd",
-    caps: "audio/x-true-hd",
-    parser: elements::TRUEHD_PARSE,
-    decoder: elements::TRUEHD_DEC,
     signal_delay_samples: 0,
     parser_lookahead_samples: 40,
     frame_samples: 40,
     sample_rate: SAMPLE_RATE,
 };
-
-/// GStreamer element factory names registered by the Salsa plugins.
-pub mod elements {
-    pub const EAC3_PARSE: &str = "salsaeac3jocparse";
-    pub const EAC3_DEC: &str = "salsaeac3jocdec";
-    pub const TRUEHD_PARSE: &str = "salsatruehdparse";
-    pub const TRUEHD_DEC: &str = "salsatruehdatmosdec";
-    pub const OAR: &str = "salsaoar";
-    pub const HRTF_RENDER: &str = "salsahrtfrender";
-    pub const OBJECT_AUDIO_ADAPT: &str = "salsaobjectaudioadapt";
-    pub const DAMF_SRC: &str = "salsadamfsrc";
-    pub const DAMF_SINK: &str = "salsadamfsink";
-}
 
 #[cfg(test)]
 mod tests {

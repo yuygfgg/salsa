@@ -4,47 +4,15 @@ mod adapt;
 mod hrtf;
 mod oar;
 
-use gst::glib;
-use gst::glib::prelude::*;
 use gstreamer as gst;
 use gstreamer_base as gst_base;
-use salsa_codec::elements;
 
-gst::glib::wrapper! {
-    pub struct Oar(ObjectSubclass<oar::Oar>)
-        @extends gst_base::BaseTransform, gst::Element, gst::Object;
-}
-
-gst::glib::wrapper! {
-    pub struct HrtfRender(ObjectSubclass<hrtf::HrtfRender>)
-        @extends gst_base::BaseTransform, gst::Element, gst::Object;
-}
-
-gst::glib::wrapper! {
-    pub struct ObjectAudioAdapt(ObjectSubclass<adapt::ObjectAudioAdapt>)
-        @extends gst_base::BaseTransform, gst::Element, gst::Object;
-}
-
-fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
-    gst::Element::register(
-        Some(plugin),
-        elements::OAR,
-        gst::Rank::PRIMARY,
-        Oar::static_type(),
-    )?;
-    gst::Element::register(
-        Some(plugin),
-        elements::HRTF_RENDER,
-        gst::Rank::PRIMARY,
-        HrtfRender::static_type(),
-    )?;
-    gst::Element::register(
-        Some(plugin),
-        elements::OBJECT_AUDIO_ADAPT,
-        gst::Rank::PRIMARY,
-        ObjectAudioAdapt::static_type(),
-    )?;
-    Ok(())
+salsa_gst::plugin_elements! {
+    Oar(oar::Oar) extends gst_base::BaseTransform = "salsaoar" as OAR;
+    HrtfRender(hrtf::HrtfRender)
+        extends gst_base::BaseTransform = "salsahrtfrender" as HRTF_RENDER;
+    ObjectAudioAdapt(adapt::ObjectAudioAdapt)
+        extends gst_base::BaseTransform = "salsaobjectaudioadapt" as OBJECT_AUDIO_ADAPT;
 }
 
 gst::plugin_define!(
@@ -62,6 +30,8 @@ gst::plugin_define!(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gst::glib;
+    use gst::glib::prelude::*;
 
     #[test]
     fn builds_the_renderer() {

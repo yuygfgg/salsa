@@ -10,6 +10,7 @@ use eframe::egui;
 use egui::{Align, Color32, Layout, RichText};
 use gstreamer as gst;
 use gstreamer::prelude::*;
+use salsa_gst_registry::elements;
 
 use crate::model::{Phase, SourceInfo, UiError};
 use crate::pipeline::{
@@ -800,13 +801,13 @@ impl SalsaApp {
 
     fn plugins_ok(&self) -> bool {
         [
-            "salsadamfsrc",
-            "salsaeac3jocparse",
-            "salsaeac3jocdec",
-            "salsatruehdparse",
-            "salsatruehdatmosdec",
-            "salsaoar",
-            "salsahrtfrender",
+            elements::DAMF_SRC,
+            elements::EAC3_PARSE,
+            elements::EAC3_DEC,
+            elements::TRUEHD_PARSE,
+            elements::TRUEHD_DEC,
+            elements::OAR,
+            elements::HRTF_RENDER,
         ]
         .iter()
         .all(|name| gst::ElementFactory::find(name).is_some())
@@ -859,13 +860,13 @@ impl SalsaApp {
             gst::version_string(),
             std::env::var("GST_PLUGIN_PATH").unwrap_or_else(|_| "<unset>".to_string()),
             std::env::var("GST_REGISTRY_FORK").unwrap_or_else(|_| "<unset>".to_string()),
-            plugin("salsadamfsrc"),
-            plugin("salsaeac3jocparse"),
-            plugin("salsaeac3jocdec"),
-            plugin("salsatruehdparse"),
-            plugin("salsatruehdatmosdec"),
-            plugin("salsaoar"),
-            plugin("salsahrtfrender"),
+            plugin(elements::DAMF_SRC),
+            plugin(elements::EAC3_PARSE),
+            plugin(elements::EAC3_DEC),
+            plugin(elements::TRUEHD_PARSE),
+            plugin(elements::TRUEHD_DEC),
+            plugin(elements::OAR),
+            plugin(elements::HRTF_RENDER),
             devices,
             self.settings
                 .binaural

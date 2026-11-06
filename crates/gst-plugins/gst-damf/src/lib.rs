@@ -3,36 +3,12 @@
 mod sink;
 mod source;
 
-use gst::glib;
-use gst::glib::prelude::*;
 use gstreamer as gst;
 use gstreamer_base as gst_base;
-use salsa_codec::elements;
 
-gst::glib::wrapper! {
-    pub struct DamfSrc(ObjectSubclass<source::DamfSrc>)
-        @extends gst_base::BaseSrc, gst::Element, gst::Object;
-}
-
-gst::glib::wrapper! {
-    pub struct DamfSink(ObjectSubclass<sink::DamfSink>)
-        @extends gst_base::BaseSink, gst::Element, gst::Object;
-}
-
-fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
-    gst::Element::register(
-        Some(plugin),
-        elements::DAMF_SRC,
-        gst::Rank::PRIMARY,
-        DamfSrc::static_type(),
-    )?;
-    gst::Element::register(
-        Some(plugin),
-        elements::DAMF_SINK,
-        gst::Rank::PRIMARY,
-        DamfSink::static_type(),
-    )?;
-    Ok(())
+salsa_gst::plugin_elements! {
+    DamfSrc(source::DamfSrc) extends gst_base::BaseSrc = "salsadamfsrc" as DAMF_SRC;
+    DamfSink(sink::DamfSink) extends gst_base::BaseSink = "salsadamfsink" as DAMF_SINK;
 }
 
 gst::plugin_define!(
@@ -50,6 +26,8 @@ gst::plugin_define!(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gst::glib;
+    use gst::glib::prelude::*;
 
     #[test]
     fn builds_the_elements() {

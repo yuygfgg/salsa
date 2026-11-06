@@ -20,6 +20,8 @@ use gstreamer_audio as gst_audio;
 
 pub mod device;
 
+pub use salsa_gst_macros::plugin_elements;
+
 /// Lock `mutex`, recovering the guard if a previous holder panicked.
 pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
@@ -30,17 +32,6 @@ pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// Construct an element by factory name.
 pub fn element(factory: &str) -> Result<gst::Element, glib::BoolError> {
     gst::ElementFactory::make(factory).build()
-}
-
-/// Register an element without a plugin, ignoring "already registered".
-///
-/// Applications register the plugin elements explicitly so they do not depend
-/// on the host's GStreamer plugin search path.
-pub fn register_element<T>(name: &str)
-where
-    T: StaticType + IsA<gst::Element>,
-{
-    let _ = gst::Element::register(None, name, gst::Rank::PRIMARY, T::static_type());
 }
 
 /// Implement the static `ElementImpl::metadata` body.

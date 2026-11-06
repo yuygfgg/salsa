@@ -13,7 +13,7 @@ use gstreamer as gst;
 use gstreamer_app::{AppSink, AppSrc};
 
 use crate::queue::BoundedAppSrc;
-use salsa_codec::elements;
+use salsa_gst_registry::{codec_elements, elements};
 
 pub use salsa_codec::Codec;
 
@@ -75,7 +75,7 @@ fn element(factory: &str) -> Result<gst::Element> {
 
 /// Build the parser and decoder pair for `codec`.
 fn decode_elements(codec: Codec) -> Result<(gst::Element, gst::Element)> {
-    let spec = codec.spec();
+    let spec = codec_elements(codec);
     Ok((element(spec.parser)?, element(spec.decoder)?))
 }
 
@@ -148,7 +148,7 @@ impl DecodeRenderPipeline {
                 .seek_data(|_, _| true)
                 .build(),
         );
-        let caps: gst::Caps = config.codec.appsrc_caps().parse().unwrap();
+        let caps: gst::Caps = codec_elements(config.codec).caps.parse().unwrap();
         appsrc.set_property("caps", &caps);
 
         let (parser, decoder) = decode_elements(config.codec)?;
