@@ -11,6 +11,9 @@ members = [
     "crates/libs/decoder/eac3joc/core-decoder",
     "crates/libs/decoder/eac3joc/eac3joc-dsp",
     "crates/libs/decoder/truehd/truehd-atmos",
+    "crates/libs/decoder/salsa-spatial/salsa-spatial",
+    "crates/libs/decoder/salsa-spatial/core-decoder",
+    "crates/libs/decoder/salsa-spatial/salsa-spatial-dsp",
     "crates/libs/gst/objectaudio-meta",
     "crates/libs/gst/objectaudio-decode",
     "crates/libs/io/iec61937",
@@ -24,7 +27,10 @@ members = [
     "crates/gst-plugins/salsa-gst-registry",
     "crates/libs/encoder/eac3joc-encoder",
     "crates/libs/encoder/atmos-cluster",
+    "crates/libs/encoder/salsa-spatial-encoder",
     "crates/apps/salsa-eac3joc-encode",
+    "crates/apps/salsa-spatial-encode",
+    "crates/gst-plugins/gst-salsa-spatial",
     "crates/apps/salsa-cluster",
     "crates/apps/salsa-audiod",
     "crates/apps/salsa-gui",
@@ -61,6 +67,10 @@ objectaudio-hrtf = { path = "crates/libs/render/hrtf" }
 eac3joc = { path = "crates/libs/decoder/eac3joc/eac3joc" }
 eac3joc-core-decoder = { path = "crates/libs/decoder/eac3joc/core-decoder" }
 eac3joc-dsp = { path = "crates/libs/decoder/eac3joc/eac3joc-dsp" }
+salsa-spatial = { path = "crates/libs/decoder/salsa-spatial/salsa-spatial" }
+salsa-spatial-core-decoder = { path = "crates/libs/decoder/salsa-spatial/core-decoder" }
+salsa-spatial-dsp = { path = "crates/libs/decoder/salsa-spatial/salsa-spatial-dsp" }
+salsa-spatial-encoder = { path = "crates/libs/encoder/salsa-spatial-encoder" }
 truehd-atmos = { path = "crates/libs/decoder/truehd/truehd-atmos" }
 truehd = "0.7"
 anyhow = "1"
@@ -72,6 +82,10 @@ quote = "1"
 syn = { version = "2", features = ["full"] }
 rustfft = "6"
 num-complex = "0.4"
+nalgebra = "0.35"
+constriction = "=0.5.0"
+opus = "=0.4.0"
+clap = { version = "4", features = ["derive", "env"] }
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

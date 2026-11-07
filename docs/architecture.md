@@ -1,8 +1,15 @@
 # Architecture
 
-Salsa is split into small library crates and thin GStreamer plugin crates. The
-libraries decode, encode, render, and model object audio without depending on
-GStreamer; only `objectaudio-meta` and the plugin crates link GStreamer.
+Salsa is split into library crates and thin GStreamer plugin crates. Codec,
+rendering, and scene-model libraries are independent of GStreamer. Shared
+GStreamer adapters live under `crates/libs/gst`; plugin crates expose the
+elements.
+
+The experimental salsa-spatial object codec follows the E-AC-3 JOC crate
+split: codec libraries, an encoding CLI, and a GStreamer parser/decoder plugin.
+See the [codec design](salsa-spatial.md),
+[implementation guide](salsa-spatial-implementation.md), and
+[quality evaluation](salsa-spatial-quality.md).
 
 ```text
 E-AC-3 JOC / TrueHD

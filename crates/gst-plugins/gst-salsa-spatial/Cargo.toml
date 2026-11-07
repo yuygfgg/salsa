@@ -1,0 +1,27 @@
+[package]
+name = "gst-salsa-spatial"
+description = "GStreamer salsa-spatial parse and decode plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "gstsalsaspatial"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+salsa-spatial.workspace = true
+salsa-spatial-dsp.workspace = true
+salsa-codec.workspace = true
+salsa-gst.workspace = true
+objectaudio-ir.workspace = true
+objectaudio-meta.workspace = true
+objectaudio-decode.workspace = true
+gstreamer.workspace = true
+gstreamer-base.workspace = true
+gstreamer-audio.workspace = true
+
+[dev-dependencies]
+salsa-gst-registry.workspace = true

@@ -206,9 +206,9 @@ impl DamfSource {
             .flat_map(|(index, track)| track.events(start, frames, index as u32 + 1))
             .collect::<Vec<_>>();
         events.sort_by_key(|event| event.offset);
-        // DAMF carries per-object trimBypass but no programme warp/trim/balance;
-        // the IR calibration keeps the bypass flags and leaves the rest at the
-        // automatic defaults.
+        // TODO: Read the manifest's warpMode into programme calibration.
+        // The source currently keeps per-object trimBypass but leaves the
+        // programme controls at their defaults.
         let calibration_at = |sample| ProgramCalibration {
             bypass: self
                 .tracks

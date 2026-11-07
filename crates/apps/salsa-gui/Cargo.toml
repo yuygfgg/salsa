@@ -24,6 +24,7 @@ rfd = "0.15"
 salsa-codec.workspace = true
 salsa-gst.workspace = true
 salsa-gst-registry.workspace = true
+salsa-spatial.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

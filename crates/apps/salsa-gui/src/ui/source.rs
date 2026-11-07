@@ -5,6 +5,7 @@ use egui::{Color32, RichText};
 use gstreamer as gst;
 
 use crate::model::SourceInfo;
+use crate::pipeline::INPUT_EXTENSIONS;
 use crate::settings::Settings;
 use crate::ui::format_clock;
 
@@ -48,7 +49,7 @@ pub fn draw_source(
                         });
                         ui.monospace(text);
                         ui.label(
-                            RichText::new("Atmos")
+                            RichText::new("Object audio")
                                 .color(Color32::from_rgb(130, 210, 160))
                                 .strong(),
                         );
@@ -71,8 +72,13 @@ pub fn draw_empty(
         ui.add_space(18.0);
         ui.vertical_centered(|ui| {
             ui.label(RichText::new("Open object audio").size(20.0).strong());
-            ui.label("Drop an E-AC-3 JOC, TrueHD Atmos or DAMF master, or choose a file.");
-            ui.weak("Supported inputs: .ec3  .eac3  .mlp  .thd  .atmos");
+            ui.label("Drop an E-AC-3 JOC, TrueHD Atmos, salsa-spatial or DAMF file.");
+            let extensions = INPUT_EXTENSIONS
+                .iter()
+                .map(|extension| format!(".{extension}"))
+                .collect::<Vec<_>>()
+                .join("  ");
+            ui.weak(format!("Supported inputs: {extensions}"));
             ui.add_space(8.0);
             if ui.button("Choose File…").clicked() {
                 action = Some(EmptyAction::OpenDialog);

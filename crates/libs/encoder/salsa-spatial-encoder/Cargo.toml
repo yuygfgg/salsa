@@ -1,0 +1,31 @@
+[package]
+name = "salsa-spatial-encoder"
+description = "DAMF to salsa-spatial encoder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+salsa-spatial.workspace = true
+salsa-spatial-core-decoder.workspace = true
+salsa-spatial-dsp.workspace = true
+objectaudio-damf.workspace = true
+objectaudio-ir.workspace = true
+objectaudio-render.workspace = true
+objectaudio-hrtf.workspace = true
+rustfft.workspace = true
+num-complex.workspace = true
+nalgebra.workspace = true
+opus.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+log.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rayon = "1"
+
+[dev-dependencies]
+tempfile = "3"

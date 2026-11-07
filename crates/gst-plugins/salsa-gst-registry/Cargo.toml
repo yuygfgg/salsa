@@ -11,6 +11,7 @@ publish.workspace = true
 gst-damf = { path = "../gst-damf" }
 gst-eac3joc = { path = "../gst-eac3joc" }
 gst-objectaudio = { path = "../gst-objectaudio" }
+gst-salsa-spatial = { path = "../gst-salsa-spatial" }
 gst-truehd = { path = "../gst-truehd" }
 gstreamer.workspace = true
 objectaudio-meta.workspace = true

@@ -893,6 +893,14 @@ impl SourceCounter {
                     self.end = self.end.max(start.saturating_add(self.last_truehd_delta));
                 }
             }
+            Codec::SalsaSpatial => {
+                // salsa-spatial is an IAMF stream, not an IEC 61937 carrier
+                // payload, so the carrier path cannot assign it a duration.
+                gst::error!(
+                    gst::CAT_RUST,
+                    "salsa-spatial is not supported by the IEC 61937 carrier path"
+                );
+            }
         }
     }
 

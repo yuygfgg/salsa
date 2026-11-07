@@ -13,6 +13,11 @@ use salsa_codec::Codec as StreamCodec;
 use salsa_gst_registry::{codec_elements, elements};
 use serde::{Deserialize, Serialize};
 
+/// Extensions offered by the file picker and the empty-state source panel.
+pub const INPUT_EXTENSIONS: &[&str] = &[
+    "ec3", "eac3", "mlp", "thd", "truehd", "atmos", "damf", "iamf",
+];
+
 /// A file the GUI can open: a compressed stream known to `salsa-codec`, or a
 /// raw DAMF master.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +29,7 @@ pub enum Codec {
 impl Codec {
     pub const EAC3: Self = Self::Stream(StreamCodec::Eac3);
     pub const TRUEHD: Self = Self::Stream(StreamCodec::TrueHd);
+    pub const SALSA_SPATIAL: Self = Self::Stream(StreamCodec::SalsaSpatial);
     pub const DAMF: Self = Self::Damf;
 
     pub const fn stream(self) -> Option<StreamCodec> {
@@ -37,14 +43,14 @@ impl Codec {
         match self {
             Self::Stream(StreamCodec::Eac3) => "E-AC-3 JOC",
             Self::Stream(StreamCodec::TrueHd) => "TrueHD Atmos",
+            Self::Stream(StreamCodec::SalsaSpatial) => "salsa-spatial",
             Self::Damf => "DAMF Master",
         }
     }
 
     pub fn short(self) -> &'static str {
         match self {
-            Self::Stream(StreamCodec::Eac3) => "EC3",
-            Self::Stream(StreamCodec::TrueHd) => "TrueHD",
+            Self::Stream(codec) => codec.short_label(),
             Self::Damf => "DAMF",
         }
     }
@@ -147,6 +153,11 @@ pub fn detect_codec(path: &Path) -> Result<Codec, PipelineError> {
         .and_then(|value| value.to_str())
         .map(|value| value.to_ascii_lowercase());
 
+    // A container header takes precedence over sync-like bytes in compressed
+    // payloads. Opus data can contain the short E-AC-3 sync word by chance.
+    if salsa_spatial::iamf::has_sequence_header(bytes) {
+        return Ok(Codec::SALSA_SPATIAL);
+    }
     if contains_truehd_sync(bytes) {
         return Ok(Codec::TRUEHD);
     }
@@ -266,6 +277,37 @@ pub struct PipelineParts {
     pub codec: Codec,
 }
 
+/// Elements used by the player, including every registered compressed codec.
+pub fn playback_elements() -> impl Iterator<Item = &'static str> {
+    [
+        "queue",
+        elements::DAMF_SRC,
+        elements::OAR,
+        elements::HRTF_RENDER,
+    ]
+    .into_iter()
+    .chain(StreamCodec::ALL.into_iter().flat_map(|codec| {
+        let spec = codec_elements(codec);
+        [spec.parser, spec.decoder]
+    }))
+}
+
+/// Bounded lookahead for the thread-decoupling queues.
+///
+/// This player has no A/V sync requirement, so a small amount of buffering is
+/// traded for parallelism. Keeping the queues short bounds pause/seek latency.
+const PLAYBACK_QUEUE_NS: u64 = 200 * 1_000_000;
+
+fn thread_queue() -> Result<gst::Element, PipelineError> {
+    let queue = element("queue")?;
+    // Disable the count/byte limits and bound only by time; when the bound is
+    // reached the upstream stage blocks instead of dropping audio.
+    queue.set_property("max-size-buffers", 0u32);
+    queue.set_property("max-size-bytes", 0u32);
+    queue.set_property("max-size-time", PLAYBACK_QUEUE_NS);
+    Ok(queue)
+}
+
 fn element(factory: &str) -> Result<gst::Element, PipelineError> {
     salsa_gst::element(factory).map_err(|error| PipelineError::MissingElement {
         factory: factory.to_string(),
@@ -303,10 +345,13 @@ pub fn build_pipeline(
             let decoder = element(spec.decoder)?;
             chain.push(filesrc);
             chain.push(parser.clone());
+            chain.push(thread_queue()?);
             chain.push(decoder.clone());
             (Some(parser), decoder)
         }
     };
+    // Decouple the decoder/source thread from the object renderer.
+    chain.push(thread_queue()?);
 
     let renderer = match config.mode {
         OutputMode::Speaker => {
@@ -370,6 +415,8 @@ pub fn build_pipeline(
     chain.push(resample);
     chain.push(capsfilter);
     chain.push(volume.clone());
+    // Decouple rendering/resampling from the audio sink's own clock thread.
+    chain.push(thread_queue()?);
     chain.push(sink);
 
     pipeline
@@ -543,6 +590,23 @@ mod tests {
             .field("channels", gst::IntRange::new(1i32, 16i32))
             .build();
         assert_eq!(salsa_gst::device::max_channels_from_caps(&ranged), Some(16));
+    }
+
+    #[test]
+    fn detects_iamf_before_sync_words_in_its_payload() {
+        let mut header =
+            salsa_spatial::IamfWriter::new(&salsa_spatial::SalsaSpatialStreamConfig::default())
+                .unwrap()
+                .finish()
+                .unwrap();
+        header.resize(header.len().next_multiple_of(2), 0);
+        header.extend_from_slice(&[0x0b, 0x77, 0xf8, 0x72, 0x6f, 0xba]);
+        let path =
+            std::env::temp_dir().join(format!("salsa-gui-iamf-detect-{}.ec3", std::process::id()));
+        std::fs::write(&path, header).unwrap();
+        let detected = detect_codec(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(detected, Codec::SALSA_SPATIAL);
     }
 
     #[test]

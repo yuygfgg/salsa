@@ -2,7 +2,7 @@
 
 **SALSA** — *SALSA Ain't Licensed Spatial Audio*
 
-Salsa is an open-source spatial audio toolkit and GStreamer plugin suite for **Dolby Atmos** object audio. It supports **E-AC-3 JOC** and **TrueHD Atmos** decoding, **E-AC-3 JOC** encoding, **DAMF** (Dolby Atmos Master Format) reading/writing and object clustering, multi-speaker (`2.0`–`9.1.6`) and binaural (**Rosella HRTF**) rendering, and interoperability with **Dolby `gst-home-audio` plugins**.
+Salsa is an open-source spatial audio toolkit and GStreamer plugin suite for **Dolby Atmos** and **salsa-spatial** object audio. It supports **E-AC-3 JOC** and **salsa-spatial** encoding and decoding, **TrueHD Atmos** decoding, **DAMF** (Dolby Atmos Master Format) reading/writing and object clustering, multi-speaker (`2.0`–`9.1.6`) and binaural (**Rosella HRTF**) rendering, and interoperability with **Dolby `gst-home-audio` plugins**.
 
 > [!TIP]
 > Salsa is designed specifically for spatial object audio. For standard (non-object) TrueHD or E-AC-3 streams, use standard GStreamer decoders.
@@ -35,13 +35,15 @@ Salsa is an open-source spatial audio toolkit and GStreamer plugin suite for **D
       - [3. Configure output and rendering mode](#3-configure-output-and-rendering-mode-1)
       - [4. Play with `mpv`](#4-play-with-mpv)
       - [5. Update settings, stop, or uninstall](#5-update-settings-stop-or-uninstall)
-  - [3. CLI Tools: DAMF Clustering \& E-AC-3 JOC Encoding](#3-cli-tools-damf-clustering--e-ac-3-joc-encoding)
+  - [3. CLI Tools: DAMF Clustering \& Encoding](#3-cli-tools-damf-clustering--encoding)
     - [Step 1: DAMF Object Clustering (`salsa-cluster`)](#step-1-damf-object-clustering-salsa-cluster)
       - [Clustering Options](#clustering-options)
     - [Step 2: DAMF → E-AC-3 JOC Encoder (`salsa-eac3joc-encode`)](#step-2-damf--e-ac-3-joc-encoder-salsa-eac3joc-encode)
       - [`reac3e` Core Parameters](#reac3e-core-parameters)
       - [JOC / OAMD / EMDF Parameters](#joc--oamd--emdf-parameters)
       - [Downmix \& Signing Parameters](#downmix--signing-parameters)
+    - [DAMF → salsa-spatial Encoder (experimental)](#damf--salsa-spatial-encoder-salsa-spatial-encode-experimental)
+      - [salsa-spatial Encoding Parameters](#salsa-spatial-encoding-parameters)
   - [4. GStreamer Plugins](#4-gstreamer-plugins)
     - [Elements Overview](#elements-overview)
     - [Quick Start Pipelines](#quick-start-pipelines)
@@ -53,6 +55,7 @@ Salsa is an open-source spatial audio toolkit and GStreamer plugin suite for **D
     - [Element Reference](#element-reference)
       - [Parsers (`salsaeac3jocparse`, `salsatruehdparse`)](#parsers-salsaeac3jocparse-salsatruehdparse)
       - [Decoders (`salsaeac3jocdec`, `salsatruehdatmosdec`)](#decoders-salsaeac3jocdec-salsatruehdatmosdec)
+      - [salsa-spatial Parser \& Decoder (experimental)](#salsa-spatial-parser--decoder-experimental)
       - [DAMF Source \& Sink (`salsadamfsrc`, `salsadamfsink`)](#damf-source--sink-salsadamfsrc-salsadamfsink)
         - [`salsadamfsrc` (DAMF Source)](#salsadamfsrc-damf-source)
         - [`salsadamfsink` (DAMF Sink)](#salsadamfsink-damf-sink)
@@ -73,17 +76,19 @@ Depending on your use case, you can interact with Salsa through several entry po
 
 | Component | Path | Purpose |
 | :--- | :--- | :--- |
-| **Salsa Studio (`salsa-gui`)** | `crates/apps/salsa-gui/` | Standalone GUI preview player with a real-time 3D object visualizer, speaker rendering (`2.0`–`9.1.6`), and binaural HRTF rendering for `.ec3`, `.mlp`/`.truehd`, and `.atmos` files. |
+| **Salsa Studio (`salsa-gui`)** | `crates/apps/salsa-gui/` | Standalone GUI preview player with a real-time 3D object visualizer, speaker rendering (`2.0`–`9.1.6`), and binaural HRTF rendering for E-AC-3 JOC, TrueHD Atmos, salsa-spatial (`.iamf`), and DAMF files. |
 | **Virtual Audio Daemon (`salsa-audiod`)** | `crates/apps/salsa-audiod/`, `platform/` | Experimental virtual IEC 61937 audio device (macOS HAL / Linux ALSA) that lets an unmodified `mpv` pass through E-AC-3 JOC and TrueHD Atmos for real-time rendering. |
 | **DAMF Object Clusterer (`salsa-cluster`)** | `crates/apps/salsa-cluster/` | CLI tool that reduces complex DAMF masters down to at most $N$ dynamic objects (e.g., $\le 15$ for JOC encoding) while preserving the rendered spatial scene. |
 | **E-AC-3 JOC Encoder (`salsa-eac3joc-encode`)** | `crates/apps/salsa-eac3joc-encode/` | CLI tool (and `eac3joc-encoder` library) that encodes a DAMF master (`.atmos` + `.atmos.audio` + `.atmos.metadata`) into an E-AC-3 JOC bitstream (`.ec3`). |
-| **GStreamer Plugins** | `crates/gst-plugins/` | Nine GStreamer elements across four plugins (`gst-eac3joc`, `gst-truehd`, `gst-damf`, `gst-objectaudio`) for custom decoding, rendering, transcoding, and interoperating with Dolby `gst-home-audio` plugins. |
+| **salsa-spatial Encoder (experimental)** | `crates/apps/salsa-spatial-encode/` | CLI tool (and `salsa-spatial-encoder` library) that encodes a DAMF master into a 5.1.2 Opus core with object reconstruction parameters in IAMF (`.iamf`). |
+| **GStreamer Plugins** | `crates/gst-plugins/` | Eleven GStreamer elements across five plugins (`gst-eac3joc`, `gst-truehd`, `gst-salsa-spatial`, `gst-damf`, `gst-objectaudio`) for custom decoding, rendering, transcoding, and interoperating with Dolby `gst-home-audio` plugins. |
 
 ```mermaid
 flowchart LR
     subgraph Inputs["Inputs"]
         EC3["E-AC-3 JOC (.ec3)"]
         THD["TrueHD Atmos (.mlp)"]
+        SPATIAL["salsa-spatial (.iamf)"]
         DAMF_IN["DAMF Master (.atmos)"]
     end
 
@@ -98,16 +103,19 @@ flowchart LR
         HRTF["Binaural Stereo (Rosella HRTF)"]
         DAMF_OUT["DAMF Master (.atmos)"]
         JOC_ENC["E-AC-3 JOC (.ec3)"]
+        SPATIAL_ENC["salsa-spatial (.iamf)"]
     end
 
     EC3 -->|"salsaeac3jocparse\n+ salsaeac3jocdec"| OBJ
     THD -->|"salsatruehdparse\n+ salsatruehdatmosdec"| OBJ
+    SPATIAL -->|"salsaspatialparse\n+ salsaspatialdec"| OBJ
     DAMF_IN -->|"salsadamfsrc"| OBJ
 
     OBJ -->|"salsaoar"| OAR
     OBJ -->|"salsahrtfrender"| HRTF
     OBJ -->|"salsadamfsink"| DAMF_OUT
     DAMF_IN -->|"salsa-cluster\n+ salsa-eac3joc-encode (CLI)"| JOC_ENC
+    DAMF_IN -->|"salsa-spatial-encode (CLI)"| SPATIAL_ENC
 ```
 
 ---
@@ -119,15 +127,16 @@ flowchart LR
 - **Rust**: 1.91+ (Edition 2024)
 - **GStreamer**: 1.24+ (`gstreamer-1.0`, `gstreamer-base-1.0`, `gstreamer-audio-1.0`)
 - **FFmpeg**: `libavcodec` (`ffmpeg-next` 9.x)
+- **Opus**: `libopus` for the salsa-spatial audio core
 
 ```sh
 # macOS (Homebrew)
-brew install pkg-config gstreamer ffmpeg
+brew install pkg-config gstreamer ffmpeg opus
 
 # Debian / Ubuntu
 sudo apt-get install pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
   libasound2-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev \
-  libavfilter-dev libswscale-dev
+  libavfilter-dev libswscale-dev libopus-dev
 ```
 
 ### Workspace Build
@@ -148,19 +157,22 @@ cargo build --workspace
 
 ### Features
 
-- **Supported Formats**: Opens raw E-AC-3 JOC and TrueHD Atmos streams (`.ec3`, `.eac3`, `.mlp`, `.thd`, `.truehd`) and DAMF masters (`.atmos`).
+- **Supported Formats**: Opens raw E-AC-3 JOC and TrueHD Atmos streams (`.ec3`, `.eac3`, `.mlp`, `.thd`, `.truehd`), salsa-spatial streams (`.iamf`), and DAMF masters (`.atmos`, `.damf`).
 - **Rendering Modes**:
   - **Speaker virtualization**: Object-rendered `2.0`–`9.1.6` speaker layouts.
   - **Binaural virtualization**: Headphone rendering via a Rosella `.personalized_headphone` model.
 - **3D Object Stage**: Real-time 3D scene displaying height-colored and level-sized audio objects, motion trails, speaker anchors, an LFE icon, and a binaural listener head icon.
   - Includes a Settings switch to show or hide static 3D labels (object IDs, speaker names, LFE, and listener); hovering an object always displays its details.
-- **Playback & Transport**: Flushing, accurate seeking and keyboard shortcuts (`Space`, `←`/`→`, `Shift+←`/`→`, `Home`/`End`).
+- **Playback & Transport**: Play/pause and keyboard shortcuts (`Space`, `←`/`→`, `Shift+←`/`→`, `Home`/`End`). E-AC-3 JOC, TrueHD Atmos, and DAMF support accurate seeking.
 - **Quality-of-Life**: Device/layout fallback warning with a one-click switch to Binaural; recent files list; persisted output, model, volume, and window settings; built-in diagnostics.
 
 ### Run the GUI
 
 ```sh
 cargo run --release -p salsa-gui -- /path/to/stream.ec3
+
+# Open a salsa-spatial stream:
+cargo run --release -p salsa-gui -- /path/to/stream.iamf
 ```
 
 - **Opening files**: If launched without a path argument, use `Cmd+O`, the **Open** button, or drag and drop a file into the window. Playback starts paused.
@@ -361,12 +373,13 @@ sudo ./platform/linux/salsa-alsa/uninstall.sh
 
 ---
 
-## 3. CLI Tools: DAMF Clustering & E-AC-3 JOC Encoding
+## 3. CLI Tools: DAMF Clustering & Encoding
 
-Salsa provides two standalone command-line tools for mastering and encoding Dolby Atmos Master Format (`.atmos` + `.atmos.audio` + `.atmos.metadata`) presentations into E-AC-3 JOC (`.ec3`) streams:
+Salsa provides DAMF clustering and two encoding paths:
 
 1. **`salsa-cluster`**: Clusters a complex DAMF master (containing arbitrary beds and $>15$ objects) into a simplified DAMF master with **1 LFE bed + at most 15 dynamic objects**.
 2. **`salsa-eac3joc-encode`**: Encodes a compliant DAMF master (1 LFE bed + $\le 15$ dynamic objects) into an E-AC-3 JOC stream.
+3. **`salsa-spatial-encode`**: Encodes a 48 kHz DAMF master with up to 128 non-LFE objects into a salsa-spatial IAMF stream. Non-LFE bed channels become fixed-position objects.
 
 ---
 
@@ -482,6 +495,69 @@ salsa-eac3joc-encode clustered.atmos -o output.ec3 \
 
 ---
 
+### DAMF → salsa-spatial Encoder (`salsa-spatial-encode`) (experimental)
+
+`crates/libs/encoder/salsa-spatial-encoder/` is the encoder library and
+`crates/apps/salsa-spatial-encode/` is its CLI. The encoder reads the original
+DAMF master, retains its object identities and trajectories, and produces a
+5.1.2 Opus core with reconstruction parameters.
+
+```sh
+cargo build --release -p salsa-spatial-encode
+
+# Encode the complete master with the default core rates:
+target/release/salsa-spatial-encode master.atmos -o stream.iamf \
+  --report encode-report.json
+
+# Encode 20 seconds, starting at source time 60 seconds:
+target/release/salsa-spatial-encode master.atmos -o excerpt.iamf \
+  --reference-start 2880000 --max-frames 960000 \
+  --front-bitrate 135000 --surround-bitrate 107000 \
+  --height-bitrate 135000 --center-bitrate 93000 --lfe-bitrate 24000 \
+  --beta 1e-6
+```
+
+Input must be 48 kHz. The 128-object limit includes expanded non-LFE bed
+channels. LFE is coded separately. The default core targets total 584 kbps;
+metadata and IAMF framing add to that rate. LFE uses VBR, so its actual rate
+depends on the source.
+
+The encoder prints a JSON report with byte counts for core, metadata, and
+framing, plus core, metadata, and total rates. `--report` also saves that report.
+Progress on stderr shows the headroom scan and encoding pass, with percentage,
+source duration, processing speed, elapsed time, and ETA. Use `--no-progress`
+to disable it. Independent analysis and RD calculations run in parallel;
+set `RAYON_NUM_THREADS` to limit the worker count.
+
+Core targets and `--beta` remain fixed during an encode. `--beta` controls
+the metadata rate-distortion tradeoff; it does not specify a total bitrate.
+
+#### salsa-spatial Encoding Parameters
+
+| Flag | Default | Meaning |
+| :--- | :--- | :--- |
+| `MASTER` | *required* | DAMF manifest; audio and metadata sidecars are resolved from the manifest. |
+| `-o`, `--out PATH` | *required* | Output salsa-spatial IAMF stream. |
+| `--front-bitrate BPS` | `160000` | Combined L/R Opus target. |
+| `--surround-bitrate BPS` | `128000` | Combined Ls/Rs Opus target. |
+| `--height-bitrate BPS` | `160000` | Combined H_L/H_R Opus target. |
+| `--center-bitrate BPS` | `112000` | Center Opus target. |
+| `--lfe-bitrate BPS` | `24000` | Mono LFE VBR target. |
+| `--beta F` | `1e-6` | Metadata RD weight per bit; larger values penalize metadata rate more. |
+| `--reference-start N` | `0` | First source sample frame to encode. |
+| `--max-frames N` | remaining source | Maximum source sample frames to encode; 48,000 frames equal one second. |
+| `--headroom-db DB` | automatic | Override the programme headroom gain in dB. |
+| `--report PATH` | stdout only | Also write the JSON encoding report to this file. |
+| `--no-progress` | off | Disable progress output on stderr. |
+| `--log` | off | Enable info-level logging. |
+
+Open the result in Salsa Studio or use the GStreamer pipelines below. See
+the [codec design](docs/salsa-spatial.md),
+[implementation guide](docs/salsa-spatial-implementation.md), and
+[quality evaluation](docs/salsa-spatial-quality.md) for further details.
+
+---
+
 ## 4. GStreamer Plugins
 
 Salsa's GStreamer plugin crates live in `crates/gst-plugins/`.
@@ -494,6 +570,8 @@ Salsa's GStreamer plugin crates live in `crates/gst-plugins/`.
 | `gst-eac3joc` | `salsaeac3jocdec` | E-AC-3 JOC object decoder | `audio/x-eac3, framed=true, alignment=frame` → `audio/x-raw` F32LE interleaved, `channels=1..16` (LFE + JOC objects), `rate={32000,44100,48000}`, `channel-mask=0`, optional `meta:ObjectAudioMeta` |
 | `gst-truehd` | `salsatruehdparse` | TrueHD access-unit parser | `audio/x-true-hd` or `audio/x-truehd` (unframed or framed) → `audio/x-true-hd, framed=true, alignment=frame, rate={44100,48000,88200,96000,176400,192000}, atmos={false,true}` |
 | `gst-truehd` | `salsatruehdatmosdec` | TrueHD Atmos decoder (presentation 3) | `audio/x-true-hd` or `audio/x-truehd`, `framed=true, alignment=frame`, `rate=1..655350` → `audio/x-raw` F32LE interleaved, `channels=1..16`, `rate={44100,48000,88200,96000,176400,192000}`, `channel-mask=0`, optional `meta:ObjectAudioMeta` |
+| `gst-salsa-spatial` | `salsaspatialparse` | salsa-spatial IAMF tile parser | `audio/x-salsa-spatial` → `audio/x-salsa-spatial, framed=true, alignment=frame, rate=48000, channels=8, object-count=0..128` |
+| `gst-salsa-spatial` | `salsaspatialdec` | salsa-spatial object decoder | Framed `audio/x-salsa-spatial` → `audio/x-raw` F32LE interleaved, `channels=1..129` (LFE + source objects), `rate=48000`, `channel-mask=0`, optional `meta:ObjectAudioMeta` |
 | `gst-damf` | `salsadamfsrc` | DAMF master source | *(no sink pad)* → `audio/x-raw` F32LE interleaved, `channels=1..1024` (LFE + objects), CAF rate, `channel-mask=0`, optional `meta:ObjectAudioMeta` |
 | `gst-damf` | `salsadamfsink` | DAMF master sink | `audio/x-raw` F32LE/S24LE interleaved with `meta:ObjectAudioMeta`, `channels=1..1024` (LFE + objects), `rate=8000..192000`, `channel-mask=0` → `.atmos` manifest + `.atmos.audio` (24-bit CAF) + `.atmos.metadata` |
 | `gst-objectaudio` | `salsaoar` | Speaker layout renderer | `audio/x-raw` F32LE interleaved with `meta:ObjectAudioMeta`, `rate=32000..48000`, `channels=1..1024`, `channel-mask=0` → `audio/x-raw` F32LE interleaved, one structure per layout (`2.0`–`9.1.6`), layout channel count and mask |
@@ -507,9 +585,12 @@ Salsa's GStreamer plugin crates live in `crates/gst-plugins/`.
 #### Build and Inspect Plugins
 
 ```sh
-cargo build --release -p gst-eac3joc -p gst-objectaudio -p gst-truehd -p gst-damf
+cargo build --release -p gst-eac3joc -p gst-objectaudio -p gst-truehd \
+  -p gst-salsa-spatial -p gst-damf
 
 GST_PLUGIN_PATH=$PWD/target/release gst-inspect-1.0 salsaeac3jocdec
+GST_PLUGIN_PATH=$PWD/target/release gst-inspect-1.0 salsaspatialparse
+GST_PLUGIN_PATH=$PWD/target/release gst-inspect-1.0 salsaspatialdec
 GST_PLUGIN_PATH=$PWD/target/release gst-inspect-1.0 salsadamfsink
 ```
 
@@ -535,6 +616,15 @@ GST_PLUGIN_PATH=$PWD/target/release \
   ! salsaoar layout=7.1.4 ! wavenc ! filesink location=out.wav
 ```
 
+**salsa-spatial → 7.1.4 WAV (experimental):**
+
+```sh
+GST_PLUGIN_PATH=$PWD/target/release \
+  gst-launch-1.0 -q filesrc location=stream.iamf blocksize=1048576 \
+  ! salsaspatialparse ! salsaspatialdec \
+  ! salsaoar layout=7.1.4 ! wavenc ! filesink location=out.wav
+```
+
 **DAMF Master → 7.1.4 WAV:**
 
 ```sh
@@ -552,6 +642,16 @@ GST_PLUGIN_PATH=$PWD/target/release \
 ```sh
 GST_PLUGIN_PATH=$PWD/target/release \
   gst-launch-1.0 -q filesrc location=stream.ec3 ! salsaeac3jocparse ! salsaeac3jocdec \
+  ! salsahrtfrender personalized-headphone=model.personalized_headphone filterbank=2 \
+  ! wavenc ! filesink location=binaural.wav
+```
+
+**salsa-spatial → Binaural Stereo WAV (experimental):**
+
+```sh
+GST_PLUGIN_PATH=$PWD/target/release \
+  gst-launch-1.0 -q filesrc location=stream.iamf blocksize=1048576 \
+  ! salsaspatialparse ! salsaspatialdec \
   ! salsahrtfrender personalized-headphone=model.personalized_headphone filterbank=2 \
   ! wavenc ! filesink location=binaural.wav
 ```
@@ -575,6 +675,15 @@ GST_PLUGIN_PATH=$PWD/target/release \
   ! salsadamfsink location=master.atmos
 ```
 
+**salsa-spatial → DAMF Master (experimental):**
+
+```sh
+GST_PLUGIN_PATH=$PWD/target/release \
+  gst-launch-1.0 -q filesrc location=stream.iamf blocksize=1048576 \
+  ! salsaspatialparse ! salsaspatialdec \
+  ! salsadamfsink location=master.atmos
+```
+
 ---
 
 ### Internal Object Audio Format
@@ -585,7 +694,7 @@ All Salsa elements exchange a unified raw object audio stream between decoders/s
 - **Channel Mapping**:
   - Channel `0` is **LFE**.
   - Channels `1..N` are **dynamic point objects** (`channels - 1` = object count).
-  - Decoders emit `1 + object_count` channels at 32/44.1/48 kHz for E-AC-3 JOC and up to 192 kHz for TrueHD; the renderers accept up to 1024 channels.
+  - Decoders emit `1 + object_count` channels at 32/44.1/48 kHz for E-AC-3 JOC, 48 kHz for salsa-spatial, and up to 192 kHz for TrueHD; the renderers accept up to 1024 channels.
   - Non-LFE beds are expanded into fixed-position objects by the TrueHD decoder, `salsadamfsrc`, or `salsaobjectaudioadapt`; the E-AC-3 JOC decoder emits its JOC objects only.
 - **Metadata (`meta:ObjectAudioMeta`)**:
   - Carries a versioned, `postcard`-serialized `SpatialPayload` with signed sample offsets for snapshots, object events, and calibration events.
@@ -630,6 +739,26 @@ Both decoders handle flushing seeks and reset their codec/DSP state on `FLUSH_ST
   - **Src caps**: `audio/x-raw`, F32LE, interleaved, `channels=1..16`, `rate={44100,48000,88200,96000,176400,192000}`, `channel-mask=0`, optionally with `meta:ObjectAudioMeta`.
   - **Behavior**: Consumes the access-unit-per-buffer output of `salsatruehdparse`. It accumulates 40-sample access units into 32-sample blocks and emits a buffer per 1216 samples or per OAMD update. Presentation bed channels are expanded into fixed-position objects.
   - **Channel mapping**: `Cb`, `Tc`, and `Tfc` map to rear centre, top centre, and top front centre. `Lsc`, `Rsc`, `Lsd`, `Rsd`, and `LFE2` return an unsupported-channel error.
+
+#### salsa-spatial Parser & Decoder (experimental)
+
+`gst-salsa-spatial` provides `salsaspatialparse` and `salsaspatialdec`. Both
+elements register automatically in Salsa Studio. For standalone pipelines,
+build the plugin and set `GST_PLUGIN_PATH` as shown above.
+
+| Property | Default | Description |
+| :--- | :--- | :--- |
+| *(none)* | — | Neither element has configurable element-specific properties. |
+
+- **`salsaspatialparse`** — Parses salsa-spatial IAMF framing:
+  - **Sink caps**: `audio/x-salsa-spatial`, 48 kHz, eight core channels.
+  - **Src caps**: `audio/x-salsa-spatial, framed=true, alignment=frame, rate=48000, channels=8, object-count=0..128`.
+  - **Behavior**: Reassembles a complete parameter tile before emitting it. A full tile contains five 20 ms Opus packet groups. The final tile can be shorter.
+- **`salsaspatialdec`** — Decodes the five Opus substreams and reconstructs source objects:
+  - **Sink caps**: Framed `audio/x-salsa-spatial` from `salsaspatialparse`.
+  - **Src caps**: `audio/x-raw`, F32LE, interleaved, `rate=48000`, `channels=1..129`, `channel-mask=0`, optionally with `meta:ObjectAudioMeta`.
+  - **Behavior**: Emits LFE on channel 0 and reconstructed source objects on channels 1..N. Position events follow the decoded sample clock. EOS drains the remaining synthesis output.
+  - **Renderers**: Connect to `salsaoar`, `salsahrtfrender`, or `salsadamfsink` through the existing object-audio format.
 
 #### DAMF Source & Sink (`salsadamfsrc`, `salsadamfsink`)
 
@@ -765,6 +894,7 @@ SALSA_TEST_TRUEHD=/path/to/master.mlp \
 SALSA_TEST_EC3=/path/to/stream.ec3 \
 SALSA_TEST_TRUEHD=/path/to/master.mlp \
 SALSA_TEST_DAMF=/path/to/master.atmos \
+SALSA_TEST_SPATIAL=/path/to/stream.iamf \
 SALSA_TEST_NONATMOS=/path/to/non-atmos.ec3 \
 SALSA_TEST_MODEL=/path/to/model.personalized_headphone \
 SALSA_SINK_OVERRIDE=fakesink SALSA_SINK_SYNC=true \

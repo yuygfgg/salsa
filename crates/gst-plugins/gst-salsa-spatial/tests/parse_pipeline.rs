@@ -1,0 +1,105 @@
+//! Parse-element framing against real `IamfWriter` output.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use gst::PadProbeReturn;
+use gst::prelude::*;
+use gstreamer as gst;
+use objectaudio_ir::ObjectState;
+use salsa_spatial::{
+    CorePacket, EnhancementTile, IamfWriter, SalsaSpatialFrame, SalsaSpatialStreamConfig,
+};
+
+fn stream_bytes() -> Vec<u8> {
+    let config = SalsaSpatialStreamConfig {
+        object_count: 2,
+        initial_objects: vec![
+            ObjectState::new(1, [-0.5, 0.5, 0.0]),
+            ObjectState::new(2, [0.5, 0.5, 0.0]),
+        ],
+        ..Default::default()
+    };
+    let packet = CorePacket {
+        front: vec![0x01],
+        surround: vec![0x02],
+        height: vec![0x03],
+        center: vec![0x04],
+        lfe: vec![0x05],
+    };
+    let frame = SalsaSpatialFrame {
+        sample_rate: 48_000,
+        start_sample: 0,
+        frames: 4_800,
+        packets: vec![packet; 5],
+        enhancement: EnhancementTile {
+            start_sample: 0,
+            frames: 4_800,
+            bytes: Vec::new(),
+            snapshot: false,
+        },
+        objects: config.initial_objects.clone(),
+        events: Vec::new(),
+        snapshot: false,
+        parameters: None,
+    };
+    let mut writer = IamfWriter::new(&config).expect("writer");
+    let mut bytes = writer.write_frame(&frame).expect("first tile");
+    bytes.extend(writer.write_frame(&frame).expect("second tile"));
+    bytes.extend(writer.finish().expect("finish"));
+    bytes
+}
+
+#[test]
+fn parser_emits_one_buffer_per_complete_tile() {
+    salsa_gst_registry::init().expect("register salsa elements");
+    let path =
+        std::env::temp_dir().join(format!("salsa-spatial-parser-{}.iamf", std::process::id()));
+    std::fs::write(&path, stream_bytes()).expect("write stream");
+    let pipeline = gst::parse::launch(&format!(
+        "filesrc location=\"{}\" ! salsaspatialparse name=parse ! fakesink name=sink sync=false",
+        path.to_string_lossy()
+    ))
+    .expect("parse pipeline")
+    .downcast::<gst::Pipeline>()
+    .expect("pipeline");
+    let parse = pipeline.by_name("parse").expect("parse element");
+    let buffers = Arc::new(AtomicUsize::new(0));
+    let counters = buffers.clone();
+    parse.static_pad("src").expect("src pad").add_probe(
+        gst::PadProbeType::BUFFER,
+        move |_, info| {
+            if info.buffer().is_some() {
+                counters.fetch_add(1, Ordering::Relaxed);
+            }
+            PadProbeReturn::Ok
+        },
+    );
+    pipeline
+        .set_state(gst::State::Playing)
+        .expect("set playing");
+    let bus = pipeline.bus().expect("bus");
+    let message = bus
+        .timed_pop_filtered(
+            gst::ClockTime::from_seconds(30),
+            &[gst::MessageType::Eos, gst::MessageType::Error],
+        )
+        .expect("pipeline finished");
+    let caps = parse.static_pad("src").and_then(|pad| pad.current_caps());
+    pipeline.set_state(gst::State::Null).expect("null");
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        matches!(message.view(), gst::MessageView::Eos(_)),
+        "pipeline error: {message:?}"
+    );
+    assert_eq!(
+        buffers.load(Ordering::Relaxed),
+        2,
+        "the final short tile must be drained"
+    );
+    let caps = caps.expect("src caps");
+    let structure = caps.structure(0).expect("src structure");
+    assert_eq!(structure.get::<bool>("framed"), Ok(true));
+    assert_eq!(structure.get::<&str>("alignment"), Ok("frame"));
+    assert_eq!(structure.get::<i32>("object-count"), Ok(2));
+}

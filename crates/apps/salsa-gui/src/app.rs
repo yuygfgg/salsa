@@ -10,12 +10,11 @@ use eframe::egui;
 use egui::{Align, Color32, Layout, RichText};
 use gstreamer as gst;
 use gstreamer::prelude::*;
-use salsa_gst_registry::elements;
 
 use crate::model::{Phase, SourceInfo, UiError};
 use crate::pipeline::{
-    Codec, DeviceInfo, DeviceSelection, OutputConfig, OutputMode, enumerate_devices,
-    resolve_layout, scan_duration,
+    Codec, DeviceInfo, DeviceSelection, INPUT_EXTENSIONS, OutputConfig, OutputMode,
+    enumerate_devices, playback_elements, resolve_layout, scan_duration,
 };
 use crate::player::{Player, PlayerError};
 use crate::settings::Settings;
@@ -142,11 +141,8 @@ impl SalsaApp {
 
     fn show_open_dialog(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
-            .set_title("Open an Atmos stream")
-            .add_filter(
-                "Atmos streams",
-                &["ec3", "eac3", "mlp", "thd", "truehd", "atmos", "damf"],
-            )
+            .set_title("Open object audio")
+            .add_filter("Object audio", INPUT_EXTENSIONS)
             .pick_file()
         {
             self.open_path(path);
@@ -800,17 +796,7 @@ impl SalsaApp {
     }
 
     fn plugins_ok(&self) -> bool {
-        [
-            elements::DAMF_SRC,
-            elements::EAC3_PARSE,
-            elements::EAC3_DEC,
-            elements::TRUEHD_PARSE,
-            elements::TRUEHD_DEC,
-            elements::OAR,
-            elements::HRTF_RENDER,
-        ]
-        .iter()
-        .all(|name| gst::ElementFactory::find(name).is_some())
+        playback_elements().all(|name| gst::ElementFactory::find(name).is_some())
     }
 
     fn diagnostics(&self) -> String {
@@ -821,6 +807,10 @@ impl SalsaApp {
                 "MISSING"
             }
         };
+        let plugins = playback_elements()
+            .map(|name| format!("{name}: {}", plugin(name)))
+            .collect::<Vec<_>>()
+            .join("\n");
         let devices = if self.devices.is_empty() {
             "<none>".to_string()
         } else {
@@ -844,13 +834,7 @@ impl SalsaApp {
              GStreamer: {}\n\
              GST_PLUGIN_PATH: {}\n\
              GST_REGISTRY_FORK: {}\n\
-             salsadamfsrc: {}\n\
-             salsaeac3jocparse: {}\n\
-             salsaeac3jocdec: {}\n\
-             salsatruehdparse: {}\n\
-             salsatruehdatmosdec: {}\n\
-             salsaoar: {}\n\
-             salsahrtfrender: {}\n\
+             {plugins}\n\
              devices: {}\n\
              model: {}\n\
              source: {}\n\
@@ -860,13 +844,6 @@ impl SalsaApp {
             gst::version_string(),
             std::env::var("GST_PLUGIN_PATH").unwrap_or_else(|_| "<unset>".to_string()),
             std::env::var("GST_REGISTRY_FORK").unwrap_or_else(|_| "<unset>".to_string()),
-            plugin(elements::DAMF_SRC),
-            plugin(elements::EAC3_PARSE),
-            plugin(elements::EAC3_DEC),
-            plugin(elements::TRUEHD_PARSE),
-            plugin(elements::TRUEHD_DEC),
-            plugin(elements::OAR),
-            plugin(elements::HRTF_RENDER),
             devices,
             self.settings
                 .binaural
@@ -1361,9 +1338,7 @@ fn error_to_ui(error: PlayerError, retry: Option<PathBuf>) -> UiError {
         PlayerError::Pipeline(crate::pipeline::PipelineError::ModelRequired) => {
             UiError::missing_model()
         }
-        PlayerError::NoObjectAudio => UiError::new(
-            "No object audio found (no JOC/OAMD metadata). This is not an Atmos stream; open it in a standard player.",
-        ),
+        PlayerError::NoObjectAudio => UiError::new("No object audio found in this stream."),
         other => {
             let message = format!(
                 "{} If this is not an object-audio stream, open it in a standard player.",

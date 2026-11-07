@@ -1,0 +1,809 @@
+# salsa-spatial codec design
+
+salsa-spatial represents an object scene with a 5.1.2 audio core and compact
+reconstruction parameters. The core carries seven full-range signals and one
+independent LFE signal. The parameters describe object powers, selected
+correlations, core error, and object trajectories.
+
+The decoder derives an object synthesis matrix from those parameters and the
+known downmix. Object identities remain stable. The synthesis matrix can
+change with time and frequency without assigning objects to broadband clusters.
+
+The [implementation guide](salsa-spatial-implementation.md) contains the
+concrete profile, transport, software structure, and integration behavior.
+The [quality evaluation](salsa-spatial-quality.md) contains measured results.
+
+## Contents
+
+- [Signal model](#1-signal-model)
+- [Clustering, estimation, and observation rank](#2-why-the-representation-avoids-hard-clustering)
+- [Shared spatial downmix](#3-shared-spatial-downmix)
+- [Covariance-driven reconstruction](#4-covariance-driven-reconstruction)
+- [Time-frequency analysis and synthesis](#5-time-frequency-analysis-and-synthesis)
+- [Parameter compression](#6-parameter-compression)
+- [Closed-loop rate-distortion optimization](#7-closed-loop-rate-distortion-optimization)
+- [Encoder and decoder procedures](#8-encoder-and-decoder-procedures)
+- [Computational structure](#9-computational-structure)
+
+## 1. Signal model
+
+For one time-frequency region, use the following notation:
+
+| Symbol | Meaning | Dimensions |
+|---|---|---|
+| $s$ | Source object spectra after authored gain and activity | $N\times1$ |
+| $D$ | Downmix matrix derived from the transmitted positions | $J\times N$ |
+| $x$ | Ideal full-range core spectra | $J\times1$ |
+| $y$ | Locally decoded full-range core spectra | $J\times1$ |
+| $M$ | Object synthesis matrix | $N\times J$ |
+| $A_r$ | Object-to-output matrix for render target $r$ | $L_r\times N$ |
+| $R_{ab}$ | Second moment $\mathbb E[ab^H]$ | Determined by $a,b$ |
+
+Here, $J=7$. The superscript $H$ denotes the conjugate transpose. The LFE
+signal bypasses the object model and is coded independently.
+
+In the sample domain, the downmix is
+
+$$
+x[n]=D[n]s[n].
+$$
+
+A shared headroom gain scales all signals together. The following equations
+use a common signal level with that gain factored out.
+
+Within a time-frequency region, the model freezes the downmix at the frame
+center:
+
+$$
+x(t,k)\approx D(t)s(t,k),\qquad
+y(t,k)=x(t,k)+e(t,k),\qquad
+\hat s(t,k)=M(t,b(k))y(t,k).
+$$
+
+The approximation comes from motion within the analysis window. The encoder
+measures the actual sample-domain downmix and decoded core. Those observations
+are used when it evaluates candidate parameters.
+
+~~~mermaid
+flowchart LR
+    S["Source objects and trajectories"] --> D["Shared downmix"]
+    D --> C["Audio core encode and local decode"]
+    S --> E["Source and decoded-core statistics"]
+    C --> E
+    E --> P["Quantized parameter search"]
+    P --> T["Parameter prediction and entropy coding"]
+    C --> Y["Decoded core"]
+    T --> V["Reconstructed covariance and trajectories"]
+    V --> M["Regularized synthesis matrix"]
+    Y --> M
+    M --> O["Reconstructed object signals"]
+    O --> R["Speaker or binaural render"]
+~~~
+
+The core supplies waveform information. The parameters control how the
+decoder distributes that information among the objects.
+
+## 2. Why the representation avoids hard clustering
+
+### 2.1 Linear minimum-error synthesis
+
+Consider all linear estimators $\hat s=My$ for a fixed decoded core $y$.
+Their mean-square error is
+
+$$
+\mathcal E(M)
+=\operatorname{tr}(R_{ss})
+-2\operatorname{Re}\operatorname{tr}(MR_{ys})
++\operatorname{tr}(MR_{yy}M^H).
+$$
+
+The error is orthogonal to the observations at an optimum:
+
+$$
+\mathbb E[(s-M_\star y)y^H]=0,
+\qquad M_\star R_{yy}=R_{sy}.
+$$
+
+A linear minimum mean-square error (LMMSE) solution is therefore
+
+$$
+M_\star=R_{sy}R_{yy}^{\dagger},
+$$
+
+where $\dagger$ is the Moore–Penrose pseudoinverse. When $R_{yy}$ is
+positive definite, the ordinary inverse gives the unique solution.
+
+For any other matrix $M$,
+
+$$
+\mathcal E(M)-\mathcal E(M_\star)
+=\operatorname{tr}\left[
+(M-M_\star)R_{yy}(M-M_\star)^H
+\right]\geq0.
+$$
+
+This identity also gives the equality condition: both matrices must act
+identically on the supported observation subspace.
+
+### 2.2 The restriction introduced by a cluster map
+
+Let a broadband expansion matrix $U\in\mathbb C^{N\times K}$ map $K$
+cluster signals back to objects. A clustered synthesis has the form
+
+$$
+M_{\mathrm{cluster}}=UB,\qquad B\in\mathbb C^{K\times J}.
+$$
+
+Every column of $UB$ lies in the column space of $U$. If $U$ has rank $r$,
+this family has at most $rJ$ complex dimensions, compared with $NJ$ for
+an unrestricted synthesis matrix. Thus, for the same source and decoded core,
+
+$$
+\min_M\mathcal E(M)\leq\min_B\mathcal E(UB).
+$$
+
+The inequality concerns synthesis from the same observations. Changing the
+downmix or the core codec changes the observations and therefore the
+optimization problem.
+
+salsa-spatial removes the fixed expansion matrix $U$. It represents $M$
+through a compact covariance model instead. That model is a restricted
+subset of all synthesis matrices; the encoder searches within that subset.
+
+### 2.3 What happens to two indistinguishable objects
+
+Suppose two uncorrelated objects have the same downmix column $d$, with
+powers $\sigma_1^2$ and $\sigma_2^2$. In the noiseless case,
+
+$$
+x=d(s_1+s_2).
+$$
+
+The unregularized LMMSE estimates are
+
+$$
+\hat s_1=\alpha_1(s_1+s_2),\qquad
+\hat s_2=\alpha_2(s_1+s_2),\qquad
+\alpha_i=\frac{\sigma_i^2}{\sigma_1^2+\sigma_2^2}.
+$$
+
+Each object's residual error power is
+$\sigma_1^2\sigma_2^2/(\sigma_1^2+\sigma_2^2)$. The core contains
+the sum, so the covariance assigns that sum according to the local powers.
+The assignment can differ in every time-frequency region.
+
+Let $a_1$ and $a_2$ be the destination renderer's columns for the two objects.
+The reconstructed render is exactly
+
+$$
+\hat z=(\alpha_1a_1+\alpha_2a_2)(s_1+s_2).
+$$
+
+If $a_1=a_2$, the rendered sum is exact even though the separated objects
+contain error. For nearby positions $\mathbf p_1,\mathbf p_2$ and a locally
+affine panner,
+
+$$
+a_{\mathrm{eff}}=\alpha_1a(\mathbf p_1)+\alpha_2a(\mathbf p_2)
+\approx a(\alpha_1\mathbf p_1+\alpha_2\mathbf p_2).
+$$
+
+The weighted renderer column is exact; the weighted position is a local
+approximation. This distinction matters for nonlinear speaker panners and
+frequency-dependent binaural filters.
+
+### 2.4 Observation rank and height
+
+Every synthesis matrix has $\operatorname{rank}(M)\leq J$. Additional object
+outputs do not create additional independent observations. At each
+time-frequency point, all reconstructed signals remain combinations of the
+seven core signals.
+
+Height channels add directions to the observation space. Two positions can
+have nearly identical floor-channel gains but different height gains.
+Retaining the height pair lets the covariance model use that difference.
+An object component in the null space of the full downmix still has no
+waveform observation.
+
+## 3. Shared spatial downmix
+
+### 3.1 Panning law
+
+Positions use normalized coordinates $(x,y,z)$: right, forward, and up.
+Define
+
+$$
+u=\operatorname{clamp}((x+1)/2,0,1),\qquad
+v=\operatorname{clamp}(1-y,0,1),\qquad
+h=\operatorname{clamp}(z,0,1),
+$$
+
+and the equal-power pair
+
+$$
+P(a)=
+\begin{bmatrix}
+\cos(\pi a/2)\\
+\sin(\pi a/2)
+\end{bmatrix}.
+$$
+
+In channel order $(L,R,C)$, the front vector is
+
+$$
+F(u)=
+\begin{cases}
+[\cos(\pi u),\,0,\,\sin(\pi u)]^T,&u\leq1/2,\\
+[0,\,\sin(\pi(u-1/2)),\,\cos(\pi(u-1/2))]^T,&u>1/2.
+\end{cases}
+$$
+
+The floor and full-range columns are
+
+$$
+f=
+\begin{bmatrix}
+\cos(\pi v/2)F(u)\\
+\sin(\pi v/2)P(u)
+\end{bmatrix},
+\qquad
+d=
+\begin{bmatrix}
+\cos(\pi h/2)f\\
+\sin(\pi h/2)P(u)
+\end{bmatrix}.
+$$
+
+The resulting order is $(L,R,C,L_s,R_s,H_L,H_R)$. At a panner evaluation
+point, $\|d\|_2^2=1$. This controls the contribution of one object. Correlated
+objects can still add coherently and require programme headroom.
+
+### 3.2 Trajectory coding and shared gains
+
+The encoder first quantizes and fits the object trajectories. It then forms
+the downmix from those reconstructed trajectories. The decoder derives $D$
+from the same positions.
+
+The trajectory fit controls gain error, since equal coordinate errors can
+produce different render errors. For each validation panner $a_r$, the
+accepted segment satisfies a bound of the form
+
+$$
+\|a_r(p(t))-a_r(\tilde p(t))\|_2\leq\varepsilon_{\mathrm{pos}}
+$$
+
+at the evaluated control points. Authored steps remain at their sample times.
+Linear segments describe continuous motion.
+
+Panner gains are evaluated on a shared control grid and interpolated between
+control points. An interpolated column can have a norm below one. Both sides
+use that column as it is; renormalizing it on only one side would change the
+reconstruction model.
+
+## 4. Covariance-driven reconstruction
+
+### 4.1 From the Wiener estimator to transmitted parameters
+
+Under the model $y=Ds+e$ with $R_{se}=0$,
+
+$$
+R_{sy}=R_{ss}D^H,\qquad
+R_{yy}=DR_{ss}D^H+R_{ee}.
+$$
+
+Substitution into the LMMSE solution gives
+
+$$
+M=R_{ss}D^H(DR_{ss}D^H+R_{ee})^{-1}.
+$$
+
+This form replaces transmission of $NJ$ complex matrix entries with a model
+of source covariance and core error. The downmix is already known from the
+trajectories.
+
+Core coding error can depend on the source. The encoder therefore evaluates
+this reconstruction family with measured $R_{sy}$ and $R_{yy}$. The
+uncorrelated-error model defines the synthesis form; the measured moments
+define the optimization loss.
+
+### 4.2 Relative powers and scale invariance
+
+Let $\mathcal A$ be the active object set in a region. Relative powers are
+
+$$
+q_i=
+\begin{cases}
+\displaystyle\frac{\exp(a\ell_i)}
+{\sum_{j\in\mathcal A}\exp(a\ell_j)},&i\in\mathcal A,\\
+0,&i\notin\mathcal A,
+\end{cases}
+\qquad a=\frac{\ln10}{10}.
+$$
+
+The log powers $\ell_i$ are measured in dB. A common offset cancels from $q$.
+The encoder fixes this freedom by setting the largest active log power in
+each band to zero. An inactive object has exactly zero power and retains its
+object identity.
+
+For a diagonal source model, $C=\operatorname{diag}(q)$. Absolute scene
+power is not needed: multiplying both the covariance and its associated
+regularizer by the same positive scalar leaves $M$ unchanged.
+
+### 4.3 Sparse correlation pairs
+
+A diagonal model treats source objects as uncorrelated. The selected model
+adds disjoint object pairs to represent shared signals and phase relations:
+
+$$
+C=Q^{1/2}HQ^{1/2},\qquad Q=\operatorname{diag}(q).
+$$
+
+The diagonal of $H$ is one. For a selected pair $(i,j)$,
+
+$$
+H_{[i,j],[i,j]}=
+\begin{bmatrix}
+1&\rho_{ij}\\
+\rho_{ij}^{*}&1
+\end{bmatrix},
+\qquad
+C_{ij}=\sqrt{q_iq_j}\rho_{ij}.
+$$
+
+The pair block has eigenvalues $1\pm|\rho_{ij}|$. Bounding
+$|\rho_{ij}|<1$ and making the pairs disjoint keeps $H$ positive definite.
+Zero inactive powers make the full $C$ positive semidefinite.
+
+The pair list and its per-band coefficients are fixed within a parameter
+tile. Powers vary at the tile's anchors. This separates slower correlation
+structure from faster energy changes. Pair selection uses rendered
+rate-distortion cost, so a large measured correlation alone does not force
+transmission of a pair.
+
+### 4.4 Core error and regularization
+
+The encoder measures error against the actual ideal core:
+
+$$
+\nu_{k,b}
+=\frac{\mathbb E|y_{k,b}-x_{k,b}|^2}
+{\max(\mathbb E\sum_{j=1}^{J}|x_{j,b}|^2,\epsilon)}.
+$$
+
+The denominator is total ideal **core** power in the band. It is not the
+sum of source object powers: coherent addition or cancellation changes
+core power.
+
+Define
+
+$$
+Z=DCD^H,\qquad
+T=\operatorname{diag}(\nu)+\frac{\lambda}{J}I,\qquad
+\Gamma=\operatorname{tr}(Z)T,\qquad
+K=Z+\Gamma.
+$$
+
+The decoder uses
+
+$$
+M=CD^HK^{-1},\qquad \hat s=My.
+$$
+
+The trace factor puts source and error covariance on the same scale. Under
+the frozen-downmix model, let $P_o=\operatorname{tr}(R_{ss})$ and
+$P_c=\operatorname{tr}(DR_{ss}D^H)$. For $C=R_{ss}/P_o$,
+
+$$
+\operatorname{tr}(Z)=\frac{P_c}{P_o},\qquad
+\operatorname{tr}(Z)\nu_k
+=\frac{P_c}{P_o}\frac{(R_{ee})_{kk}}{P_c}
+=\frac{(R_{ee})_{kk}}{P_o}.
+$$
+
+Thus, the error term is normalized by the same source power as $C$.
+Only channelwise core-error powers are transmitted. The measured RD loss
+also contains cross-channel error effects through $R_{sy}$ and $R_{yy}$.
+
+The measured $\nu$ reduces amplification of noisy core channels. The positive
+floor $\lambda/J$ stabilizes directions with little core energy. This
+regularization trades residual object error for lower noise amplification.
+
+For $\operatorname{tr}(Z)>0$ and $\lambda>0$, $K$ is positive definite.
+The solve remains $J\times J$ regardless of the object count. A stable
+evaluation solves
+
+$$
+KW=DC,\qquad M=W^H.
+$$
+
+No object-by-object inverse is required.
+
+If the source contributes negligible ideal core energy in a band, the
+encoder marks that band unobservable. The decoder emits zero for that band.
+This also handles source cancellation without assigning codec noise to
+active objects.
+
+### 4.5 Covariance interpolation
+
+Between two anchors at times $t_0,t_1$, let
+$\alpha=(t-t_0)/(t_1-t_0)$. Interpolate the covariance itself:
+
+$$
+C(t)=(1-\alpha)C_0+\alpha C_1.
+$$
+
+For any vector $v$,
+
+$$
+v^HC(t)v=(1-\alpha)v^HC_0v+\alpha v^HC_1v\geq0.
+$$
+
+Thus, interpolation preserves positive semidefiniteness even when the
+adjacent anchors have different pair sets. The interpolated representation
+retains the union of their pair terms. An object can temporarily have two
+partners during this interpolation.
+
+Core error powers are interpolated in linear power units. The decoder then
+forms a new $K$ and $M$ at the hop. Interpolating log powers or correlation
+phases separately would define a different covariance path.
+
+## 5. Time-frequency analysis and synthesis
+
+### 5.1 Analysis frame and parameter bands
+
+Let $L$ be the transform length and $H$ the hop. Use the square-root Hann
+window
+
+$$
+w[n]=\sqrt{\frac12-\frac12\cos(2\pi n/L)},\qquad 0\leq n<L.
+$$
+
+Frame $t$ is centered at source sample $tH$:
+
+$$
+X(t,k)=\sum_{n=0}^{L-1}
+w[n]x[tH+n-L/2]e^{-j2\pi kn/L}.
+$$
+
+The source, ideal core, and decoded core use the same frame centers and
+windows. Samples outside the programme are zero. Tile boundaries do not
+reset the analysis window.
+
+Positive-frequency bins are grouped into parameter bands. One matrix
+$M(t,b)$ applies to all bins in band $b$. Narrower low-frequency bands give
+the model more frequency resolution where a single broad covariance would
+mix distinct components.
+
+For moment accumulation over positive-frequency bins, use weight one at DC
+and Nyquist and weight two at interior bins. For example,
+
+$$
+\widehat R_{sy}(t,b)=
+\sum_{k\in\mathcal K_b}\omega_k s(t,k)y(t,k)^H.
+$$
+
+The same weights apply to source power, decoded-core covariance, and error
+power. These are energy sums; consistent normalization cancels in the
+relative-power and error-envelope ratios.
+
+### 5.2 Real endpoints and overlap-add
+
+Real signals have real DC and Nyquist coefficients. At those bins, use
+$\operatorname{Re}(C)$ and a real observation covariance. The other positive
+bins use the complex model, with conjugate symmetry supplied for synthesis.
+
+Let $v_{i,t}$ be the inverse transform of the reconstructed object spectrum,
+and let $m_t=n-tH+L/2$. The synthesized object is
+
+$$
+\hat s_i[n]=
+\frac{\sum_t w[m_t]v_{i,t}[m_t]}
+{\sum_t w[m_t]^2},
+$$
+
+where only windows containing sample $n$ contribute. The denominator keeps
+the gain correct at programme boundaries as well as in the steady state.
+
+### 5.3 Three distinct time scales
+
+| Time scale | Role |
+|---|---|
+| Audio samples | Downmix gains, authored position steps, and output PCM |
+| Analysis hops | Reconstruction matrices and their covariance interpolation |
+| Parameter anchors and tiles | Transmitted model updates and prediction state |
+
+The analysis window controls spectral resolution. Anchor spacing controls
+how quickly the model can change. Additional anchors around transients
+reduce interpolation error without changing the transform.
+
+## 6. Parameter compression
+
+The metadata rate is reduced before entropy coding: the model removes
+absolute power, shares a spectral basis, predicts changes over time, and
+uses sparse corrections.
+
+### 6.1 Persistent base and low-order spectral changes
+
+For object $i$, band $b$, and anchor $t$, represent the selected quantized
+log power as
+
+$$
+\ell_i(t,b)=\mathcal Q_g\left[
+h_i(b)+\sum_{r=0}^{Q-1}c_{i,r}(t)\phi_r(b)\right]+\delta_i(t,b).
+$$
+
+Here, $\mathcal Q_g$ rounds to the fixed predictor grid and $\delta_i$ is
+an integer multiple of that grid spacing.
+
+The orthonormal $B$-point DCT-II basis is
+
+$$
+\phi_0(b)=B^{-1/2},\qquad
+\phi_r(b)=\sqrt{\frac2B}
+\cos\left(\frac{\pi r(b+1/2)}B\right),\quad r>0.
+$$
+
+The persistent base $h_i$ holds stable spectral shape. The low-order
+coefficients describe broad changes; the constant coefficient describes a
+broadband level change. Sparse corrections $\delta_i$ describe detail that
+the low-order basis does not represent.
+
+The selected model uses six DCT coefficients. A base update absorbs
+persistent detail and resets the fast coefficient and correction predictors.
+The encoder retains a base until replacing it reduces the total RD cost.
+
+### 6.2 Quantization and exact predictor state
+
+The encoder first selects a quantized target log-power vector. It then:
+
+1. Subtracts the persistent base.
+2. Projects the residual onto the retained DCT basis.
+3. Quantizes the DCT coefficients.
+4. Reconstructs and rounds the base-plus-DCT vector.
+5. Codes every nonzero difference from the target as a sparse correction.
+
+Thus, the DCT and sparse representation reproduces the selected quantized
+target. Loss comes from selecting that target, its temporal sampling, and
+the covariance model. The representation itself does not silently discard
+the remaining bands.
+
+The predictor uses a fixed integer log-power grid. Coarser quantizers select
+subsets of this grid. Changing quantizer scale therefore does not reinterpret
+the stored predictor state.
+
+Each coded innovation is the difference from the previous **reconstructed**
+value. Both sides update the predictor with the reconstructed value. This
+closed prediction loop prevents quantization error from causing state drift.
+
+### 6.3 Other parameter families
+
+| Parameters | Representation |
+|---|---|
+| Object activity | Explicit state changes |
+| Correlation pairs | Object indices, per-band magnitude, and wrapped phase innovations |
+| Core error | Predicted logarithmic error-power envelopes and unobservable flags |
+| Trajectories | Quantized piecewise-linear positions and sample-time updates |
+| Recovery state | Periodic complete predictor snapshots |
+
+The activity state can suppress a negligible object contribution when the
+RD reduction justifies it. Suppression changes the estimated signal, not
+the object's identity or its membership in the scene.
+
+### 6.4 Adaptive rANS
+
+Symbols use separate adaptive integer probability models for each parameter
+family. Every legal symbol has nonzero frequency. Deterministic rescaling
+bounds the counts and lets the models adapt to recent symbols.
+
+For total frequency $F$, symbol frequency $f_s$, cumulative frequency $c_s$,
+and coder state $v$, the rANS state update is
+
+$$
+v'=\left\lfloor\frac{v}{f_s}\right\rfloor F
++(v\bmod f_s)+c_s.
+$$
+
+The decoder finds the symbol whose interval contains $u=v'\bmod F$ and
+recovers
+
+$$
+v=f_s\left\lfloor\frac{v'}F\right\rfloor+(u-c_s).
+$$
+
+Renormalization transfers words between the state and the bitstream.
+The encoder obtains adaptive intervals in decoding order, then encodes
+them in reverse order. The decoder consumes symbols in forward order
+and performs the same probability updates.
+
+Entropy contexts reset at tile boundaries. Parameter predictors continue
+across tiles until replaced by a snapshot. The rate proxy uses the same
+integer frequencies as the coder:
+
+$$
+R(\theta)=\sum_m-\log_2\frac{f_m}{F}+R_{\mathrm{overhead}}.
+$$
+
+This cost can rank parameter choices without introducing a separate,
+inconsistent probability model.
+
+## 7. Closed-loop rate-distortion optimization
+
+### 7.1 Optimize the decoded render
+
+The encoder first encodes and locally decodes the audio core. It optimizes
+parameters against that decoded core, so the search sees core coding error.
+Measured powers initialize the search. Optimized powers are model parameters
+and can differ from measured powers when that reduces the decoded RD cost.
+
+For render target $r$, let
+
+$$
+z_r=A_{r,\mathrm{ref}}s,\qquad
+\hat z_r=A_{r,\mathrm{dec}}M_\theta y.
+$$
+
+The reference matrix uses source trajectories. The candidate matrix uses
+transmitted trajectories. This includes trajectory error in the objective.
+
+Over a tile, define reference energies $P_r$ and $P_s$ using the same
+time-frequency samples as the loss. With a small denominator floor, use
+
+$$
+\mathcal D(\theta)=
+\sum_r\frac{w_r}{P_r}
+\sum_{t,b}\mathbb E\|z_r-\hat z_r\|_2^2
++\frac{w_s}{P_s}
+\sum_{t,b}\mathbb E\|s-M_\theta y\|_2^2,
+$$
+
+$$
+J(\theta)=\mathcal D(\theta)+\beta R(\theta).
+$$
+
+The selected render targets are the core panner, 7.1.4, and 9.1.6, with
+equal weights summing to one. The object term has weight $w_s=0.1$.
+It penalizes object errors that the selected render matrices may cancel.
+
+Energy normalization prevents one loud render target from dominating the
+others. It does not remove frequency weighting by signal energy within a
+target. Weak spectral details can therefore contribute little to this loss.
+
+The weight $\beta$ is fixed for an encode. It expresses how much distortion
+reduction justifies an additional parameter bit. Core bitrate settings are
+independent of $\beta$.
+
+### 7.2 Evaluate candidates from measured moments
+
+Let $B_r=A_{r,\mathrm{dec}}M_\theta$. For one region,
+
+$$
+\mathbb E\|z_r-B_ry\|_2^2
+=\operatorname{tr}(R_{z_rz_r})
+-2\operatorname{Re}\operatorname{tr}(B_rR_{yz_r})
++\operatorname{tr}(B_rR_{yy}B_r^H).
+$$
+
+The encoder measures $R_{sy}$, $R_{yy}$, and the source cross moments.
+It obtains $R_{z_ry}=A_{r,\mathrm{ref}}R_{sy}$ and the reference render
+power from those measurements.
+
+The measured source moments retain correlations beyond the sparse decoder
+model. Using the candidate covariance as the reference covariance would
+make the loss reward its own assumptions.
+
+The moment form gives the same quadratic loss as summing the modeled
+spectral residuals. It avoids reconstructing an entire waveform for every
+candidate. Matrices and moments are evaluated on the hop grid, so every hop
+affected by an anchor contributes to that anchor's decision.
+
+### 7.3 Differentiate through reconstruction
+
+Continuous power refinement uses the dependence of $M$ on $C$. Hold $D$
+and the measured error envelope fixed during a power step. Then
+
+$$
+dK=D(dC)D^H+\operatorname{tr}(D(dC)D^H)T,
+$$
+
+$$
+dM=(dC)D^HK^{-1}-M(dK)K^{-1}.
+$$
+
+The second term includes both the covariance inverse and the change in the
+trace-scaled regularizer. Dropping either contribution changes the gradient.
+
+For active log power $\ell_j$, let $E_j$ be a diagonal matrix with a one
+at position $j$. With the correlation matrix held fixed,
+
+$$
+\frac{\partial C}{\partial\ell_j}
+=\frac a2(E_jC+CE_j)-a q_jC,\qquad a=\frac{\ln10}{10}.
+$$
+
+The last term is the derivative of power normalization. A common shift of
+all active log powers must leave $C$ unchanged.
+
+For a region, write the distortion differential as
+
+$$
+d\mathcal D=2\operatorname{Re}\operatorname{tr}(G^HdM),
+$$
+
+where $G$ combines the weighted render residuals and the object residual:
+
+$$
+G=
+\sum_r\frac{w_r}{P_r}
+A_{r,\mathrm{dec}}^H
+\left(A_{r,\mathrm{dec}}MR_{yy}-R_{z_ry}\right)
++\frac{w_s}{P_s}(MR_{yy}-R_{sy}).
+$$
+
+The encoder accumulates these derivatives across hops and bands.
+Covariance interpolation sends each hop's derivative to its two anchors
+with weights $1-\alpha$ and $\alpha$.
+
+### 7.4 Quantized search
+
+The search combines continuous proposals with discrete acceptance:
+
+1. Construct measured-power and previous-power candidates.
+2. Test the selected quantizer scales.
+3. Test retained and updated spectral bases.
+4. Test the regular anchor grid and transient refinements.
+5. Refine active powers with L-BFGS and an Armijo line search.
+6. Quantize the retained optimization points and evaluate their complete RD cost.
+7. Test activity suppression with the complete cost.
+8. Rank correlation changes by their distortion differential.
+9. Evaluate the promising quantized pair additions, replacements, and removals.
+10. Refine powers again for the selected pair set.
+
+Continuous refinement minimizes distortion. Quantization and the complete
+RD evaluation decide whether to accept a proposal. This keeps the discrete
+parameter rate in the decision without treating it as a smooth function.
+
+The selected reconstructed state becomes the predictor for the next tile.
+The search is local: it evaluates the current tile from a committed prior
+state, rather than optimizing the whole programme jointly.
+
+## 8. Encoder and decoder procedures
+
+### Encoder
+
+1. Apply source object gain and activity.
+2. Fit and quantize the object trajectories.
+3. Build the shared full-range downmix and the independent LFE signal.
+4. Encode the core and obtain an aligned local decode.
+5. Analyze source, ideal core, and decoded core with the shared transform.
+6. Accumulate the moments and core-error envelopes.
+7. Select quantized parameters with the tile RD search.
+8. Predict and entropy-code the selected parameters.
+
+### Decoder
+
+1. Decode and align the audio core.
+2. Reconstruct parameter predictors and object trajectories.
+3. Analyze the seven full-range core signals.
+4. Construct each anchor's positive-semidefinite covariance.
+5. Interpolate covariance and error power at each hop.
+6. Solve the regularized core system for each band.
+7. Apply the resulting matrix to each bin in that band.
+8. Synthesize the object signals with normalized overlap-add.
+9. Render the objects at the transmitted positions and carry LFE separately.
+
+## 9. Computational structure
+
+With $P$ selected pairs, forming $CD^H$ needs work proportional to
+$(N+P)J$. Forming and solving the core system costs
+$O((N+P)J^2+J^3)$ per band and hop. Applying the estimator costs $O(NJ)$
+per spectral bin.
+
+The core inverse stays small as $N$ grows. The object synthesis work and
+power metadata grow with object count. Storing diagonal powers and pair
+terms requires $O(N+P)$ covariance entries per band.
+
+The algorithm relies on four shared quantities: reconstructed trajectories,
+parameter predictor state, analysis timing, and the covariance interpolation
+rule. Agreement on these quantities makes the encoder's candidate estimator
+the estimator that the decoder uses.
+

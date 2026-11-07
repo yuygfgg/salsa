@@ -16,11 +16,9 @@ use crate::pipeline::{
 pub enum PlayerError {
     #[error("{0}")]
     Pipeline(#[from] PipelineError),
-    #[error(
-        "No object audio found (no JOC/OAMD metadata). This is not an Atmos stream; open it in a standard player."
-    )]
+    #[error("No object audio found in this stream.")]
     NoObjectAudio,
-    #[error("playback did not preroll in time; the file may not contain JOC/OAMD object audio")]
+    #[error("playback did not preroll in time")]
     PrerollTimeout,
     #[error("playback failed: {0}")]
     Playback(String),
@@ -99,9 +97,7 @@ impl Player {
         &self.decoder
     }
 
-    /// Whether the stream carries object audio. DAMF is object audio by
-    /// definition; codec streams set the parser's `atmos` cap when JOC/OAMD is
-    /// present.
+    /// Whether the source declares object audio in its negotiated parser caps.
     pub fn object_audio(&self) -> bool {
         has_object_audio(self.codec, self.parser.as_ref())
     }
@@ -170,11 +166,14 @@ fn has_object_audio(codec: Codec, parser: Option<&gst::Element>) -> bool {
     parser
         .and_then(|parser| parser.static_pad("src"))
         .and_then(|pad| pad.current_caps())
-        .and_then(|caps| {
-            caps.structure(0)
-                .and_then(|structure| structure.get::<bool>("atmos").ok())
+        .is_some_and(|caps| {
+            caps.structure(0).is_some_and(|structure| match codec {
+                Codec::SALSA_SPATIAL => structure
+                    .get::<i32>("object-count")
+                    .is_ok_and(|count| count > 0),
+                _ => structure.get::<bool>("atmos").unwrap_or(false),
+            })
         })
-        == Some(true)
 }
 
 fn wait_for_preroll(

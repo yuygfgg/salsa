@@ -15,6 +15,7 @@ pub mod elements {
     pub use gstsalsadamf::{DAMF_SINK, DAMF_SRC};
     pub use gstsalsaeac3joc::{EAC3_DEC, EAC3_PARSE};
     pub use gstsalsaobjectaudio::{HRTF_RENDER, OAR, OBJECT_AUDIO_ADAPT};
+    pub use gstsalsaspatial::{SALSA_SPATIAL_DEC, SALSA_SPATIAL_PARSE};
     pub use gstsalsatruehd::{TRUEHD_DEC, TRUEHD_PARSE};
 }
 
@@ -39,6 +40,11 @@ pub const fn codec_elements(codec: Codec) -> CodecElements {
             parser: elements::TRUEHD_PARSE,
             decoder: elements::TRUEHD_DEC,
         },
+        Codec::SalsaSpatial => CodecElements {
+            caps: gstsalsaspatial::CAPS,
+            parser: elements::SALSA_SPATIAL_PARSE,
+            decoder: elements::SALSA_SPATIAL_DEC,
+        },
     }
 }
 
@@ -47,6 +53,7 @@ pub fn register_all() {
     gstsalsadamf::register_all();
     gstsalsaeac3joc::register_all();
     gstsalsaobjectaudio::register_all();
+    gstsalsaspatial::register_all();
     gstsalsatruehd::register_all();
 }
 

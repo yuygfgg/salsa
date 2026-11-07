@@ -5,6 +5,7 @@
 //!
 //! ```sh
 //! SALSA_TEST_EC3=stream.ec3 SALSA_TEST_DAMF=master.atmos \
+//!   SALSA_TEST_SPATIAL=stream.iamf \
 //!   SALSA_SINK_OVERRIDE=fakesink cargo test
 //! ```
 
@@ -20,6 +21,17 @@ use salsa_gui::player::Player;
 use salsa_gui::visual::VisualTap;
 
 fn run(variable: &str) {
+    run_with_config(
+        variable,
+        OutputConfig {
+            mode: OutputMode::Speaker,
+            layout: "7.1.4".to_string(),
+            ..Default::default()
+        },
+    );
+}
+
+fn run_with_config(variable: &str, config: OutputConfig) {
     let Ok(path) = std::env::var(variable) else {
         eprintln!("{variable} is unset; skipping");
         return;
@@ -29,18 +41,13 @@ fn run(variable: &str) {
         return;
     }
     salsa_gst_registry::init().expect("gst init");
-    let config = OutputConfig {
-        mode: OutputMode::Speaker,
-        layout: "7.1.4".to_string(),
-        ..Default::default()
-    };
     let cancel = Arc::new(AtomicBool::new(false));
     let player = Player::open(
         &PathBuf::from(&path),
         &config,
         &[],
         gst::ClockTime::ZERO,
-        true,
+        false,
         &cancel,
         true,
     )
@@ -59,6 +66,8 @@ fn run(variable: &str) {
 
     let tap = VisualTap::new();
     tap.attach_decoder(player.decoder()).expect("attach tap");
+    assert!(player.object_audio());
+    player.set_playing().expect("play stream");
     let mut snapshot = None;
     for _ in 0..120 {
         std::thread::sleep(Duration::from_millis(25));
@@ -73,6 +82,8 @@ fn run(variable: &str) {
     let snapshot = snapshot.expect("object snapshot");
     assert!(!snapshot.objects.is_empty());
     assert_eq!(snapshot.objects.len() as i32, channels - 1);
+    player.set_paused().expect("pause stream");
+    player.set_playing().expect("resume stream");
     player.close();
 }
 
@@ -92,53 +103,32 @@ fn damf_playback_reaches_the_visual_tap() {
 }
 
 #[test]
+fn salsa_spatial_playback_reaches_the_visual_tap() {
+    run("SALSA_TEST_SPATIAL");
+}
+
+#[test]
 fn binaural_playback_reaches_the_visual_tap() {
+    run_binaural("SALSA_TEST_EC3");
+}
+
+#[test]
+fn salsa_spatial_binaural_playback_reaches_the_visual_tap() {
+    run_binaural("SALSA_TEST_SPATIAL");
+}
+
+fn run_binaural(variable: &str) {
     let Ok(model) = std::env::var("SALSA_TEST_MODEL") else {
         eprintln!("SALSA_TEST_MODEL is unset; skipping");
         return;
     };
-    let Ok(path) = std::env::var("SALSA_TEST_EC3") else {
-        eprintln!("SALSA_TEST_EC3 is unset; skipping");
-        return;
-    };
-    if std::env::var("SALSA_SINK_OVERRIDE").as_deref() != Ok("fakesink") {
-        eprintln!("set SALSA_SINK_OVERRIDE=fakesink to run the headless playback test");
-        return;
-    }
-    salsa_gst_registry::init().expect("gst init");
     let mut config = OutputConfig {
         mode: OutputMode::Binaural,
         layout: "7.1.4".to_string(),
         ..Default::default()
     };
     config.binaural.model = Some(PathBuf::from(model));
-    let cancel = Arc::new(AtomicBool::new(false));
-    let player = Player::open(
-        &PathBuf::from(&path),
-        &config,
-        &[],
-        gst::ClockTime::ZERO,
-        true,
-        &cancel,
-        true,
-    )
-    .expect("open binaural stream");
-    let tap = VisualTap::new();
-    tap.attach_decoder(player.decoder()).expect("attach tap");
-    let mut snapshot = None;
-    for _ in 0..120 {
-        std::thread::sleep(Duration::from_millis(25));
-        snapshot = tap.snapshot_at(player.position());
-        if snapshot
-            .as_ref()
-            .is_some_and(|snapshot| !snapshot.objects.is_empty())
-        {
-            break;
-        }
-    }
-    let snapshot = snapshot.expect("object snapshot");
-    assert!(!snapshot.objects.is_empty());
-    player.close();
+    run_with_config(variable, config);
 }
 
 #[test]
