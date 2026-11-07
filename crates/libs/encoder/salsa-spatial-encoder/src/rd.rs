@@ -488,6 +488,21 @@ fn deactivate_object(tile: &mut salsa_spatial::params::ParameterTile, object: us
     }
 }
 
+fn toggle_object(
+    tile: &mut salsa_spatial::params::ParameterTile,
+    object: usize,
+    unpruned_anchors: &[ParameterAnchor],
+) {
+    if tile.anchors.iter().any(|anchor| anchor.active[object]) {
+        deactivate_object(tile, object);
+        return;
+    }
+    for (anchor, unpruned) in tile.anchors.iter_mut().zip(unpruned_anchors) {
+        anchor.active[object] = unpruned.active[object];
+        anchor.ell_half_db[object] = unpruned.ell_half_db[object];
+    }
+}
+
 fn evaluate_tiles(
     tiles: Vec<salsa_spatial::params::ParameterTile>,
     context: &RenderContext,
@@ -687,6 +702,10 @@ pub fn search_tile(
     best = refine_powers(best, &context, encoder, beta)?;
     let first_power_time = started.elapsed();
 
+    // Keep this tile's fitted powers and source activity for reactivation.
+    // Pruning clears powers; previous-tile values are not valid replacements.
+    let unpruned_anchors = best.tile.anchors.clone();
+
     // Quiet source objects are often authored as enabled even when their
     // contribution in this tile is negligible. Deactivating one object at a
     // time would need dozens of sweeps, so first evaluate all currently active
@@ -758,20 +777,7 @@ pub fn search_tile(
         let mut sweep_group = 0usize;
         for &object in &context.active_objects {
             let mut tile = best.tile.clone();
-            let fallback = if previous_ell[object].iter().all(|value| *value == 0) {
-                [-180i32; PARAM_BAND_COUNT]
-            } else {
-                previous_ell[object]
-            };
-            for anchor in &mut tile.anchors {
-                if anchor.active[object] {
-                    anchor.active[object] = false;
-                    anchor.ell_half_db[object] = [0i32; PARAM_BAND_COUNT];
-                } else {
-                    anchor.active[object] = true;
-                    anchor.ell_half_db[object] = fallback;
-                }
-            }
+            toggle_object(&mut tile, object, &unpruned_anchors);
             sweep_specs.push((tile, best.scale, sweep_group));
             sweep_group += 1;
         }
@@ -831,8 +837,7 @@ mod tests {
     use super::*;
     use num_complex::Complex;
 
-    #[test]
-    fn rd_scores_early_anchors_even_when_the_middle_anchor_is_unchanged() {
+    fn sequential_objects() -> (TileMeasurements, Vec<Vec<TrajectoryKnot>>) {
         use crate::{TileSource, measurement::MeasurementContext};
         let frames = salsa_spatial::TILE_SAMPLES;
         let objects: Vec<Vec<f32>> = (0..2)
@@ -877,6 +882,13 @@ mod tests {
             .collect();
         let measurements =
             MeasurementContext::new(1.0).measure_tile(&source, &core, &core, &trajectories, None);
+        (measurements, trajectories)
+    }
+
+    #[test]
+    fn rd_scores_early_anchors_even_when_the_middle_anchor_is_unchanged() {
+        let (measurements, trajectories) = sequential_objects();
+        let frames = salsa_spatial::TILE_SAMPLES;
         let previous = vec![[0; PARAM_BAND_COUNT]; 2];
         let anchors = build_anchors(&measurements, 0, 0.5, false, EllMode::Measured, &previous);
         assert_eq!(anchors.first().unwrap().sample, 0);
@@ -903,6 +915,73 @@ mod tests {
             bad_error > good_error + 0.01,
             "early mute was ignored: {bad_error} vs {good_error}"
         );
+    }
+
+    #[test]
+    fn object_toggle_restores_fitted_powers_and_source_activity() {
+        let anchors: Vec<_> = [true, false, true]
+            .into_iter()
+            .enumerate()
+            .map(|(index, active)| ParameterAnchor {
+                sample: (index * salsa_spatial::PARAM_INTERVAL_SAMPLES) as u64,
+                active: vec![active, true],
+                ell_half_db: vec![
+                    if index == 2 {
+                        std::array::from_fn(|band| -2 * band as i32)
+                    } else {
+                        [0; PARAM_BAND_COUNT]
+                    },
+                    [-20; PARAM_BAND_COUNT],
+                ],
+                error: CoreErrorEnvelope::default(),
+            })
+            .collect();
+        let base = fit_base(&anchors, 2, 0.5);
+        let original = make_tile(0, salsa_spatial::TILE_SAMPLES, &base, &anchors, &[], &[]);
+        let mut candidate = original.clone();
+
+        toggle_object(&mut candidate, 0, &anchors);
+        for (anchor, original) in candidate.anchors.iter().zip(&original.anchors) {
+            assert!(!anchor.active[0]);
+            assert_eq!(anchor.ell_half_db[0], [0; PARAM_BAND_COUNT]);
+            assert_eq!(anchor.active[1], original.active[1]);
+            assert_eq!(anchor.ell_half_db[1], original.ell_half_db[1]);
+        }
+
+        toggle_object(&mut candidate, 0, &anchors);
+        assert_eq!(candidate, original);
+    }
+
+    #[test]
+    fn reactivation_candidate_recovers_the_current_tile_rd_cost() {
+        let (measurements, trajectories) = sequential_objects();
+        let previous = vec![[0; PARAM_BAND_COUNT]; 2];
+        let anchors = build_anchors(&measurements, 0, 0.5, false, EllMode::Measured, &previous);
+        let original = make_tile(
+            0,
+            salsa_spatial::TILE_SAMPLES,
+            &previous,
+            &anchors,
+            &[],
+            &trajectories,
+        );
+        let context = RenderContext::new(&measurements);
+        let encoder = SceneParameterEncoder::new(2);
+        let beta = 1e-6;
+        let original_eval = evaluate_candidate(&original, &context, &encoder, beta).unwrap();
+        let mut muted = original.clone();
+        deactivate_object(&mut muted, 0);
+        let muted_eval = evaluate_candidate(&muted, &context, &encoder, beta).unwrap();
+        let mut restored = muted.clone();
+        toggle_object(&mut restored, 0, &anchors);
+
+        let pending =
+            distortion_pending(vec![(muted, 0.5, 0), (restored, 0.5, 1)], &context).unwrap();
+        let best = finish_candidates(pending, &encoder, beta).unwrap().unwrap();
+        assert_eq!(best.tile, original);
+        assert_eq!(best.eval.distortion, original_eval.distortion);
+        assert_eq!(best.eval.bits, original_eval.bits);
+        assert!(best.eval.cost < muted_eval.cost);
     }
 
     fn band() -> BandStatistics {
