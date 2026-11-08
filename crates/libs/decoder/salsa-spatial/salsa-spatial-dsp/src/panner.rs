@@ -2,7 +2,7 @@
 
 use std::f64::consts::PI;
 
-use salsa_spatial::TrajectoryKnot;
+use salsa_spatial::{BaseFold, CorePannerConfig, TrajectoryKnot};
 
 use salsa_spatial::HOP_SAMPLES;
 
@@ -23,6 +23,10 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 ///
 /// The ground rows are `L, R, C, Ls, Rs`; the height rows are `H_L, H_R`.
 pub fn core_gain_parts(position: [f64; 3]) -> ([f64; 5], [f64; 2]) {
+    gain_parts(position, PI / 2.0)
+}
+
+fn gain_parts(position: [f64; 3], max_vertical_angle: f64) -> ([f64; 5], [f64; 2]) {
     let [x, y, z] = position;
     let u = ((x + 1.0) / 2.0).clamp(0.0, 1.0);
     let v = (1.0 - y).clamp(0.0, 1.0);
@@ -48,8 +52,8 @@ pub fn core_gain_parts(position: [f64; 3]) -> ([f64; 5], [f64; 2]) {
         surround_scale * surround[1],
     ];
 
-    let floor_out = (PI * h / 2.0).cos();
-    let height_out = (PI * h / 2.0).sin();
+    let floor_out = (max_vertical_angle * h).cos();
+    let height_out = (max_vertical_angle * h).sin();
     (
         [
             floor_out * floor[0],
@@ -67,10 +71,7 @@ pub fn core_gain_parts(position: [f64; 3]) -> ([f64; 5], [f64; 2]) {
 /// Channel order is `L, R, C, Ls, Rs, H_L, H_R`. The returned column has unit
 /// squared norm for every input.
 pub fn core_gain_column(position: [f64; 3]) -> [f64; 7] {
-    let (ground, height) = core_gain_parts(position);
-    [
-        ground[0], ground[1], ground[2], ground[3], ground[4], height[0], height[1],
-    ]
+    CorePanner::new().gain_column(position)
 }
 
 /// Apply the base fold to an interpolated panner column, producing the
@@ -84,18 +85,37 @@ pub fn fold_observation_column(column: [f64; 7], fold: salsa_spatial::BaseFold) 
     ]
 }
 
-/// Stateless helper around [`core_gain_column`] and
-/// [`interpolated_core_columns`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CorePanner;
+/// Shared geometric panner with an explicit vertical coding angle.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CorePanner {
+    max_vertical_angle: f64,
+}
+
+impl Default for CorePanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl CorePanner {
+    /// The version 1 curve, also used by the legacy free functions.
     pub const fn new() -> Self {
-        Self
+        Self {
+            max_vertical_angle: PI / 2.0,
+        }
+    }
+
+    pub fn from_config(config: CorePannerConfig) -> Self {
+        Self {
+            max_vertical_angle: config.ceiling_horizontal_gain().acos(),
+        }
     }
 
     pub fn gain_column(&self, position: [f64; 3]) -> [f64; 7] {
-        core_gain_column(position)
+        let (ground, height) = gain_parts(position, self.max_vertical_angle);
+        [
+            ground[0], ground[1], ground[2], ground[3], ground[4], height[0], height[1],
+        ]
     }
 
     pub fn columns(
@@ -104,7 +124,25 @@ impl CorePanner {
         start_sample: u64,
         frames: usize,
     ) -> Vec<[f64; 7]> {
-        interpolated_core_columns(knots, start_sample, frames)
+        interpolated_columns(knots, start_sample, frames, *self)
+    }
+
+    pub fn observation_column(&self, position: [f64; 3], fold: BaseFold) -> [f64; 7] {
+        fold_observation_column(self.gain_column(position), fold)
+    }
+
+    /// Apply the fixed fold to the same interpolated geometry used in audio.
+    pub fn observation_columns(
+        &self,
+        knots: &[TrajectoryKnot],
+        start_sample: u64,
+        frames: usize,
+        fold: BaseFold,
+    ) -> Vec<[f64; 7]> {
+        self.columns(knots, start_sample, frames)
+            .into_iter()
+            .map(|column| fold_observation_column(column, fold))
+            .collect()
     }
 }
 
@@ -145,6 +183,15 @@ pub fn interpolated_core_columns(
     start_sample: u64,
     frames: usize,
 ) -> Vec<[f64; 7]> {
+    CorePanner::new().columns(knots, start_sample, frames)
+}
+
+fn interpolated_columns(
+    knots: &[TrajectoryKnot],
+    start_sample: u64,
+    frames: usize,
+    panner: CorePanner,
+) -> Vec<[f64; 7]> {
     if frames == 0 {
         return Vec::new();
     }
@@ -172,7 +219,7 @@ pub fn interpolated_core_columns(
 
     let gains: Vec<[f64; 7]> = grid
         .iter()
-        .map(|&sample| core_gain_column(position_at(knots, sample)))
+        .map(|&sample| panner.gain_column(position_at(knots, sample)))
         .collect();
 
     let mut output = Vec::with_capacity(frames);
@@ -212,15 +259,103 @@ pub fn interpolated_observation_columns(
     frames: usize,
     fold: salsa_spatial::BaseFold,
 ) -> Vec<[f64; 7]> {
-    interpolated_core_columns(knots, start_sample, frames)
-        .into_iter()
-        .map(|column| fold_observation_column(column, fold))
-        .collect()
+    CorePanner::new().observation_columns(knots, start_sample, frames, fold)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compressed_angle_preserves_energy_symmetry_and_the_floor() {
+        for rho in [0.0, 0.1, 0.25, 0.75] {
+            let panner = CorePanner::from_config(CorePannerConfig::new(rho).unwrap());
+            for x in [-1.0, -0.4, 0.0, 0.4, 1.0] {
+                for y in [0.0, 0.3, 1.0] {
+                    for z in [0.0, 0.3, 0.9, 1.0] {
+                        let column = panner.gain_column([x, y, z]);
+                        assert!((column.iter().map(|g| g * g).sum::<f64>() - 1.0).abs() < 1e-12);
+                        assert_close(
+                            panner.gain_column([-x, y, z]),
+                            [
+                                column[1], column[0], column[2], column[4], column[3], column[6],
+                                column[5],
+                            ],
+                            1e-12,
+                        );
+                        if rho == 0.0 || z == 0.0 {
+                            assert_close(column, core_gain_column([x, y, z]), 1e-15);
+                        }
+                        if z == 1.0 {
+                            assert!(
+                                (column[..5].iter().map(|g| g * g).sum::<f64>() - rho * rho).abs()
+                                    < 1e-12
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compressed_angle_separates_four_top_corners() {
+        let corners = [
+            [-1.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [-1.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+        ];
+        for (rho, expected_rank) in [(0.0, 2), (0.25, 4), (0.5, 4)] {
+            let panner = CorePanner::from_config(CorePannerConfig::new(rho).unwrap());
+            let columns: Vec<_> = corners
+                .iter()
+                .flat_map(|&p| panner.observation_column(p, BaseFold::v1()))
+                .collect();
+            let matrix = nalgebra::DMatrix::from_column_slice(7, 4, &columns);
+            let rank = matrix
+                .svd(false, false)
+                .singular_values
+                .iter()
+                .filter(|&&v| v > 1e-10)
+                .count();
+            assert_eq!(rank, expected_rank);
+        }
+    }
+
+    #[test]
+    fn compressed_angle_retains_vertical_sensitivity_at_the_ceiling() {
+        let rho: f64 = 0.25;
+        let panner = CorePanner::from_config(CorePannerConfig::new(rho).unwrap());
+        let top = panner.gain_column([-0.3, 0.6, 1.0]);
+        let below = panner.gain_column([-0.3, 0.6, 1.0 - 1e-5]);
+        let derivative = top
+            .iter()
+            .zip(below)
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f64>()
+            .sqrt()
+            / 1e-5;
+        assert!((derivative - rho.acos()).abs() < 1e-8);
+    }
+
+    #[test]
+    fn compressed_observations_share_the_control_grid() {
+        let knots = [
+            position(0, [-0.7, 1.0, 0.2]),
+            position(713, [0.5, 0.0, 1.0]),
+            position(1440, [0.8, 0.8, 0.4]),
+        ];
+        let panner = CorePanner::from_config(CorePannerConfig::new(0.25).unwrap());
+        let whole = panner.observation_columns(&knots, 0, 1440, BaseFold::v1());
+        for start in [0, 137, 240, 713, 959, 1200] {
+            assert_close(
+                panner.observation_columns(&knots, start, 1, BaseFold::v1())[0],
+                whole[start as usize],
+                1e-15,
+            );
+        }
+    }
 
     fn position(sample: u64, position: [f64; 3]) -> TrajectoryKnot {
         TrajectoryKnot { sample, position }

@@ -18,8 +18,8 @@ pub mod stream;
 pub use bands::{bin_weight, parameter_band_for_bin, parameter_band_range};
 pub use constants::*;
 pub use descriptor::{
-    BaseFold, CodecBinding, InputDomain, ModelAlgorithm, ModelRow, ObservationGroup, Projection,
-    ReconstructionStage, SignalModel,
+    BaseFold, CodecBinding, CorePannerConfig, InputDomain, ModelAlgorithm, ModelRow,
+    ObservationGroup, Projection, ReconstructionStage, SignalModel,
 };
 pub use entropy::{AdaptiveModel, EntropyContexts, EntropyDecoder, EntropyEncoder};
 pub use error::{Result, SpatialError};

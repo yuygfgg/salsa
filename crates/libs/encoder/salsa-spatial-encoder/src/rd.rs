@@ -880,8 +880,12 @@ mod tests {
                 }]
             })
             .collect();
-        let measurements =
-            MeasurementContext::new(1.0).measure_tile(&source, &core, &core, &trajectories, None);
+        let measurements = MeasurementContext::new(
+            1.0,
+            salsa_spatial_dsp::CorePanner::new(),
+            salsa_spatial::BaseFold::none(),
+        )
+        .measure_tile(&source, &core, &core, &trajectories, None);
         (measurements, trajectories)
     }
 

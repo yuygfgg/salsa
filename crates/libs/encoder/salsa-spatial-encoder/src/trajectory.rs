@@ -6,7 +6,7 @@
 //! 0.005 L2 of the unsimplified quantized path.
 
 use salsa_spatial::TrajectoryKnot;
-use salsa_spatial_dsp::core_gain_column;
+use salsa_spatial_dsp::CorePanner;
 
 pub const POSITION_STEPS: f64 = 4095.0;
 /// Largest allowed knot spacing in a moving segment: 100 ms.
@@ -132,7 +132,12 @@ fn l2(a: &[f64], b: &[f64]) -> f64 {
         .sqrt()
 }
 
-fn segment_valid(a: TrajectoryKnot, b: TrajectoryKnot, dense: &[(u64, [f64; 3])]) -> bool {
+fn segment_valid(
+    a: TrajectoryKnot,
+    b: TrajectoryKnot,
+    dense: &[(u64, [f64; 3])],
+    panner: CorePanner,
+) -> bool {
     if b.sample <= a.sample {
         return true;
     }
@@ -142,8 +147,8 @@ fn segment_valid(a: TrajectoryKnot, b: TrajectoryKnot, dense: &[(u64, [f64; 3])]
         }
         let t = (sample - a.sample) as f64 / (b.sample - a.sample) as f64;
         let interpolated = lerp_position(a.position, b.position, t);
-        let core_a = core_gain_column(interpolated);
-        let core_b = core_gain_column(position);
+        let core_a = panner.gain_column(interpolated);
+        let core_b = panner.gain_column(position);
         let core_error = core_a
             .iter()
             .zip(core_b)
@@ -217,6 +222,7 @@ pub fn fit_trajectory(
     object: usize,
     positions: &[[f32; 3]],
     control_samples: &[u64],
+    panner: CorePanner,
 ) -> (Vec<TrajectoryKnot>, Vec<(u64, [f64; 3])>, bool) {
     let dense = dense_points(
         start,
@@ -258,7 +264,7 @@ pub fn fit_trajectory(
                 index += 1;
                 continue;
             }
-            if segment_valid(a, b, &dense) {
+            if segment_valid(a, b, &dense, panner) {
                 knots.remove(index);
                 changed = true;
             } else {
@@ -291,7 +297,8 @@ mod tests {
     #[test]
     fn static_positions_need_one_knot() {
         let positions = flat_positions(4800, [0.25, 0.5, 0.0]);
-        let (knots, _, is_static) = fit_trajectory(0, 4800, 1, 0, &positions, &[]);
+        let (knots, _, is_static) =
+            fit_trajectory(0, 4800, 1, 0, &positions, &[], CorePanner::new());
         assert!(is_static);
         assert_eq!(knots.len(), 1);
         assert_eq!(knots[0].sample, 0);
@@ -304,7 +311,8 @@ mod tests {
             let x = -1.0 + 2.0 * index as f32 / 4799.0;
             positions.push([x, 1.0, 0.0]);
         }
-        let (knots, _, is_static) = fit_trajectory(0, 4800, 1, 0, &positions, &[]);
+        let (knots, _, is_static) =
+            fit_trajectory(0, 4800, 1, 0, &positions, &[], CorePanner::new());
         assert!(!is_static);
         assert!(knots.len() >= 2);
         for pair in knots.windows(2) {
@@ -319,7 +327,7 @@ mod tests {
             let x = if index < 2400 { -1.0 } else { 1.0 };
             positions.push([x, 1.0, 0.0]);
         }
-        let (knots, _, _) = fit_trajectory(0, 4800, 1, 0, &positions, &[2400]);
+        let (knots, _, _) = fit_trajectory(0, 4800, 1, 0, &positions, &[2400], CorePanner::new());
         let has_step = knots
             .iter()
             .any(|knot| knot.sample == 2399 || knot.sample == 2400);

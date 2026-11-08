@@ -238,6 +238,13 @@ F(u)=
 \end{cases}
 $$
 
+Let $\rho\in[0,1)$ be the horizontal gain retained at the ceiling. The
+default is zero. The vertical coding angle is
+
+$$
+\theta_\rho(h)=h\arccos\rho.
+$$
+
 The floor and full-range columns are
 
 $$
@@ -249,14 +256,28 @@ f=
 \qquad
 d=
 \begin{bmatrix}
-\cos(\pi h/2)f\\
-\sin(\pi h/2)P(u)
+\cos\theta_\rho(h)f\\
+\sin\theta_\rho(h)P(u)
 \end{bmatrix}.
 $$
 
 The resulting order is $(L,R,C,L_s,R_s,H_L,H_R)$. At a panner evaluation
 point, $\|d\|_2^2=1$. This controls the contribution of one object. Correlated
 objects can still add coherently and require programme headroom.
+
+For $\rho=0$, the original vertical curve is unchanged. For positive
+$\rho$, the ceiling retains horizontal gain $\rho$ and height gain
+$\sqrt{1-\rho^2}$. Front/back columns therefore remain distinct at maximum
+height. The vertical derivative of the geometric column has norm
+$\arccos\rho$ at fixed $(u,v)$, including the ceiling. The coding angle does
+not change authored positions or target-render panning. A higher matrix
+rank alone does not establish a gain after audio coding.
+
+The transport applies the fixed fallback fold to these geometric rows:
+$d_{\rm obs}=[g+A_0h;h]$. The local RD search and decoder both use
+$d_{\rm obs}$, including the fold, as their reconstruction column. The
+headroom scan measures the actual folded signals. Unit geometric-column
+energy does not imply unit folded-column energy.
 
 ### 3.2 Trajectory coding and shared gains
 

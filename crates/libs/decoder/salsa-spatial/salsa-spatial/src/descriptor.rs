@@ -22,11 +22,42 @@ pub struct SignalModel {
     pub algorithm_version: u16,
 }
 
+/// Parameters of the shared core panner. Zero retains the version 1 curve.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CorePannerConfig {
+    ceiling_horizontal_gain: f64,
+}
+
+impl CorePannerConfig {
+    pub fn new(ceiling_horizontal_gain: f64) -> Result<Self> {
+        if !ceiling_horizontal_gain.is_finite() || !(0.0..1.0).contains(&ceiling_horizontal_gain) {
+            return Err(SpatialError::InvalidValue(
+                "ceiling horizontal gain must be finite and in [0, 1)",
+            ));
+        }
+        Ok(Self {
+            ceiling_horizontal_gain,
+        })
+    }
+
+    pub fn ceiling_horizontal_gain(self) -> f64 {
+        self.ceiling_horizontal_gain
+    }
+
+    pub fn algorithm_version(self) -> u16 {
+        if self.ceiling_horizontal_gain == 0.0 {
+            1
+        } else {
+            2
+        }
+    }
+}
+
 /// Supported projection algorithms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelAlgorithm {
-    /// The shared 5.1.2 core panner. Version 1 has ordered rows
-    /// `L, R, C, Ls, Rs, H_L, H_R`.
+    /// The shared core panner, with rows `L, R, C, Ls, Rs, H_L, H_R`.
+    /// Version 2 uses the stream's ceiling horizontal gain.
     SalsaCorePanner,
     /// A syntactically valid model that this decoder does not implement.
     Unknown(u8),
@@ -50,7 +81,7 @@ impl ModelAlgorithm {
 
     pub fn supports_version(self, version: u16) -> bool {
         match self {
-            Self::SalsaCorePanner => version == 1,
+            Self::SalsaCorePanner => matches!(version, 1 | 2),
             Self::Unknown(_) => false,
         }
     }
@@ -660,7 +691,7 @@ mod tests {
     #[test]
     fn unknown_model_version_disables_enhancement_without_rejection() {
         let mut config = crate::frame::SalsaSpatialStreamConfig::default();
-        config.signal_models[0].algorithm_version = 2;
+        config.signal_models[0].algorithm_version = 999;
         config.validate().unwrap();
         assert!(!config.enhanced_supported());
 

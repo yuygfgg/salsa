@@ -20,6 +20,9 @@ pub use core_codec::MultistreamCodec;
 pub use downmix::TransportSignals;
 pub use source::{SourceReader, TileSource};
 
+use salsa_spatial::{BaseFold, CorePannerConfig};
+use salsa_spatial_dsp::CorePanner;
+
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -48,6 +51,8 @@ pub struct EncodeOptions {
     pub max_frames: Option<usize>,
     pub reference_start: u64,
     pub headroom_db: Option<f64>,
+    /// Minimum horizontal panner gain at the ceiling, in [0, 1).
+    pub ceiling_horizontal_gain: f64,
 }
 
 /// The encoder pass currently processing source samples.
@@ -79,6 +84,8 @@ pub struct TileReport {
 /// Whole-program report.
 #[derive(Debug, Clone, Serialize)]
 pub struct EncodeReport {
+    pub ceiling_horizontal_gain: f64,
+    pub headroom_gain: f64,
     pub core_bytes: u64,
     pub metadata_bytes: u64,
     pub transport_bytes: u64,
@@ -127,6 +134,7 @@ fn measure_downmix_peak(
     manifest: &std::path::Path,
     start: u64,
     duration: u64,
+    panner: CorePanner,
     progress: &mut impl FnMut(EncodeProgress),
 ) -> Result<f64> {
     progress(EncodeProgress {
@@ -138,12 +146,16 @@ fn measure_downmix_peak(
     reader.seek(start)?;
     let mut peak = 0.0f64;
     let mut remaining = duration;
+    let mut last_positions = vec![[0.0; 3]; reader.info().objects.len()];
+    let mut first_tile = true;
     while remaining > 0 {
         let frames = remaining.min(TILE_SAMPLES as u64) as usize;
         let Some(tile) = reader.read_tile(frames)? else {
             break;
         };
-        peak = peak.max(tile.downmix_peak());
+        let (knots, _) = fit_tile_knots(&tile, &mut last_positions, first_tile, panner);
+        first_tile = false;
+        peak = peak.max(build_transport(&tile, &knots, 1.0, panner, BaseFold::v1(), 2).peak());
         remaining -= tile.frames as u64;
         progress(EncodeProgress {
             stage: EncodeStage::Headroom,
@@ -157,6 +169,7 @@ fn measure_downmix_peak(
 fn choose_headroom(
     options: &EncodeOptions,
     duration: u64,
+    panner: CorePanner,
     progress: &mut impl FnMut(EncodeProgress),
 ) -> Result<f64> {
     let gain = if let Some(db) = options.headroom_db {
@@ -166,9 +179,14 @@ fn choose_headroom(
         }
         gain
     } else {
-        let peak =
-            measure_downmix_peak(&options.master, options.reference_start, duration, progress)
-                .context("headroom prepass")?;
+        let peak = measure_downmix_peak(
+            &options.master,
+            options.reference_start,
+            duration,
+            panner,
+            progress,
+        )
+        .context("headroom prepass")?;
         let target_peak = 10f64.powf(-1.0 / 20.0);
         if peak > target_peak {
             target_peak / peak
@@ -183,6 +201,7 @@ fn fit_tile_knots(
     source: &TileSource,
     last_positions: &mut [[f64; 3]],
     first_tile: bool,
+    panner: CorePanner,
 ) -> (Vec<Vec<TrajectoryKnot>>, Vec<Vec<TrajectoryKnot>>) {
     let object_count = source.object_count;
     let mut core = Vec::with_capacity(object_count);
@@ -200,6 +219,7 @@ fn fit_tile_knots(
             object,
             &source.positions,
             &control_samples,
+            panner,
         );
         let end_position = dense
             .last()
@@ -244,16 +264,23 @@ fn make_config(
     meta_knots: &[Vec<TrajectoryKnot>],
     headroom_gain: f64,
     options: &EncodeOptions,
+    core_panner: CorePannerConfig,
 ) -> SalsaSpatialStreamConfig {
-    SalsaSpatialStreamConfig {
+    let mut config = SalsaSpatialStreamConfig {
         object_count: source.object_count,
         headroom_gain,
         initial_objects: initial_objects(source, core_knots),
         initial_trajectories: meta_knots.to_vec(),
         core_bitrates: options.core_bitrates,
         beta: options.beta,
+        core_panner,
         ..SalsaSpatialStreamConfig::default()
+    };
+    if core_panner.algorithm_version() == 2 {
+        config.format_version = 2;
+        config.signal_models[0].algorithm_version = 2;
     }
+    config
 }
 
 fn tile_objects(source: &TileSource, knots: &[Vec<TrajectoryKnot>]) -> Vec<ObjectState> {
@@ -437,6 +464,8 @@ pub fn encode_with_progress(
         bail!("core bitrates must be positive");
     }
 
+    let core_panner = CorePannerConfig::new(options.ceiling_horizontal_gain)?;
+    let panner = CorePanner::from_config(core_panner);
     let probe = SourceReader::open(&options.master)?;
     let info = probe.info().clone();
     let object_count = info.objects.len();
@@ -455,7 +484,7 @@ pub fn encode_with_progress(
     drop(probe);
 
     let opus = salsa_spatial_core_decoder::version_info();
-    let headroom_gain = choose_headroom(options, duration, &mut progress)?;
+    let headroom_gain = choose_headroom(options, duration, panner, &mut progress)?;
 
     progress(EncodeProgress {
         stage: EncodeStage::Encoding,
@@ -469,7 +498,7 @@ pub fn encode_with_progress(
     let mut encoder = SceneParameterEncoder::new(object_count);
     let mut writer: Option<salsa_spatial::OggSalsaWriter> = None;
     let mut pending: Option<TileJob> = None;
-    let mut measurement = MeasurementContext::new(headroom_gain);
+    let mut measurement = MeasurementContext::new(headroom_gain, panner, BaseFold::v1());
     let mut last_base = vec![[0i32; PARAM_BAND_COUNT]; object_count];
     let mut previous_ell = vec![[0i32; PARAM_BAND_COUNT]; object_count];
     let mut last_positions = vec![[0.0f64; 3]; object_count];
@@ -493,9 +522,17 @@ pub fn encode_with_progress(
             break;
         };
         let frames = source.frames;
-        let (core_knots, meta_knots) = fit_tile_knots(&source, &mut last_positions, first_tile);
+        let (core_knots, meta_knots) =
+            fit_tile_knots(&source, &mut last_positions, first_tile, panner);
         if codec.is_none() {
-            let config = make_config(&source, &core_knots, &meta_knots, headroom_gain, options);
+            let config = make_config(
+                &source,
+                &core_knots,
+                &meta_knots,
+                headroom_gain,
+                options,
+                core_panner,
+            );
             let new_codec = MultistreamCodec::new(config.clone())?;
             log::info!("Opus lookahead: {} samples", new_codec.lookahead_samples());
             let pre_skip = new_codec.lookahead_samples() as u16;
@@ -510,7 +547,7 @@ pub fn encode_with_progress(
             .as_ref()
             .map(|writer| writer.config().fold())
             .unwrap_or_else(salsa_spatial::BaseFold::v1);
-        let transport = build_transport(&source, &core_knots, headroom_gain, fold, 2);
+        let transport = build_transport(&source, &core_knots, headroom_gain, panner, fold, 2);
         let core = transport.observation_order();
         let packets = codec
             .as_mut()
@@ -639,6 +676,8 @@ pub fn encode_with_progress(
     });
 
     Ok(EncodeReport {
+        ceiling_horizontal_gain: options.ceiling_horizontal_gain,
+        headroom_gain,
         core_bytes,
         metadata_bytes,
         transport_bytes,

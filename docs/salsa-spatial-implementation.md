@@ -12,6 +12,7 @@ contains the current measurements.
 | Sample rate | 48 kHz |
 | Object limit | 128 non-LFE objects |
 | Core | Complete five-row fallback mix, two auxiliary height rows, separate LFE |
+| Vertical coding angle | Original curve by default; configurable ceiling horizontal gain |
 | Transport | One Ogg Opus multistream track, mapping family 1 |
 | Declared layout | Standard 7.1; BL and BR share one encoded silence channel |
 | Opus streams | Three stereo and three mono streams; nine coded channels |
@@ -87,7 +88,8 @@ activity are applied once to PCM. Reconstructed objects carry unity gain.
 
 A prepass selects one headroom gain for the programme. The encoder applies
 it to every transported signal, including LFE and the auxiliary rows. The
-object decoder restores it after synthesis.
+object decoder restores it after synthesis. The prepass uses the configured
+panner, quantized trajectories, and fixed fold used for the transported audio.
 
 The encoder forms the complete fallback mix `b = g + A h` for the five ground
 rows and transports `h` as the auxiliary group. Version 1 fixes
@@ -95,6 +97,34 @@ rows and transports `h` as the auxiliary group. Version 1 fixes
 the stock-player fallback. The decoder reconstructs observations as
 `D_base = D_ground + A D_height` and `D_aux = D_height`; it never treats the
 folded base rows as the original ground rows.
+
+`--ceiling-horizontal-gain RHO` compresses the vertical coding angle to
+`z * acos(RHO)`, with finite `RHO` in `[0, 1)`. Zero is the default and retains
+the original curve. At the ceiling, horizontal gain is `RHO` and height gain
+is `sqrt(1 - RHO*RHO)`. The fixed fold, channel map, authored positions, and
+render targets do not change. For example:
+
+```sh
+cargo run --release -p salsa-spatial-encode -- input.atmos \
+  --out output.ogg --ceiling-horizontal-gain 0.25
+```
+
+A nonzero value requires configuration version 2 and core-panner model
+version 2. The configuration appends one big-endian f64 after the initial
+trajectories. Version 1 has no such field and uses zero. Base-fold tags
+remain zero for no fold or one for the fixed matrix. Older Salsa decoders
+that only accept configuration version 1 cannot decode the compressed-angle
+enhancement; ordinary Ogg Opus playback keeps the same public channel map.
+
+Audio generation, trajectory validation, local RD measurements, and the
+decoder use the same configured panner. In particular, the RD reconstruction
+matrix includes the fixed fold rather than the unfolded geometric rows.
+Reports include the selected ceiling gain and programme headroom gain.
+Compression remains opt-in. A three-span Sol Levante comparison at matched
+total bitrates found small height and binaural gains at `RHO = 0.25`, with
+ground-channel regressions and no gain across all render layouts. See
+[the measurement report](salsa-spatial-coding-angle.md) for the rates,
+signal errors, and perceptual-proxy results. The default remains zero.
 
 The standard Ogg Opus track carries one multistream packet per 20 ms. The
 mono center substream carries versioned Salsa records in an experimental Opus

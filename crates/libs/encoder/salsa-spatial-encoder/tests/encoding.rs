@@ -11,7 +11,7 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
     let path = directory.path();
     let master = path.join("master.atmos");
     let total_frames = 2 * TILE_SAMPLES;
-    let beds: Vec<_> = ["LFE", "L", "R"]
+    let beds: Vec<_> = ["LFE", "Ltf", "Rtr"]
         .into_iter()
         .enumerate()
         .map(|(id, name)| BedEntry {
@@ -70,6 +70,7 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
         max_frames: Some(duration),
         reference_start: 91,
         headroom_db: None,
+        ceiling_horizontal_gain: 0.0,
     };
     let mut updates = Vec::new();
     let pool = rayon::ThreadPoolBuilder::new()
@@ -125,6 +126,11 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
 
     use objectaudio_ir::SpatialDecoder;
     let config = parser.config().cloned().expect("stream configuration");
+    assert_eq!(config.format_version, 1);
+    assert_eq!(
+        config.core_panner,
+        salsa_spatial::CorePannerConfig::default()
+    );
     let mut decoder = salsa_spatial_dsp::SalsaSpatialDecoder::new(config).unwrap();
     let mut decoded = 0usize;
     for frame in &frames {
@@ -137,4 +143,38 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
         decoded + 120 >= duration as usize,
         "decoded {decoded} samples of {duration}"
     );
+
+    options.ceiling_horizontal_gain = 0.25;
+    options.headroom_db = None;
+    options.output = path.join("compressed.ogg");
+    let report = pool
+        .install(|| encode_with_progress(&options, |_| {}))
+        .unwrap();
+    assert_eq!(report.ceiling_horizontal_gain, 0.25);
+    let mut parser = SalsaSpatialParser::new();
+    let mut frames = parser
+        .push_bytes(&std::fs::read(&options.output).unwrap())
+        .unwrap();
+    frames.extend(parser.flush().unwrap());
+    let config = parser.config().unwrap().clone();
+    assert_eq!(config.format_version, 2);
+    assert_eq!(config.signal_models[0].algorithm_version, 2);
+    assert_eq!(config.core_panner.ceiling_horizontal_gain(), 0.25);
+    assert!(
+        config
+            .initial_objects
+            .iter()
+            .all(|object| object.position[2] == 1.0)
+    );
+    assert!(config.enhanced_supported());
+    let mut decoder = salsa_spatial_dsp::SalsaSpatialDecoder::new(config).unwrap();
+    let mut decoded = 0;
+    for frame in &frames {
+        let output = decoder.decode(frame).unwrap();
+        decoded += output.frames;
+    }
+    if let Some(tail) = decoder.finish().unwrap() {
+        decoded += tail.frames;
+    }
+    assert!(decoded + 120 >= duration);
 }

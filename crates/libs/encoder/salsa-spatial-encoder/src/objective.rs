@@ -751,13 +751,12 @@ mod tests {
         let decoded = core
             .each_ref()
             .map(|channel| channel.iter().map(|x| x * decoded_gain).collect());
-        let measured = MeasurementContext::new(1.0).measure_tile(
-            &source,
-            &core,
-            &decoded,
-            &trajectories,
-            None,
-        );
+        let measured = MeasurementContext::new(
+            1.0,
+            salsa_spatial_dsp::CorePanner::new(),
+            salsa_spatial::BaseFold::none(),
+        )
+        .measure_tile(&source, &core, &decoded, &trajectories, None);
         let anchors = [0, 1920, 4560]
             .into_iter()
             .enumerate()
@@ -970,8 +969,12 @@ mod tests {
             },
         ]];
         let (core, _) = build_core(&source, &trajectories, 1.0);
-        let measured =
-            MeasurementContext::new(1.0).measure_tile(&source, &core, &core, &trajectories, None);
+        let measured = MeasurementContext::new(
+            1.0,
+            salsa_spatial_dsp::CorePanner::new(),
+            salsa_spatial::BaseFold::none(),
+        )
+        .measure_tile(&source, &core, &core, &trajectories, None);
         let moving = RenderContext::new(&measured);
         assert_ne!(
             moving.hops[0].spatial.d_recon,

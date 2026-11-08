@@ -48,7 +48,7 @@ use salsa_spatial_core_decoder::{CoreDecodeError, OpusBedDecoder};
 use thiserror::Error;
 
 use crate::covariance::{BandCovariance, covariance_from_band_powers};
-use crate::panner::{core_gain_column, interpolated_observation_columns};
+use crate::panner::CorePanner;
 use crate::reconstruct::{ReconstructionError, estimate_objects};
 use crate::stft::{Spectrum, Stft, Synthesis};
 
@@ -129,6 +129,7 @@ pub struct SalsaSpatialDecoder {
 
     core: OpusBedDecoder,
     fold: BaseFold,
+    panner: CorePanner,
     enhanced_supported: bool,
     parameters: SceneParameterDecoder,
 
@@ -179,6 +180,7 @@ impl SalsaSpatialDecoder {
         })?;
         let object_count = config.object_count;
         let fold = config.fold();
+        let panner = CorePanner::from_config(config.core_panner);
         let enhanced_supported = config.enhanced_supported();
         let core = OpusBedDecoder::from_config(&config)?;
         let parameters = SceneParameterDecoder::new(object_count);
@@ -201,6 +203,7 @@ impl SalsaSpatialDecoder {
             object_count,
             core,
             fold,
+            panner,
             enhanced_supported,
             parameters,
             core_stfts: std::array::from_fn(|_| Stft::new()),
@@ -668,12 +671,9 @@ impl SalsaSpatialDecoder {
             .map(|object| {
                 let knots = self.knots_at(sample, object);
                 if knots.is_empty() {
-                    crate::panner::fold_observation_column(
-                        core_gain_column([0.0, 0.0, 0.0]),
-                        self.fold,
-                    )
+                    self.panner.observation_column([0.0, 0.0, 0.0], self.fold)
                 } else {
-                    interpolated_observation_columns(knots, sample, 1, self.fold)[0]
+                    self.panner.observation_columns(knots, sample, 1, self.fold)[0]
                 }
             })
             .collect()

@@ -1,7 +1,7 @@
 //! Deterministic fallback and observation generation.
 
 use salsa_spatial::{BaseFold, TrajectoryKnot};
-use salsa_spatial_dsp::interpolated_core_columns;
+use salsa_spatial_dsp::{CorePanner, interpolated_core_columns};
 
 use crate::source::TileSource;
 
@@ -19,6 +19,17 @@ pub struct TransportSignals {
 }
 
 impl TransportSignals {
+    /// Peak of the complete transport, including the fixed height fold.
+    pub fn peak(&self) -> f64 {
+        self.base
+            .iter()
+            .chain(&self.aux)
+            .flatten()
+            .chain(&self.lfe)
+            .map(|sample| f64::from(*sample).abs())
+            .fold(0.0, f64::max)
+    }
+
     /// Seven full-range observations in reconstruction order:
     /// `[b_FL, b_FR, b_FC, b_SL, b_SR, H_L, H_R]`.
     pub fn observation_order(&self) -> [Vec<f32>; 7] {
@@ -43,6 +54,7 @@ pub fn build_transport(
     source: &TileSource,
     core_knots: &[Vec<TrajectoryKnot>],
     headroom_gain: f64,
+    panner: CorePanner,
     fold: BaseFold,
     aux_count: usize,
 ) -> TransportSignals {
@@ -51,7 +63,8 @@ pub fn build_transport(
     let mut base: [Vec<f32>; 5] = std::array::from_fn(|_| vec![0.0f32; frames]);
     let mut aux: Vec<Vec<f32>> = (0..aux_count).map(|_| vec![0.0f32; frames]).collect();
     for object in 0..object_count {
-        let columns = interpolated_core_columns(&core_knots[object], source.start_sample, frames);
+        let columns =
+            panner.observation_columns(&core_knots[object], source.start_sample, frames, fold);
         let pcm = &source.object_pcm[object];
         for sample in 0..frames {
             let value = pcm[sample];
@@ -59,11 +72,9 @@ pub fn build_transport(
                 continue;
             }
             let column = columns[sample];
-            let ground = [column[0], column[1], column[2], column[3], column[4]];
             let height = [column[5], column[6]];
-            let folded = fold.apply(ground, height);
             for channel in 0..5 {
-                base[channel][sample] += (folded[channel] * f64::from(value)) as f32;
+                base[channel][sample] += (column[channel] * f64::from(value)) as f32;
             }
             for channel in 0..aux_count {
                 let gain = height.get(channel).copied().unwrap_or(0.0);
@@ -133,6 +144,29 @@ pub fn build_core(
 mod tests {
     use super::*;
     use salsa_spatial::TrajectoryKnot;
+
+    #[test]
+    fn transport_peak_includes_compressed_geometry_and_the_fold() {
+        let source = TileSource {
+            start_sample: 0,
+            frames: 1,
+            object_count: 1,
+            object_pcm: vec![vec![1.0]],
+            lfe_pcm: vec![0.0],
+            positions: vec![[-1.0, 1.0, 0.5]],
+            active: vec![true],
+            events: Vec::new(),
+        };
+        let knots = vec![vec![TrajectoryKnot {
+            sample: 0,
+            position: [-1.0, 1.0, 0.5],
+        }]];
+        let panner = CorePanner::from_config(salsa_spatial::CorePannerConfig::new(0.25).unwrap());
+        let transport = build_transport(&source, &knots, 1.0, panner, BaseFold::v1(), 2);
+        let angle = 0.5 * 0.25f64.acos();
+        assert!((transport.peak() - (angle.cos() + 0.5 * angle.sin())).abs() < 1e-6);
+        assert!(transport.peak() > 1.0);
+    }
 
     #[test]
     fn one_object_at_the_right_speaker_lands_in_core_right() {

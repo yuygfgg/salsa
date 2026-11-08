@@ -11,7 +11,7 @@
 //!
 //! * object waveform error,
 //! * the same object scene rendered to `7.1.4` and `9.1.6`,
-//! * the decoded Opus core bed against the lossless deterministic 5.1.2
+//! * the decoded Opus core bed against the lossless configured observation
 //!   downmix.
 //!
 //! Measurements that need external tools (ViSQOL/SPAUQ, binaural HRTF, DD+
@@ -29,7 +29,7 @@ use objectaudio_render::{
 };
 use salsa_spatial::{SAMPLE_RATE, SalsaSpatialParser, TILE_SAMPLES};
 use salsa_spatial_core_decoder::OpusBedDecoder;
-use salsa_spatial_dsp::{SalsaSpatialDecoder, core_gain_column};
+use salsa_spatial_dsp::{CorePanner, SalsaSpatialDecoder};
 use salsa_spatial_encoder::source::SourceReader;
 use serde::Serialize;
 
@@ -310,11 +310,10 @@ fn evaluate(arguments: &Arguments) -> Result<Report> {
         arguments.out_prefix.as_deref(),
     )?;
 
-    // 6. Lossless deterministic 5.1.2 downmix vs the decoded Opus core.
+    // 6. Configured observation mix vs the decoded Opus core.
     let core_bed = measure_core_bed(
         &stream_frames,
-        object_count,
-        config.headroom_gain,
+        &config,
         &reference_lfe,
         &reference_objects,
         &reference_positions,
@@ -386,7 +385,7 @@ fn evaluate(arguments: &Arguments) -> Result<Report> {
             label: "lossless_core_bed".to_owned(),
             error_db: core_bed.error_db,
             description:
-                "Decoded Opus core bed vs the lossless deterministic 5.1.2 downmix built from authored object positions; includes trajectory quantization and core coding."
+                "Decoded Opus core bed vs the lossless configured observation downmix built from authored object positions; includes trajectory quantization and core coding."
                     .to_owned(),
         },
         Checkpoint {
@@ -630,12 +629,14 @@ fn measure_render(
 
 fn measure_core_bed(
     stream_frames: &[salsa_spatial::SalsaSpatialFrame],
-    object_count: usize,
-    headroom_gain: f64,
+    config: &salsa_spatial::SalsaSpatialStreamConfig,
     reference_lfe: &[f32],
     reference_objects: &[Vec<f32>],
     reference_positions: &[[f32; 3]],
 ) -> Result<CoreBedReport> {
+    let object_count = config.object_count;
+    let headroom_gain = config.headroom_gain;
+    let panner = CorePanner::from_config(config.core_panner);
     let reference_frames = reference_lfe.len();
     let mut reference_core: [Vec<f32>; 8] =
         std::array::from_fn(|_| Vec::with_capacity(reference_frames));
@@ -643,11 +644,14 @@ fn measure_core_bed(
         let mut column_sum = [0.0f64; 7];
         for object in 0..object_count {
             let position = reference_positions[sample * object_count + object];
-            let column = core_gain_column([
-                f64::from(position[0]),
-                f64::from(position[1]),
-                f64::from(position[2]),
-            ]);
+            let column = panner.observation_column(
+                [
+                    f64::from(position[0]),
+                    f64::from(position[1]),
+                    f64::from(position[2]),
+                ],
+                config.fold(),
+            );
             let value = f64::from(reference_objects[object][sample]);
             for channel in 0..7 {
                 column_sum[channel] += column[channel] * value;
@@ -659,7 +663,7 @@ fn measure_core_bed(
         reference_core[7].push((f64::from(reference_lfe[sample]) * headroom_gain) as f32);
     }
 
-    let mut decoder = OpusBedDecoder::new(object_count)?;
+    let mut decoder = OpusBedDecoder::from_config(config)?;
     let lookahead = decoder.lookahead_samples();
     let mut decoded_core: [Vec<f32>; 8] = std::array::from_fn(|_| Vec::new());
     for frame in stream_frames {
@@ -707,7 +711,7 @@ fn measure_core_bed(
         decoded_frames,
         lookahead_dropped: lookahead,
         trimmed,
-        note: "Reference is the lossless 5.1.2 downmix from authored positions and source objects scaled by the stream headroom gain; candidate is the raw decoded Opus core after one program-level lookahead drop.".to_owned(),
+        note: "Reference is the lossless configured observation mix from authored positions and source objects scaled by the stream headroom gain; candidate is the raw decoded Opus core after one program-level lookahead drop.".to_owned(),
     })
 }
 

@@ -43,14 +43,22 @@ pub(crate) struct MeasurementContext {
     objects: Vec<Vec<f32>>,
     core: [Vec<f32>; 7],
     headroom_gain: f64,
+    panner: salsa_spatial_dsp::CorePanner,
+    fold: salsa_spatial::BaseFold,
 }
 
 impl MeasurementContext {
-    pub fn new(headroom_gain: f64) -> Self {
+    pub fn new(
+        headroom_gain: f64,
+        panner: salsa_spatial_dsp::CorePanner,
+        fold: salsa_spatial::BaseFold,
+    ) -> Self {
         Self {
             objects: Vec::new(),
             core: Default::default(),
             headroom_gain,
+            panner,
+            fold,
         }
     }
 
@@ -235,7 +243,7 @@ impl MeasurementContext {
                 let sample = source.start_sample + (hop * HOP_SAMPLES) as u64;
                 core_knots
                     .iter()
-                    .map(|knots| salsa_spatial_dsp::interpolated_core_columns(knots, sample, 1)[0])
+                    .map(|knots| self.panner.observation_columns(knots, sample, 1, self.fold)[0])
                     .collect()
             })
             .collect();
@@ -265,6 +273,42 @@ impl MeasurementContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rd_observations_include_the_configured_panner_and_fixed_fold() {
+        let frames = TILE_SAMPLES;
+        let source = TileSource {
+            start_sample: 0,
+            frames,
+            object_count: 1,
+            object_pcm: vec![(0..frames).map(|n| (n as f32 * 0.09).sin() * 0.1).collect()],
+            lfe_pcm: vec![0.0; frames],
+            positions: vec![[-1.0, 1.0, 1.0]; frames],
+            active: vec![true; frames],
+            events: Vec::new(),
+        };
+        let knots = vec![vec![TrajectoryKnot {
+            sample: 0,
+            position: [-1.0, 1.0, 1.0],
+        }]];
+        for rho in [0.0, 0.25, 0.75] {
+            let panner = salsa_spatial_dsp::CorePanner::from_config(
+                salsa_spatial::CorePannerConfig::new(rho).unwrap(),
+            );
+            let fold = salsa_spatial::BaseFold::v1();
+            let core = crate::downmix::build_transport(&source, &knots, 1.0, panner, fold, 2)
+                .observation_order();
+            let measured = MeasurementContext::new(1.0, panner, fold)
+                .measure_tile(&source, &core, &core, &knots, None);
+            let height = (1.0 - rho * rho).sqrt();
+            let expected = [rho + 0.5 * height, 0.0, 0.0, 0.5 * height, 0.0, height, 0.0];
+            for columns in measured.downmix_columns {
+                for (actual, expected) in columns[0].iter().zip(expected) {
+                    assert!((actual - expected).abs() < 1e-12);
+                }
+            }
+        }
+    }
     use salsa_spatial::{CORE_CHANNEL_COUNT, TILE_SAMPLES};
     use salsa_spatial_dsp::Stft;
 
@@ -314,7 +358,11 @@ mod tests {
                     })
                 })
                 .collect();
-            let mut context = MeasurementContext::new(gain);
+            let mut context = MeasurementContext::new(
+                gain,
+                salsa_spatial_dsp::CorePanner::new(),
+                salsa_spatial::BaseFold::none(),
+            );
             for i in 0..sources.len() {
                 let start = i * TILE_SAMPLES - context.prefix_frames();
                 let end = ((i + 1) * TILE_SAMPLES + FFT_SIZE / 2).min(signal.len());

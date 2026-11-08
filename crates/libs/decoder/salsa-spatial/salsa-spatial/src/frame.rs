@@ -3,8 +3,8 @@
 use objectaudio_ir::{ObjectEvent, ObjectState};
 
 use crate::descriptor::{
-    BaseFold, CodecBinding, ObservationGroup, ReconstructionStage, SignalModel,
-    validate_configuration,
+    BaseFold, CodecBinding, CorePannerConfig, ModelAlgorithm, ObservationGroup,
+    ReconstructionStage, SignalModel, validate_configuration,
 };
 use crate::error::{Result, SpatialError};
 use crate::params::{SceneParameters, TrajectoryKnot};
@@ -102,6 +102,7 @@ pub struct SalsaSpatialStreamConfig {
     pub signal_models: Vec<SignalModel>,
     pub observation_groups: Vec<ObservationGroup>,
     pub base_fold: Option<BaseFold>,
+    pub core_panner: CorePannerConfig,
     pub reconstruction: Vec<ReconstructionStage>,
 }
 
@@ -121,6 +122,7 @@ impl Default for SalsaSpatialStreamConfig {
             signal_models: crate::descriptor::initial_models(),
             observation_groups: crate::descriptor::initial_groups(&codec),
             base_fold: Some(BaseFold::v1()),
+            core_panner: CorePannerConfig::default(),
             reconstruction: crate::descriptor::initial_stage(&codec),
             codec,
         }
@@ -141,6 +143,25 @@ impl SalsaSpatialStreamConfig {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if !matches!(self.format_version, 1 | 2) {
+            return Err(SpatialError::UnsupportedVersion {
+                version: self.format_version,
+            });
+        }
+        if self.core_panner.algorithm_version() == 2 {
+            if self.format_version < 2 {
+                return Err(SpatialError::InvalidValue(
+                    "coding-angle compression requires configuration version 2",
+                ));
+            }
+            if self.signal_models.iter().any(|model| {
+                model.algorithm == ModelAlgorithm::SalsaCorePanner && model.algorithm_version == 1
+            }) {
+                return Err(SpatialError::InvalidValue(
+                    "coding-angle compression requires core-panner model version 2",
+                ));
+            }
+        }
         validate_configuration(
             &self.codec,
             &self.signal_models,

@@ -9,8 +9,8 @@ use objectaudio_ir::{ObjectEvent, ObjectState, Transition};
 
 use crate::constants::{MAX_OBJECTS, MAX_RECORD_BYTES, MAX_RECORD_FRAGMENTS};
 use crate::descriptor::{
-    BaseFold, CodecBinding, InputDomain, ModelAlgorithm, ModelRow, ObservationGroup, Projection,
-    ReconstructionStage, SignalModel,
+    BaseFold, CodecBinding, CorePannerConfig, InputDomain, ModelAlgorithm, ModelRow,
+    ObservationGroup, Projection, ReconstructionStage, SignalModel,
 };
 use crate::error::{Result, SpatialError};
 use crate::frame::{EnhancementTile, SalsaSpatialStreamConfig};
@@ -230,6 +230,9 @@ pub fn encode_configuration(config: &SalsaSpatialStreamConfig) -> Result<Vec<u8>
             }
         }
     }
+    if config.format_version >= 2 {
+        writer.f64(config.core_panner.ceiling_horizontal_gain());
+    }
     Ok(writer.out)
 }
 
@@ -240,7 +243,7 @@ pub fn decode_configuration(bytes: &[u8]) -> Result<SalsaSpatialStreamConfig> {
         return Err(SpatialError::Syntax("bad configuration magic"));
     }
     let format_version = reader.u16()?;
-    if format_version != 1 {
+    if !matches!(format_version, 1 | 2) {
         return Err(SpatialError::UnsupportedVersion {
             version: format_version,
         });
@@ -314,7 +317,11 @@ pub fn decode_configuration(bytes: &[u8]) -> Result<SalsaSpatialStreamConfig> {
             projection,
         });
     }
-    let base_fold = if reader.u8()? != 0 {
+    let fold_tag = reader.u8()?;
+    if fold_tag > 1 {
+        return Err(SpatialError::InvalidValue("unsupported base fold"));
+    }
+    let base_fold = if fold_tag == 1 {
         let preset = reader.u8()?;
         let mut matrix = [[0.0f64; 2]; 5];
         for row in &mut matrix {
@@ -369,6 +376,11 @@ pub fn decode_configuration(bytes: &[u8]) -> Result<SalsaSpatialStreamConfig> {
         }
         initial_trajectories.push(trajectory);
     }
+    let core_panner = if format_version >= 2 {
+        CorePannerConfig::new(reader.f64()?)?
+    } else {
+        CorePannerConfig::default()
+    };
     let config = SalsaSpatialStreamConfig {
         format_version,
         profile,
@@ -383,6 +395,7 @@ pub fn decode_configuration(bytes: &[u8]) -> Result<SalsaSpatialStreamConfig> {
         signal_models,
         observation_groups,
         base_fold,
+        core_panner,
         reconstruction,
     };
     config.validate()?;
@@ -850,6 +863,47 @@ mod tests {
         let config = sample_config();
         let bytes = encode_configuration(&config).unwrap();
         assert_eq!(decode_configuration(&bytes).unwrap(), config);
+    }
+
+    #[test]
+    fn coding_angle_configuration_is_versioned_and_validated() {
+        for rho in [0.1, 0.25, 0.75] {
+            let mut config = sample_config();
+            config.core_panner = CorePannerConfig::new(rho).unwrap();
+            assert!(encode_configuration(&config).is_err());
+            config.format_version = 2;
+            assert!(encode_configuration(&config).is_err());
+            config.signal_models[0].algorithm_version = 2;
+            let bytes = encode_configuration(&config).unwrap();
+            let decoded = decode_configuration(&bytes).unwrap();
+            assert_eq!(decoded, config);
+            assert!(decoded.enhanced_supported());
+            assert!(decode_configuration(&bytes[..bytes.len() - 1]).is_err());
+            for invalid in [-0.1, 1.0, f64::INFINITY, f64::NAN] {
+                let mut bad = bytes.clone();
+                let offset = bad.len() - 8;
+                bad[offset..].copy_from_slice(&invalid.to_be_bytes());
+                assert!(CorePannerConfig::new(invalid).is_err());
+                assert!(decode_configuration(&bad).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn version_one_has_no_coding_angle_extension() {
+        let config = sample_config();
+        let old = encode_configuration(&config).unwrap();
+        assert_eq!(
+            decode_configuration(&old).unwrap().core_panner,
+            CorePannerConfig::default()
+        );
+        let mut extended = config.clone();
+        extended.format_version = 2;
+        let mut bytes = encode_configuration(&extended).unwrap();
+        assert_eq!(bytes.len(), old.len() + 8);
+        bytes[4..6].copy_from_slice(&old[4..6]);
+        bytes.truncate(old.len());
+        assert_eq!(bytes, old);
     }
 
     #[test]

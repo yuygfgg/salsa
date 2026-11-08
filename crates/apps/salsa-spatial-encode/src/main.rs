@@ -34,6 +34,9 @@ struct Cli {
     /// Override the automatic headroom gain, in dB (e.g. -6).
     #[arg(long, allow_hyphen_values = true)]
     headroom_db: Option<f64>,
+    /// Horizontal gain retained at the ceiling in [0, 1); zero uses the original curve.
+    #[arg(long, default_value_t = 0.0)]
+    ceiling_horizontal_gain: f64,
     /// Front L/R Opus bitrate in bits/s.
     #[arg(long, default_value_t = 160_000)]
     front_bitrate: u32,
@@ -82,6 +85,7 @@ fn main() -> Result<()> {
         max_frames: cli.max_frames,
         reference_start: cli.reference_start,
         headroom_db: cli.headroom_db,
+        ceiling_horizontal_gain: cli.ceiling_horizontal_gain,
     };
 
     let mut progress = Progress::new(!cli.no_progress);

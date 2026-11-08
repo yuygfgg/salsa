@@ -1,0 +1,4489 @@
+{
+  "settings": {
+    "master": "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+    "work": "/private/tmp/salsa-angle-eval/screen",
+    "report": "/Users/a1/ddp_research/salsa/docs/measurements/coding-angle-screen.json",
+    "starts": [
+      60.0,
+      120.0,
+      180.0
+    ],
+    "seconds": 10.0,
+    "rhos": [
+      0.0,
+      0.25,
+      0.5
+    ],
+    "layouts": [
+      "2.0",
+      "7.1.4",
+      "9.1.6"
+    ],
+    "target_bps": null,
+    "tolerance_bps": 1000,
+    "zimtohrli": false,
+    "headphone": null,
+    "jobs": 2,
+    "threads": 6,
+    "encoder": "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+    "renderer": "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+    "encoder_sha256": "96dfc6c39873ebc3e7438acc0f330a092f2b05e3ee76efbec397bac306cc868d",
+    "renderer_sha256": "a7e039c968a41abf5d8beba13fee14280cf3f010a96cb3da4fb2eb5296b0e04d",
+    "sample_rate": 48000,
+    "core_targets": [
+      120000,
+      96000,
+      120000,
+      84000
+    ],
+    "lfe_target": 24000,
+    "beta": 1e-06,
+    "warp_mode": 3,
+    "metric_gain_db": -3,
+    "alignment": "Source clock; zero extra delay; no gain fit; startup included",
+    "headroom": "Minimum automatic gain across the tested angles for each segment",
+    "versions": {
+      "numpy": "2.0.2",
+      "scipy": "1.17.1",
+      "soundfile": "0.13.1"
+    }
+  },
+  "segments": {
+    "60": {
+      "encodes": {
+        "0": {
+          "attempts": [
+            {
+              "command": [
+                "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+                "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+                "--out",
+                "/tmp/salsa-angle-eval/screen/s60-r0/auto.ogg",
+                "--reference-start",
+                "2880000",
+                "--max-frames",
+                "480000",
+                "--ceiling-horizontal-gain",
+                "0.0",
+                "--lfe-bitrate",
+                "24000",
+                "--beta",
+                "1e-6",
+                "--no-progress",
+                "--front-bitrate",
+                "120000",
+                "--surround-bitrate",
+                "96000",
+                "--aux-bitrate",
+                "120000",
+                "--center-bitrate",
+                "84000"
+              ],
+              "stream": "/tmp/salsa-angle-eval/screen/s60-r0/auto.ogg",
+              "core_targets": [
+                120000,
+                96000,
+                120000,
+                84000
+              ],
+              "requested_headroom_db": null,
+              "elapsed_seconds": 0.0001710420474410057,
+              "cached": true,
+              "stream_sha256": "819afc440214d1003082e1fcd5932358427607917764c8d04d1b26d924384d6f",
+              "report": {
+                "ceiling_horizontal_gain": 0.0,
+                "headroom_gain": 1.0,
+                "core_bytes": 556500,
+                "metadata_bytes": 362440,
+                "transport_bytes": 1329627,
+                "total_bytes": 1329627,
+                "duration_samples": 480000,
+                "core_bitrate": 445200.0,
+                "metadata_bitrate": 289952.0,
+                "total_bitrate": 1063701.6,
+                "peak_metadata_bitrate": 678400.0,
+                "object_count": 91,
+                "opus_wrapper": "opus 0.4.0",
+                "opus_native": "libopus 1.6.1",
+                "warnings": [
+                  "decorr: not represented by this consumer",
+                  "size: not represented by this consumer",
+                  "elevation: not represented by this consumer",
+                  "zones: not represented by this consumer"
+                ]
+              }
+            }
+          ],
+          "selected": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+              "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+              "--out",
+              "/tmp/salsa-angle-eval/screen/s60-r0/auto.ogg",
+              "--reference-start",
+              "2880000",
+              "--max-frames",
+              "480000",
+              "--ceiling-horizontal-gain",
+              "0.0",
+              "--lfe-bitrate",
+              "24000",
+              "--beta",
+              "1e-6",
+              "--no-progress",
+              "--front-bitrate",
+              "120000",
+              "--surround-bitrate",
+              "96000",
+              "--aux-bitrate",
+              "120000",
+              "--center-bitrate",
+              "84000"
+            ],
+            "stream": "/tmp/salsa-angle-eval/screen/s60-r0/auto.ogg",
+            "core_targets": [
+              120000,
+              96000,
+              120000,
+              84000
+            ],
+            "requested_headroom_db": null,
+            "elapsed_seconds": 0.0001710420474410057,
+            "cached": true,
+            "stream_sha256": "819afc440214d1003082e1fcd5932358427607917764c8d04d1b26d924384d6f",
+            "report": {
+              "ceiling_horizontal_gain": 0.0,
+              "headroom_gain": 1.0,
+              "core_bytes": 556500,
+              "metadata_bytes": 362440,
+              "transport_bytes": 1329627,
+              "total_bytes": 1329627,
+              "duration_samples": 480000,
+              "core_bitrate": 445200.0,
+              "metadata_bitrate": 289952.0,
+              "total_bitrate": 1063701.6,
+              "peak_metadata_bitrate": 678400.0,
+              "object_count": 91,
+              "opus_wrapper": "opus 0.4.0",
+              "opus_native": "libopus 1.6.1",
+              "warnings": [
+                "decorr: not represented by this consumer",
+                "size: not represented by this consumer",
+                "elevation: not represented by this consumer",
+                "zones: not represented by this consumer"
+              ]
+            }
+          }
+        },
+        "0.25": {
+          "attempts": [
+            {
+              "command": [
+                "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+                "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+                "--out",
+                "/tmp/salsa-angle-eval/screen/s60-r0.25/auto.ogg",
+                "--reference-start",
+                "2880000",
+                "--max-frames",
+                "480000",
+                "--ceiling-horizontal-gain",
+                "0.25",
+                "--lfe-bitrate",
+                "24000",
+                "--beta",
+                "1e-6",
+                "--no-progress",
+                "--front-bitrate",
+                "120000",
+                "--surround-bitrate",
+                "96000",
+                "--aux-bitrate",
+                "120000",
+                "--center-bitrate",
+                "84000"
+              ],
+              "stream": "/tmp/salsa-angle-eval/screen/s60-r0.25/auto.ogg",
+              "core_targets": [
+                120000,
+                96000,
+                120000,
+                84000
+              ],
+              "requested_headroom_db": null,
+              "elapsed_seconds": 36.56665275013074,
+              "cached": false,
+              "stream_sha256": "c1b673e67fabcecd18aaa6222747f7cafa09bef2d3805644b48e142ac135343a",
+              "report": {
+                "ceiling_horizontal_gain": 0.25,
+                "headroom_gain": 1.0,
+                "core_bytes": 556500,
+                "metadata_bytes": 365808,
+                "transport_bytes": 1333105,
+                "total_bytes": 1333105,
+                "duration_samples": 480000,
+                "core_bitrate": 445200.0,
+                "metadata_bitrate": 292646.4,
+                "total_bitrate": 1066484.0,
+                "peak_metadata_bitrate": 676800.0,
+                "object_count": 91,
+                "opus_wrapper": "opus 0.4.0",
+                "opus_native": "libopus 1.6.1",
+                "warnings": [
+                  "decorr: not represented by this consumer",
+                  "size: not represented by this consumer",
+                  "elevation: not represented by this consumer",
+                  "zones: not represented by this consumer"
+                ]
+              }
+            }
+          ],
+          "selected": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+              "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+              "--out",
+              "/tmp/salsa-angle-eval/screen/s60-r0.25/auto.ogg",
+              "--reference-start",
+              "2880000",
+              "--max-frames",
+              "480000",
+              "--ceiling-horizontal-gain",
+              "0.25",
+              "--lfe-bitrate",
+              "24000",
+              "--beta",
+              "1e-6",
+              "--no-progress",
+              "--front-bitrate",
+              "120000",
+              "--surround-bitrate",
+              "96000",
+              "--aux-bitrate",
+              "120000",
+              "--center-bitrate",
+              "84000"
+            ],
+            "stream": "/tmp/salsa-angle-eval/screen/s60-r0.25/auto.ogg",
+            "core_targets": [
+              120000,
+              96000,
+              120000,
+              84000
+            ],
+            "requested_headroom_db": null,
+            "elapsed_seconds": 36.56665275013074,
+            "cached": false,
+            "stream_sha256": "c1b673e67fabcecd18aaa6222747f7cafa09bef2d3805644b48e142ac135343a",
+            "report": {
+              "ceiling_horizontal_gain": 0.25,
+              "headroom_gain": 1.0,
+              "core_bytes": 556500,
+              "metadata_bytes": 365808,
+              "transport_bytes": 1333105,
+              "total_bytes": 1333105,
+              "duration_samples": 480000,
+              "core_bitrate": 445200.0,
+              "metadata_bitrate": 292646.4,
+              "total_bitrate": 1066484.0,
+              "peak_metadata_bitrate": 676800.0,
+              "object_count": 91,
+              "opus_wrapper": "opus 0.4.0",
+              "opus_native": "libopus 1.6.1",
+              "warnings": [
+                "decorr: not represented by this consumer",
+                "size: not represented by this consumer",
+                "elevation: not represented by this consumer",
+                "zones: not represented by this consumer"
+              ]
+            }
+          }
+        },
+        "0.5": {
+          "attempts": [
+            {
+              "command": [
+                "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+                "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+                "--out",
+                "/tmp/salsa-angle-eval/screen/s60-r0.5/auto.ogg",
+                "--reference-start",
+                "2880000",
+                "--max-frames",
+                "480000",
+                "--ceiling-horizontal-gain",
+                "0.5",
+                "--lfe-bitrate",
+                "24000",
+                "--beta",
+                "1e-6",
+                "--no-progress",
+                "--front-bitrate",
+                "120000",
+                "--surround-bitrate",
+                "96000",
+                "--aux-bitrate",
+                "120000",
+                "--center-bitrate",
+                "84000"
+              ],
+              "stream": "/tmp/salsa-angle-eval/screen/s60-r0.5/auto.ogg",
+              "core_targets": [
+                120000,
+                96000,
+                120000,
+                84000
+              ],
+              "requested_headroom_db": null,
+              "elapsed_seconds": 36.61605375004001,
+              "cached": false,
+              "stream_sha256": "bb89c76d0f9fcc1647840f8198e33a038a7f7ea33c6de184598d15b29082d9ec",
+              "report": {
+                "ceiling_horizontal_gain": 0.5,
+                "headroom_gain": 1.0,
+                "core_bytes": 556500,
+                "metadata_bytes": 367640,
+                "transport_bytes": 1334938,
+                "total_bytes": 1334938,
+                "duration_samples": 480000,
+                "core_bitrate": 445200.0,
+                "metadata_bitrate": 294112.0,
+                "total_bitrate": 1067950.4,
+                "peak_metadata_bitrate": 684800.0,
+                "object_count": 91,
+                "opus_wrapper": "opus 0.4.0",
+                "opus_native": "libopus 1.6.1",
+                "warnings": [
+                  "decorr: not represented by this consumer",
+                  "size: not represented by this consumer",
+                  "elevation: not represented by this consumer",
+                  "zones: not represented by this consumer"
+                ]
+              }
+            }
+          ],
+          "selected": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+              "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+              "--out",
+              "/tmp/salsa-angle-eval/screen/s60-r0.5/auto.ogg",
+              "--reference-start",
+              "2880000",
+              "--max-frames",
+              "480000",
+              "--ceiling-horizontal-gain",
+              "0.5",
+              "--lfe-bitrate",
+              "24000",
+              "--beta",
+              "1e-6",
+              "--no-progress",
+              "--front-bitrate",
+              "120000",
+              "--surround-bitrate",
+              "96000",
+              "--aux-bitrate",
+              "120000",
+              "--center-bitrate",
+              "84000"
+            ],
+            "stream": "/tmp/salsa-angle-eval/screen/s60-r0.5/auto.ogg",
+            "core_targets": [
+              120000,
+              96000,
+              120000,
+              84000
+            ],
+            "requested_headroom_db": null,
+            "elapsed_seconds": 36.61605375004001,
+            "cached": false,
+            "stream_sha256": "bb89c76d0f9fcc1647840f8198e33a038a7f7ea33c6de184598d15b29082d9ec",
+            "report": {
+              "ceiling_horizontal_gain": 0.5,
+              "headroom_gain": 1.0,
+              "core_bytes": 556500,
+              "metadata_bytes": 367640,
+              "transport_bytes": 1334938,
+              "total_bytes": 1334938,
+              "duration_samples": 480000,
+              "core_bitrate": 445200.0,
+              "metadata_bitrate": 294112.0,
+              "total_bitrate": 1067950.4,
+              "peak_metadata_bitrate": 684800.0,
+              "object_count": 91,
+              "opus_wrapper": "opus 0.4.0",
+              "opus_native": "libopus 1.6.1",
+              "warnings": [
+                "decorr: not represented by this consumer",
+                "size: not represented by this consumer",
+                "elevation: not represented by this consumer",
+                "zones: not represented by this consumer"
+              ]
+            }
+          }
+        }
+      },
+      "layouts": {
+        "2.0": {
+          "reference_render": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+              "salsadamfsrc location=\"/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos\" ! identity name=object_pcm ! salsaoar layout=2.0 limiter-enable=false",
+              "/tmp/salsa-angle-eval/screen/s60-2.0-reference.wav",
+              "60.0",
+              "70.0",
+              "--warp-mode",
+              "3"
+            ],
+            "frames_written": 480768,
+            "frames_measured": 480000
+          },
+          "candidates": {
+            "0": {
+              "error_db": -20.2054749622412,
+              "full_range_error_db": -20.205474962243134,
+              "height_error_db": null,
+              "level_delta_db": -0.1507767484470866,
+              "per_channel": {
+                "L": {
+                  "error_db": -20.111125055031014,
+                  "reference_rms_dbfs": -26.51193755807522,
+                  "level_delta_db": -0.16898601005890554,
+                  "correlation": 0.9952198264835608
+                },
+                "R": {
+                  "error_db": -20.295446441016395,
+                  "reference_rms_dbfs": -26.21340293466636,
+                  "level_delta_db": -0.13384577593994137,
+                  "correlation": 0.9953750249535965
+                }
+              },
+              "per_second_full_range_error_db": [
+                -17.807011227476124,
+                -20.918591401265584,
+                -19.627005020687346,
+                -19.62253600199917,
+                -21.976814595595634,
+                -18.20051843610627,
+                -18.09276812384165,
+                -18.038604480499206,
+                -18.883909112257836,
+                -20.633617056053208
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 2219.52823587377,
+                  "error": 21.169625638982236
+                },
+                "height": {
+                  "reference": 0.0,
+                  "error": 0.0
+                },
+                "ground": {
+                  "reference": 2219.52823587377,
+                  "error": 21.169625638982236
+                }
+              },
+              "ground_error_db": -20.205474962243134,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.6561021208763123,
+              "candidate_peak": 0.6590460538864136,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s60-r0/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=2.0 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s60-2.0-r0.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.25": {
+              "error_db": -20.255729018157588,
+              "full_range_error_db": -20.255729018159727,
+              "height_error_db": null,
+              "level_delta_db": -0.14562344261047377,
+              "per_channel": {
+                "L": {
+                  "error_db": -20.188782504751835,
+                  "reference_rms_dbfs": -26.51193755807522,
+                  "level_delta_db": -0.1551289803002046,
+                  "correlation": 0.9952859108043945
+                },
+                "R": {
+                  "error_db": -20.319173593367008,
+                  "reference_rms_dbfs": -26.21340293466636,
+                  "level_delta_db": -0.1367681035707256,
+                  "correlation": 0.9954045246595893
+                }
+              },
+              "per_second_full_range_error_db": [
+                -17.847932815136968,
+                -20.969423258844714,
+                -19.719385120092625,
+                -19.936448941234254,
+                -22.374514262139158,
+                -18.250797543883927,
+                -17.93386431731588,
+                -18.11286088078345,
+                -18.74834882069877,
+                -20.34676181949162
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 2219.52823587377,
+                  "error": 20.92607475758794
+                },
+                "height": {
+                  "reference": 0.0,
+                  "error": 0.0
+                },
+                "ground": {
+                  "reference": 2219.52823587377,
+                  "error": 20.92607475758794
+                }
+              },
+              "ground_error_db": -20.255729018159727,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.6561021208763123,
+              "candidate_peak": 0.6581873893737793,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s60-r0.25/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=2.0 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s60-2.0-r0.25.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.5": {
+              "error_db": -20.331697965873175,
+              "full_range_error_db": -20.331697965875193,
+              "height_error_db": null,
+              "level_delta_db": -0.1490199247359519,
+              "per_channel": {
+                "L": {
+                  "error_db": -20.467655008736543,
+                  "reference_rms_dbfs": -26.51193755807522,
+                  "level_delta_db": -0.15780395416195997,
+                  "correlation": 0.9955931612357459
+                },
+                "R": {
+                  "error_db": -20.208502759877824,
+                  "reference_rms_dbfs": -26.21340293466636,
+                  "level_delta_db": -0.14083542944510957,
+                  "correlation": 0.9952879297973602
+                }
+              },
+              "per_second_full_range_error_db": [
+                -17.818917905834137,
+                -21.044265269904155,
+                -19.924375524669102,
+                -20.04103618797285,
+                -22.372907066166757,
+                -18.459009760535174,
+                -18.0242151154662,
+                -18.147051172756846,
+                -18.73454381216533,
+                -20.329940637168754
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 2219.52823587377,
+                  "error": 20.563208436526978
+                },
+                "height": {
+                  "reference": 0.0,
+                  "error": 0.0
+                },
+                "ground": {
+                  "reference": 2219.52823587377,
+                  "error": 20.563208436526978
+                }
+              },
+              "ground_error_db": -20.331697965875193,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.6561021208763123,
+              "candidate_peak": 0.6502289772033691,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s60-r0.5/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=2.0 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s60-2.0-r0.5.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            }
+          }
+        },
+        "7.1.4": {
+          "reference_render": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+              "salsadamfsrc location=\"/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos\" ! identity name=object_pcm ! salsaoar layout=7.1.4 limiter-enable=false",
+              "/tmp/salsa-angle-eval/screen/s60-7.1.4-reference.wav",
+              "60.0",
+              "70.0",
+              "--warp-mode",
+              "3"
+            ],
+            "frames_written": 480768,
+            "frames_measured": 480000
+          },
+          "candidates": {
+            "0": {
+              "error_db": -17.255184974299986,
+              "full_range_error_db": -16.868978442310734,
+              "height_error_db": -16.162853778426236,
+              "level_delta_db": -0.1428842781707699,
+              "per_channel": {
+                "L": {
+                  "error_db": -19.67780907798503,
+                  "reference_rms_dbfs": -30.15884425713777,
+                  "level_delta_db": -0.1764095213973752,
+                  "correlation": 0.9947107231734297
+                },
+                "R": {
+                  "error_db": -19.486057981813694,
+                  "reference_rms_dbfs": -29.99310120553215,
+                  "level_delta_db": -0.1032927369438976,
+                  "correlation": 0.9943752503692262
+                },
+                "C": {
+                  "error_db": -21.09149646402105,
+                  "reference_rms_dbfs": -29.002235656418023,
+                  "level_delta_db": -0.09492989086160769,
+                  "correlation": 0.9961281467795311
+                },
+                "LFE": {
+                  "error_db": -19.719485539253945,
+                  "reference_rms_dbfs": -29.999039270313837,
+                  "level_delta_db": -0.04363709551898165,
+                  "correlation": 0.9946521444728555
+                },
+                "Lrs": {
+                  "error_db": -10.318253597389921,
+                  "reference_rms_dbfs": -39.683687902092984,
+                  "level_delta_db": -0.5643177264199507,
+                  "correlation": 0.9525250929906663
+                },
+                "Rrs": {
+                  "error_db": -10.397268966439956,
+                  "reference_rms_dbfs": -39.20218427323791,
+                  "level_delta_db": -0.5743558057319803,
+                  "correlation": 0.9534386051504714
+                },
+                "Ls": {
+                  "error_db": -10.617982363734024,
+                  "reference_rms_dbfs": -39.51926459431772,
+                  "level_delta_db": -0.5755441919015665,
+                  "correlation": 0.9558568803910326
+                },
+                "Rs": {
+                  "error_db": -12.033725294410694,
+                  "reference_rms_dbfs": -37.264806329718795,
+                  "level_delta_db": -0.38824802306255063,
+                  "correlation": 0.9682643395939565
+                },
+                "Ltf": {
+                  "error_db": -16.815223203679604,
+                  "reference_rms_dbfs": -35.973804880821184,
+                  "level_delta_db": -0.07428782848488938,
+                  "correlation": 0.9895372327514838
+                },
+                "Rtf": {
+                  "error_db": -17.92060369276196,
+                  "reference_rms_dbfs": -34.15887454499759,
+                  "level_delta_db": -0.05431868727783395,
+                  "correlation": 0.9918982539614821
+                },
+                "Ltr": {
+                  "error_db": -14.341338420739788,
+                  "reference_rms_dbfs": -38.718035507984276,
+                  "level_delta_db": -0.28577397912764013,
+                  "correlation": 0.9815250356693388
+                },
+                "Rtr": {
+                  "error_db": -13.888381576222544,
+                  "reference_rms_dbfs": -38.693091890877255,
+                  "level_delta_db": -0.28062237103521265,
+                  "correlation": 0.979427748373549
+                }
+              },
+              "per_second_full_range_error_db": [
+                -14.421725613556447,
+                -18.34120391398827,
+                -15.972196498128291,
+                -15.697025006758905,
+                -17.983290558709186,
+                -14.387351700429122,
+                -15.412730450278836,
+                -13.450897294062392,
+                -15.685850372509606,
+                -18.63326295611197
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 2235.3918245973578,
+                  "error": 45.968021739830405
+                },
+                "height": {
+                  "reference": 434.8623735690789,
+                  "error": 10.521228534999114
+                },
+                "ground": {
+                  "reference": 1800.5294510282786,
+                  "error": 35.44679320483129
+                }
+              },
+              "ground_error_db": -17.05823277856111,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.5729543566703796,
+              "candidate_peak": 0.579240620136261,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s60-r0/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=7.1.4 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s60-7.1.4-r0.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.25": {
+              "error_db": -17.24960406483796,
+              "full_range_error_db": -16.86277619496103,
+              "height_error_db": -16.2575528478023,
+              "level_delta_db": -0.14129766203476393,
+              "per_channel": {
+                "L": {
+                  "error_db": -19.725429498773856,
+                  "reference_rms_dbfs": -30.15884425713777,
+                  "level_delta_db": -0.14431222058939225,
+                  "correlation": 0.9947224737580952
+                },
+                "R": {
+                  "error_db": -19.535172595788527,
+                  "reference_rms_dbfs": -29.99310120553215,
+                  "level_delta_db": -0.10709089163883784,
+                  "correlation": 0.9944421306460113
+                },
+                "C": {
+                  "error_db": -21.018507983140196,
+                  "reference_rms_dbfs": -29.002235656418023,
+                  "level_delta_db": -0.09132944288413859,
+                  "correlation": 0.9960587259357232
+                },
+                "LFE": {
+                  "error_db": -19.719485539253945,
+                  "reference_rms_dbfs": -29.999039270313837,
+                  "level_delta_db": -0.04363709551898165,
+                  "correlation": 0.9946521444728555
+                },
+                "Lrs": {
+                  "error_db": -10.214907175822933,
+                  "reference_rms_dbfs": -39.683687902092984,
+                  "level_delta_db": -0.5893022079957507,
+                  "correlation": 0.9513758511332232
+                },
+                "Rrs": {
+                  "error_db": -10.298518809309831,
+                  "reference_rms_dbfs": -39.20218427323791,
+                  "level_delta_db": -0.5948712918173455,
+                  "correlation": 0.9523586263014708
+                },
+                "Ls": {
+                  "error_db": -10.573497277242026,
+                  "reference_rms_dbfs": -39.51926459431772,
+                  "level_delta_db": -0.5822897594625869,
+                  "correlation": 0.955395212446611
+                },
+                "Rs": {
+                  "error_db": -12.000183031961457,
+                  "reference_rms_dbfs": -37.264806329718795,
+                  "level_delta_db": -0.4184270349434168,
+                  "correlation": 0.9680571182724698
+                },
+                "Ltf": {
+                  "error_db": -16.780977003705694,
+                  "reference_rms_dbfs": -35.973804880821184,
+                  "level_delta_db": -0.08169024383211544,
+                  "correlation": 0.9894527427040362
+                },
+                "Rtf": {
+                  "error_db": -17.913012743777898,
+                  "reference_rms_dbfs": -34.15887454499759,
+                  "level_delta_db": -0.0793976879044337,
+                  "correlation": 0.99188274761565
+                },
+                "Ltr": {
+                  "error_db": -14.523290945943092,
+                  "reference_rms_dbfs": -38.718035507984276,
+                  "level_delta_db": -0.2697225554511645,
+                  "correlation": 0.9822798495499787
+                },
+                "Rtr": {
+                  "error_db": -14.149817074351818,
+                  "reference_rms_dbfs": -38.693091890877255,
+                  "level_delta_db": -0.29829400204203205,
+                  "correlation": 0.9806874694500287
+                }
+              },
+              "per_second_full_range_error_db": [
+                -14.388523617729259,
+                -18.347497134000346,
+                -15.9775652884439,
+                -15.679868015738819,
+                -18.188235309679083,
+                -14.335872603444006,
+                -15.373661339202705,
+                -13.45913543832153,
+                -15.6610887070681,
+                -18.547915045082725
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 2235.3918245973578,
+                  "error": 46.03371650040919
+                },
+                "height": {
+                  "reference": 434.8623735690789,
+                  "error": 10.294293523260505
+                },
+                "ground": {
+                  "reference": 1800.5294510282786,
+                  "error": 35.73942297714868
+                }
+              },
+              "ground_error_db": -17.022526930423815,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.5729543566703796,
+              "candidate_peak": 0.5772643089294434,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s60-r0.25/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=7.1.4 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s60-7.1.4-r0.25.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.5": {
+              "error_db": -17.22857819975069,
+              "full_range_error_db": -16.839417414038923,
+              "height_error_db": -16.329551874171297,
+              "level_delta_db": -0.1474926051326436,
+              "per_channel": {
+                "L": {
+                  "error_db": -19.95445759853795,
+                  "reference_rms_dbfs": -30.15884425713777,
+                  "level_delta_db": -0.14900545701094284,
+                  "correlation": 0.9950070137816022
+                },
+                "R": {
+                  "error_db": -19.28243200168124,
+                  "reference_rms_dbfs": -29.99310120553215,
+                  "level_delta_db": -0.1240068144012676,
+                  "correlation": 0.9941188032441144
+                },
+                "C": {
+                  "error_db": -21.03542669602671,
+                  "reference_rms_dbfs": -29.002235656418023,
+                  "level_delta_db": -0.09776182557618948,
+                  "correlation": 0.9960793767619
+                },
+                "LFE": {
+                  "error_db": -19.719485539253945,
+                  "reference_rms_dbfs": -29.999039270313837,
+                  "level_delta_db": -0.04363709551898165,
+                  "correlation": 0.9946521444728555
+                },
+                "Lrs": {
+                  "error_db": -10.017505215021039,
+                  "reference_rms_dbfs": -39.683687902092984,
+                  "level_delta_db": -0.6090308251463026,
+                  "correlation": 0.9490432644364728
+                },
+                "Rrs": {
+                  "error_db": -10.278517586974605,
+                  "reference_rms_dbfs": -39.20218427323791,
+                  "level_delta_db": -0.5971843982584519,
+                  "correlation": 0.9521327933283865
+                },
+                "Ls": {
+                  "error_db": -10.520924861354429,
+                  "reference_rms_dbfs": -39.51926459431772,
+                  "level_delta_db": -0.56630196188888,
+                  "correlation": 0.9547900220126526
+                },
+                "Rs": {
+                  "error_db": -11.95600230622135,
+                  "reference_rms_dbfs": -37.264806329718795,
+                  "level_delta_db": -0.42701285106548076,
+                  "correlation": 0.967733691424821
+                },
+                "Ltf": {
+                  "error_db": -16.719493202091577,
+                  "reference_rms_dbfs": -35.973804880821184,
+                  "level_delta_db": -0.08809293723112194,
+                  "correlation": 0.9893010137684095
+                },
+                "Rtf": {
+                  "error_db": -17.91616272054865,
+                  "reference_rms_dbfs": -34.15887454499759,
+                  "level_delta_db": -0.07862240719015771,
+                  "correlation": 0.991888579052768
+                },
+                "Ltr": {
+                  "error_db": -14.680634476948049,
+                  "reference_rms_dbfs": -38.718035507984276,
+                  "level_delta_db": -0.29484814253966846,
+                  "correlation": 0.9829706844705524
+                },
+                "Rtr": {
+                  "error_db": -14.368371542518119,
+                  "reference_rms_dbfs": -38.693091890877255,
+                  "level_delta_db": -0.2877070502794724,
+                  "correlation": 0.9816461786729543
+                }
+              },
+              "per_second_full_range_error_db": [
+                -14.361460750309522,
+                -18.30426217406657,
+                -15.994229060479606,
+                -15.699097645257092,
+                -18.11733485615529,
+                -14.410319685927364,
+                -15.356778096427368,
+                -13.48909672050798,
+                -15.584254174456,
+                -18.466675275311854
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 2235.3918245973578,
+                  "error": 46.28197856544885
+                },
+                "height": {
+                  "reference": 434.8623735690789,
+                  "error": 10.12503759786763
+                },
+                "ground": {
+                  "reference": 1800.5294510282786,
+                  "error": 36.15694096758123
+                }
+              },
+              "ground_error_db": -16.972085492842307,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.5729543566703796,
+              "candidate_peak": 0.5766716599464417,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s60-r0.5/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=7.1.4 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s60-7.1.4-r0.5.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            }
+          }
+        },
+        "9.1.6": {
+          "reference_render": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+              "salsadamfsrc location=\"/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos\" ! identity name=object_pcm ! salsaoar layout=9.1.6 limiter-enable=false",
+              "/tmp/salsa-angle-eval/screen/s60-9.1.6-reference.wav",
+              "60.0",
+              "70.0",
+              "--warp-mode",
+              "3"
+            ],
+            "frames_written": 480768,
+            "frames_measured": 480000
+          },
+          "candidates": {
+            "0": {
+              "error_db": -15.337605759361978,
+              "full_range_error_db": -14.779381440316143,
+              "height_error_db": -13.699184049570597,
+              "level_delta_db": -0.20016461601867042,
+              "per_channel": {
+                "L": {
+                  "error_db": -17.83494433602236,
+                  "reference_rms_dbfs": -30.479634028981607,
+                  "level_delta_db": -0.22137868490231247,
+                  "correlation": 0.9918808876421291
+                },
+                "R": {
+                  "error_db": -16.746159742061646,
+                  "reference_rms_dbfs": -30.647619311750102,
+                  "level_delta_db": -0.16504720623078478,
+                  "correlation": 0.989400845960716
+                },
+                "C": {
+                  "error_db": -20.537390113385182,
+                  "reference_rms_dbfs": -29.256247389579254,
+                  "level_delta_db": -0.09863499366822125,
+                  "correlation": 0.9955959673988255
+                },
+                "LFE": {
+                  "error_db": -19.719485539253945,
+                  "reference_rms_dbfs": -29.999039270313837,
+                  "level_delta_db": -0.04363709551898165,
+                  "correlation": 0.9946521444728555
+                },
+                "Lrs": {
+                  "error_db": -10.318253597389921,
+                  "reference_rms_dbfs": -39.683687902092984,
+                  "level_delta_db": -0.5643177264199507,
+                  "correlation": 0.9525250929906663
+                },
+                "Rrs": {
+                  "error_db": -10.397268966439956,
+                  "reference_rms_dbfs": -39.20218427323791,
+                  "level_delta_db": -0.5743558057319803,
+                  "correlation": 0.9534386051504714
+                },
+                "Ls": {
+                  "error_db": -9.606750959751354,
+                  "reference_rms_dbfs": -41.33761493407694,
+                  "level_delta_db": -0.7062361814866551,
+                  "correlation": 0.9439319300095648
+                },
+                "Rs": {
+                  "error_db": -10.401757369072723,
+                  "reference_rms_dbfs": -39.28513395428076,
+                  "level_delta_db": -0.5466472584777722,
+                  "correlation": 0.9534380646413619
+                },
+                "Ltf": {
+                  "error_db": -14.872952204053636,
+                  "reference_rms_dbfs": -36.91934312648654,
+                  "level_delta_db": -0.12129948634565622,
+                  "correlation": 0.9835877919482676
+                },
+                "Rtf": {
+                  "error_db": -16.05243187456814,
+                  "reference_rms_dbfs": -35.09604197495578,
+                  "level_delta_db": -0.0952792148127616,
+                  "correlation": 0.9875145837790918
+                },
+                "Ltr": {
+                  "error_db": -12.038991882890848,
+                  "reference_rms_dbfs": -40.87767514226164,
+                  "level_delta_db": -0.38958616898865267,
+                  "correlation": 0.9683058753342922
+                },
+                "Rtr": {
+                  "error_db": -10.653152946448614,
+                  "reference_rms_dbfs": -42.225405472906736,
+                  "level_delta_db": -0.50845980419454,
+                  "correlation": 0.9561020217701351
+                },
+                "Ltm": {
+                  "error_db": -11.664189923425505,
+                  "reference_rms_dbfs": -40.54706547842143,
+                  "level_delta_db": -0.3580354213328962,
+                  "correlation": 0.9653313289277738
+                },
+                "Rtm": {
+                  "error_db": -12.945551497458679,
+                  "reference_rms_dbfs": -38.64289875831571,
+                  "level_delta_db": -0.2351623698382459,
+                  "correlation": 0.9742946074843735
+                },
+                "Lw": {
+                  "error_db": -9.8760235868161,
+                  "reference_rms_dbfs": -38.75015373360935,
+                  "level_delta_db": -0.6325869937537133,
+                  "correlation": 0.9473185955659682
+                },
+                "Rw": {
+                  "error_db": -11.170926212443202,
+                  "reference_rms_dbfs": -35.87807674736127,
+                  "level_delta_db": -0.523358825505195,
+                  "correlation": 0.9612607304075893
+                }
+              },
+              "per_second_full_range_error_db": [
+                -12.49194984340318,
+                -17.240250065363796,
+                -13.675898037976463,
+                -12.494693057938257,
+                -14.874799022911262,
+                -11.114154737893767,
+                -13.116341110545761,
+                -10.962824114624585,
+                -13.323160233532068,
+                -16.771372816762092
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 2224.0912546341024,
+                  "error": 73.99705887442748
+                },
+                "height": {
+                  "reference": 421.93453394313553,
+                  "error": 18.002244981133178
+                },
+                "ground": {
+                  "reference": 1802.1567206909651,
+                  "error": 55.99481389329431
+                }
+              },
+              "ground_error_db": -15.076447502276702,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.5736338496208191,
+              "candidate_peak": 0.579240620136261,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s60-r0/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=9.1.6 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s60-9.1.6-r0.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.25": {
+              "error_db": -15.327974520521284,
+              "full_range_error_db": -14.769084404699717,
+              "height_error_db": -13.73790701956893,
+              "level_delta_db": -0.19769956244262502,
+              "per_channel": {
+                "L": {
+                  "error_db": -17.834016111471666,
+                  "reference_rms_dbfs": -30.479634028981607,
+                  "level_delta_db": -0.18540373918203584,
+                  "correlation": 0.9918169969034014
+                },
+                "R": {
+                  "error_db": -16.731498310369513,
+                  "reference_rms_dbfs": -30.647619311750102,
+                  "level_delta_db": -0.17131937712061013,
+                  "correlation": 0.9893705627828219
+                },
+                "C": {
+                  "error_db": -20.43002004643855,
+                  "reference_rms_dbfs": -29.256247389579254,
+                  "level_delta_db": -0.094515061767714,
+                  "correlation": 0.9954810141747692
+                },
+                "LFE": {
+                  "error_db": -19.719485539253945,
+                  "reference_rms_dbfs": -29.999039270313837,
+                  "level_delta_db": -0.04363709551898165,
+                  "correlation": 0.9946521444728555
+                },
+                "Lrs": {
+                  "error_db": -10.214907175822933,
+                  "reference_rms_dbfs": -39.683687902092984,
+                  "level_delta_db": -0.5893022079957507,
+                  "correlation": 0.9513758511332232
+                },
+                "Rrs": {
+                  "error_db": -10.298518809309831,
+                  "reference_rms_dbfs": -39.20218427323791,
+                  "level_delta_db": -0.5948712918173455,
+                  "correlation": 0.9523586263014708
+                },
+                "Ls": {
+                  "error_db": -9.583834741579771,
+                  "reference_rms_dbfs": -41.33761493407694,
+                  "level_delta_db": -0.7069470679064692,
+                  "correlation": 0.9436195782463801
+                },
+                "Rs": {
+                  "error_db": -10.459638178967905,
+                  "reference_rms_dbfs": -39.28513395428076,
+                  "level_delta_db": -0.5814892736780182,
+                  "correlation": 0.9541488840521962
+                },
+                "Ltf": {
+                  "error_db": -14.726325419656824,
+                  "reference_rms_dbfs": -36.91934312648654,
+                  "level_delta_db": -0.1292644885137777,
+                  "correlation": 0.9830184337721367
+                },
+                "Rtf": {
+                  "error_db": -16.006667515338467,
+                  "reference_rms_dbfs": -35.09604197495578,
+                  "level_delta_db": -0.1161944485499402,
+                  "correlation": 0.9873804317945769
+                },
+                "Ltr": {
+                  "error_db": -12.034985925528435,
+                  "reference_rms_dbfs": -40.87767514226164,
+                  "level_delta_db": -0.3888347294306383,
+                  "correlation": 0.9682746521655913
+                },
+                "Rtr": {
+                  "error_db": -10.645940980267794,
+                  "reference_rms_dbfs": -42.225405472906736,
+                  "level_delta_db": -0.5219547829859054,
+                  "correlation": 0.9560473869553663
+                },
+                "Ltm": {
+                  "error_db": -11.904604769958736,
+                  "reference_rms_dbfs": -40.54706547842143,
+                  "level_delta_db": -0.3411212219951287,
+                  "correlation": 0.9672310892464492
+                },
+                "Rtm": {
+                  "error_db": -13.15797780105229,
+                  "reference_rms_dbfs": -38.64289875831571,
+                  "level_delta_db": -0.26562349192133117,
+                  "correlation": 0.9755530661257511
+                },
+                "Lw": {
+                  "error_db": -9.78623470529009,
+                  "reference_rms_dbfs": -38.75015373360935,
+                  "level_delta_db": -0.6374716712579727,
+                  "correlation": 0.9461720374195087
+                },
+                "Rw": {
+                  "error_db": -11.239312369571088,
+                  "reference_rms_dbfs": -35.87807674736127,
+                  "level_delta_db": -0.511292308499215,
+                  "correlation": 0.9618669607984943
+                }
+              },
+              "per_second_full_range_error_db": [
+                -12.41862959237176,
+                -17.242325311945272,
+                -13.69205795162461,
+                -12.49194190954687,
+                -15.100401691303487,
+                -10.95495965247393,
+                -13.018305053132185,
+                -10.971192816781182,
+                -13.324212825906054,
+                -16.78641626957193
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 2224.0912546341024,
+                  "error": 74.1727125797795
+                },
+                "height": {
+                  "reference": 421.93453394313553,
+                  "error": 17.84244515371387
+                },
+                "ground": {
+                  "reference": 1802.1567206909651,
+                  "error": 56.330267426065646
+                }
+              },
+              "ground_error_db": -15.05050742733937,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.5736338496208191,
+              "candidate_peak": 0.5772643089294434,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s60-r0.25/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=9.1.6 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s60-9.1.6-r0.25.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.5": {
+              "error_db": -15.278536519822794,
+              "full_range_error_db": -14.716253541307356,
+              "height_error_db": -13.796228549129578,
+              "level_delta_db": -0.20643556900518428,
+              "per_channel": {
+                "L": {
+                  "error_db": -17.932626113754438,
+                  "reference_rms_dbfs": -30.479634028981607,
+                  "level_delta_db": -0.19512523141309981,
+                  "correlation": 0.9920211307602277
+                },
+                "R": {
+                  "error_db": -16.472364562218818,
+                  "reference_rms_dbfs": -30.647619311750102,
+                  "level_delta_db": -0.19619711852154204,
+                  "correlation": 0.9887327082439274
+                },
+                "C": {
+                  "error_db": -20.40488818382211,
+                  "reference_rms_dbfs": -29.256247389579254,
+                  "level_delta_db": -0.10001022036442522,
+                  "correlation": 0.995458614510385
+                },
+                "LFE": {
+                  "error_db": -19.719485539253945,
+                  "reference_rms_dbfs": -29.999039270313837,
+                  "level_delta_db": -0.04363709551898165,
+                  "correlation": 0.9946521444728555
+                },
+                "Lrs": {
+                  "error_db": -10.017505215021039,
+                  "reference_rms_dbfs": -39.683687902092984,
+                  "level_delta_db": -0.6090308251463026,
+                  "correlation": 0.9490432644364728
+                },
+                "Rrs": {
+                  "error_db": -10.278517586974605,
+                  "reference_rms_dbfs": -39.20218427323791,
+                  "level_delta_db": -0.5971843982584519,
+                  "correlation": 0.9521327933283865
+                },
+                "Ls": {
+                  "error_db": -9.598577185777854,
+                  "reference_rms_dbfs": -41.33761493407694,
+                  "level_delta_db": -0.6846638264700123,
+                  "correlation": 0.9437685684321264
+                },
+                "Rs": {
+                  "error_db": -10.438288837345212,
+                  "reference_rms_dbfs": -39.28513395428076,
+                  "level_delta_db": -0.5753267746157759,
+                  "correlation": 0.9538988802875035
+                },
+                "Ltf": {
+                  "error_db": -14.626853578095977,
+                  "reference_rms_dbfs": -36.91934312648654,
+                  "level_delta_db": -0.13423771813443827,
+                  "correlation": 0.9826210989016069
+                },
+                "Rtf": {
+                  "error_db": -16.008561415613013,
+                  "reference_rms_dbfs": -35.09604197495578,
+                  "level_delta_db": -0.13414884600963634,
+                  "correlation": 0.9873894760625115
+                },
+                "Ltr": {
+                  "error_db": -11.970636564540749,
+                  "reference_rms_dbfs": -40.87767514226164,
+                  "level_delta_db": -0.4164562385492965,
+                  "correlation": 0.9678277896776949
+                },
+                "Rtr": {
+                  "error_db": -10.734294861874252,
+                  "reference_rms_dbfs": -42.225405472906736,
+                  "level_delta_db": -0.5416914398127259,
+                  "correlation": 0.9570061233137369
+                },
+                "Ltm": {
+                  "error_db": -12.073899762061531,
+                  "reference_rms_dbfs": -40.54706547842143,
+                  "level_delta_db": -0.3426682267645815,
+                  "correlation": 0.9685146513927113
+                },
+                "Rtm": {
+                  "error_db": -13.433492086918424,
+                  "reference_rms_dbfs": -38.64289875831571,
+                  "level_delta_db": -0.23098339857857791,
+                  "correlation": 0.9770635876582904
+                },
+                "Lw": {
+                  "error_db": -9.78926968374596,
+                  "reference_rms_dbfs": -38.75015373360935,
+                  "level_delta_db": -0.6387807644991084,
+                  "correlation": 0.9462140921903733
+                },
+                "Rw": {
+                  "error_db": -11.023665688157408,
+                  "reference_rms_dbfs": -35.87807674736127,
+                  "level_delta_db": -0.5391727687310941,
+                  "correlation": 0.9598969844166404
+                }
+              },
+              "per_second_full_range_error_db": [
+                -12.419954046819207,
+                -17.086153504159377,
+                -13.68415141291477,
+                -12.516624474378144,
+                -15.042868096693942,
+                -10.974200374814897,
+                -13.016915574746506,
+                -10.896148572147762,
+                -13.254513443846971,
+                -16.740313827750313
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 2224.0912546341024,
+                  "error": 75.08051592726741
+                },
+                "height": {
+                  "reference": 421.93453394313553,
+                  "error": 17.604440115011002
+                },
+                "ground": {
+                  "reference": 1802.1567206909651,
+                  "error": 57.47607581225635
+                }
+              },
+              "ground_error_db": -14.963054468196205,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.5736338496208191,
+              "candidate_peak": 0.5766716599464417,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s60-r0.5/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=9.1.6 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s60-9.1.6-r0.5.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            }
+          }
+        }
+      },
+      "common_headroom_gain": 1.0
+    },
+    "120": {
+      "encodes": {
+        "0": {
+          "attempts": [
+            {
+              "command": [
+                "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+                "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+                "--out",
+                "/tmp/salsa-angle-eval/screen/s120-r0/auto.ogg",
+                "--reference-start",
+                "5760000",
+                "--max-frames",
+                "480000",
+                "--ceiling-horizontal-gain",
+                "0.0",
+                "--lfe-bitrate",
+                "24000",
+                "--beta",
+                "1e-6",
+                "--no-progress",
+                "--front-bitrate",
+                "120000",
+                "--surround-bitrate",
+                "96000",
+                "--aux-bitrate",
+                "120000",
+                "--center-bitrate",
+                "84000"
+              ],
+              "stream": "/tmp/salsa-angle-eval/screen/s120-r0/auto.ogg",
+              "core_targets": [
+                120000,
+                96000,
+                120000,
+                84000
+              ],
+              "requested_headroom_db": null,
+              "elapsed_seconds": 38.81587679195218,
+              "cached": false,
+              "stream_sha256": "d85a2f0152b47a186d899cd7d3000e6ec235fa1c2300e7332435cbca951b0659",
+              "report": {
+                "ceiling_horizontal_gain": 0.0,
+                "headroom_gain": 1.0,
+                "core_bytes": 556500,
+                "metadata_bytes": 347984,
+                "transport_bytes": 1317834,
+                "total_bytes": 1317834,
+                "duration_samples": 480000,
+                "core_bitrate": 445200.0,
+                "metadata_bitrate": 278387.2,
+                "total_bitrate": 1054267.2,
+                "peak_metadata_bitrate": 704320.0,
+                "object_count": 91,
+                "opus_wrapper": "opus 0.4.0",
+                "opus_native": "libopus 1.6.1",
+                "warnings": [
+                  "decorr: not represented by this consumer",
+                  "size: not represented by this consumer",
+                  "elevation: not represented by this consumer",
+                  "zones: not represented by this consumer"
+                ]
+              }
+            }
+          ],
+          "selected": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+              "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+              "--out",
+              "/tmp/salsa-angle-eval/screen/s120-r0/auto.ogg",
+              "--reference-start",
+              "5760000",
+              "--max-frames",
+              "480000",
+              "--ceiling-horizontal-gain",
+              "0.0",
+              "--lfe-bitrate",
+              "24000",
+              "--beta",
+              "1e-6",
+              "--no-progress",
+              "--front-bitrate",
+              "120000",
+              "--surround-bitrate",
+              "96000",
+              "--aux-bitrate",
+              "120000",
+              "--center-bitrate",
+              "84000"
+            ],
+            "stream": "/tmp/salsa-angle-eval/screen/s120-r0/auto.ogg",
+            "core_targets": [
+              120000,
+              96000,
+              120000,
+              84000
+            ],
+            "requested_headroom_db": null,
+            "elapsed_seconds": 38.81587679195218,
+            "cached": false,
+            "stream_sha256": "d85a2f0152b47a186d899cd7d3000e6ec235fa1c2300e7332435cbca951b0659",
+            "report": {
+              "ceiling_horizontal_gain": 0.0,
+              "headroom_gain": 1.0,
+              "core_bytes": 556500,
+              "metadata_bytes": 347984,
+              "transport_bytes": 1317834,
+              "total_bytes": 1317834,
+              "duration_samples": 480000,
+              "core_bitrate": 445200.0,
+              "metadata_bitrate": 278387.2,
+              "total_bitrate": 1054267.2,
+              "peak_metadata_bitrate": 704320.0,
+              "object_count": 91,
+              "opus_wrapper": "opus 0.4.0",
+              "opus_native": "libopus 1.6.1",
+              "warnings": [
+                "decorr: not represented by this consumer",
+                "size: not represented by this consumer",
+                "elevation: not represented by this consumer",
+                "zones: not represented by this consumer"
+              ]
+            }
+          }
+        },
+        "0.25": {
+          "attempts": [
+            {
+              "command": [
+                "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+                "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+                "--out",
+                "/tmp/salsa-angle-eval/screen/s120-r0.25/auto.ogg",
+                "--reference-start",
+                "5760000",
+                "--max-frames",
+                "480000",
+                "--ceiling-horizontal-gain",
+                "0.25",
+                "--lfe-bitrate",
+                "24000",
+                "--beta",
+                "1e-6",
+                "--no-progress",
+                "--front-bitrate",
+                "120000",
+                "--surround-bitrate",
+                "96000",
+                "--aux-bitrate",
+                "120000",
+                "--center-bitrate",
+                "84000"
+              ],
+              "stream": "/tmp/salsa-angle-eval/screen/s120-r0.25/auto.ogg",
+              "core_targets": [
+                120000,
+                96000,
+                120000,
+                84000
+              ],
+              "requested_headroom_db": null,
+              "elapsed_seconds": 39.187842207960784,
+              "cached": false,
+              "stream_sha256": "fdce5ae012610cfabad5c9d4182dd4fae8174f4626888c62568e3ef511be75be",
+              "report": {
+                "ceiling_horizontal_gain": 0.25,
+                "headroom_gain": 1.0,
+                "core_bytes": 556500,
+                "metadata_bytes": 344880,
+                "transport_bytes": 1314760,
+                "total_bytes": 1314760,
+                "duration_samples": 480000,
+                "core_bitrate": 445200.0,
+                "metadata_bitrate": 275904.0,
+                "total_bitrate": 1051808.0,
+                "peak_metadata_bitrate": 696000.0,
+                "object_count": 91,
+                "opus_wrapper": "opus 0.4.0",
+                "opus_native": "libopus 1.6.1",
+                "warnings": [
+                  "decorr: not represented by this consumer",
+                  "size: not represented by this consumer",
+                  "elevation: not represented by this consumer",
+                  "zones: not represented by this consumer"
+                ]
+              }
+            }
+          ],
+          "selected": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+              "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+              "--out",
+              "/tmp/salsa-angle-eval/screen/s120-r0.25/auto.ogg",
+              "--reference-start",
+              "5760000",
+              "--max-frames",
+              "480000",
+              "--ceiling-horizontal-gain",
+              "0.25",
+              "--lfe-bitrate",
+              "24000",
+              "--beta",
+              "1e-6",
+              "--no-progress",
+              "--front-bitrate",
+              "120000",
+              "--surround-bitrate",
+              "96000",
+              "--aux-bitrate",
+              "120000",
+              "--center-bitrate",
+              "84000"
+            ],
+            "stream": "/tmp/salsa-angle-eval/screen/s120-r0.25/auto.ogg",
+            "core_targets": [
+              120000,
+              96000,
+              120000,
+              84000
+            ],
+            "requested_headroom_db": null,
+            "elapsed_seconds": 39.187842207960784,
+            "cached": false,
+            "stream_sha256": "fdce5ae012610cfabad5c9d4182dd4fae8174f4626888c62568e3ef511be75be",
+            "report": {
+              "ceiling_horizontal_gain": 0.25,
+              "headroom_gain": 1.0,
+              "core_bytes": 556500,
+              "metadata_bytes": 344880,
+              "transport_bytes": 1314760,
+              "total_bytes": 1314760,
+              "duration_samples": 480000,
+              "core_bitrate": 445200.0,
+              "metadata_bitrate": 275904.0,
+              "total_bitrate": 1051808.0,
+              "peak_metadata_bitrate": 696000.0,
+              "object_count": 91,
+              "opus_wrapper": "opus 0.4.0",
+              "opus_native": "libopus 1.6.1",
+              "warnings": [
+                "decorr: not represented by this consumer",
+                "size: not represented by this consumer",
+                "elevation: not represented by this consumer",
+                "zones: not represented by this consumer"
+              ]
+            }
+          }
+        },
+        "0.5": {
+          "attempts": [
+            {
+              "command": [
+                "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+                "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+                "--out",
+                "/tmp/salsa-angle-eval/screen/s120-r0.5/auto.ogg",
+                "--reference-start",
+                "5760000",
+                "--max-frames",
+                "480000",
+                "--ceiling-horizontal-gain",
+                "0.5",
+                "--lfe-bitrate",
+                "24000",
+                "--beta",
+                "1e-6",
+                "--no-progress",
+                "--front-bitrate",
+                "120000",
+                "--surround-bitrate",
+                "96000",
+                "--aux-bitrate",
+                "120000",
+                "--center-bitrate",
+                "84000"
+              ],
+              "stream": "/tmp/salsa-angle-eval/screen/s120-r0.5/auto.ogg",
+              "core_targets": [
+                120000,
+                96000,
+                120000,
+                84000
+              ],
+              "requested_headroom_db": null,
+              "elapsed_seconds": 30.932384750107303,
+              "cached": false,
+              "stream_sha256": "ddf694adf39f39df5bdb280b23936517b37008a46e36dbc357b22b40c2681406",
+              "report": {
+                "ceiling_horizontal_gain": 0.5,
+                "headroom_gain": 1.0,
+                "core_bytes": 556500,
+                "metadata_bytes": 345480,
+                "transport_bytes": 1315398,
+                "total_bytes": 1315398,
+                "duration_samples": 480000,
+                "core_bitrate": 445200.0,
+                "metadata_bitrate": 276384.0,
+                "total_bitrate": 1052318.4,
+                "peak_metadata_bitrate": 685440.0,
+                "object_count": 91,
+                "opus_wrapper": "opus 0.4.0",
+                "opus_native": "libopus 1.6.1",
+                "warnings": [
+                  "decorr: not represented by this consumer",
+                  "size: not represented by this consumer",
+                  "elevation: not represented by this consumer",
+                  "zones: not represented by this consumer"
+                ]
+              }
+            }
+          ],
+          "selected": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+              "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+              "--out",
+              "/tmp/salsa-angle-eval/screen/s120-r0.5/auto.ogg",
+              "--reference-start",
+              "5760000",
+              "--max-frames",
+              "480000",
+              "--ceiling-horizontal-gain",
+              "0.5",
+              "--lfe-bitrate",
+              "24000",
+              "--beta",
+              "1e-6",
+              "--no-progress",
+              "--front-bitrate",
+              "120000",
+              "--surround-bitrate",
+              "96000",
+              "--aux-bitrate",
+              "120000",
+              "--center-bitrate",
+              "84000"
+            ],
+            "stream": "/tmp/salsa-angle-eval/screen/s120-r0.5/auto.ogg",
+            "core_targets": [
+              120000,
+              96000,
+              120000,
+              84000
+            ],
+            "requested_headroom_db": null,
+            "elapsed_seconds": 30.932384750107303,
+            "cached": false,
+            "stream_sha256": "ddf694adf39f39df5bdb280b23936517b37008a46e36dbc357b22b40c2681406",
+            "report": {
+              "ceiling_horizontal_gain": 0.5,
+              "headroom_gain": 1.0,
+              "core_bytes": 556500,
+              "metadata_bytes": 345480,
+              "transport_bytes": 1315398,
+              "total_bytes": 1315398,
+              "duration_samples": 480000,
+              "core_bitrate": 445200.0,
+              "metadata_bitrate": 276384.0,
+              "total_bitrate": 1052318.4,
+              "peak_metadata_bitrate": 685440.0,
+              "object_count": 91,
+              "opus_wrapper": "opus 0.4.0",
+              "opus_native": "libopus 1.6.1",
+              "warnings": [
+                "decorr: not represented by this consumer",
+                "size: not represented by this consumer",
+                "elevation: not represented by this consumer",
+                "zones: not represented by this consumer"
+              ]
+            }
+          }
+        }
+      },
+      "layouts": {
+        "2.0": {
+          "reference_render": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+              "salsadamfsrc location=\"/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos\" ! identity name=object_pcm ! salsaoar layout=2.0 limiter-enable=false",
+              "/tmp/salsa-angle-eval/screen/s120-2.0-reference.wav",
+              "120.0",
+              "130.0",
+              "--warp-mode",
+              "3"
+            ],
+            "frames_written": 480768,
+            "frames_measured": 480000
+          },
+          "candidates": {
+            "0": {
+              "error_db": -19.886511699076596,
+              "full_range_error_db": -19.88651169907802,
+              "height_error_db": null,
+              "level_delta_db": -0.13229666207805899,
+              "per_channel": {
+                "L": {
+                  "error_db": -19.63385326969831,
+                  "reference_rms_dbfs": -28.895677719146274,
+                  "level_delta_db": -0.13785645288644102,
+                  "correlation": 0.9945991041586206
+                },
+                "R": {
+                  "error_db": -20.050885803377327,
+                  "reference_rms_dbfs": -26.819804308486876,
+                  "level_delta_db": -0.12885299661044297,
+                  "correlation": 0.9950944232845623
+                }
+              },
+              "per_second_full_range_error_db": [
+                -20.56243803521543,
+                -17.957388171449523,
+                -20.01566604470634,
+                -20.453832999863675,
+                -20.35312307728848,
+                -18.83016053517359,
+                -18.932500985953283,
+                -18.41922794349398,
+                -17.641072871448973,
+                -19.682021364330154
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 1617.2749005581516,
+                  "error": 16.600939873781858
+                },
+                "height": {
+                  "reference": 0.0,
+                  "error": 0.0
+                },
+                "ground": {
+                  "reference": 1617.2749005581516,
+                  "error": 16.600939873781858
+                }
+              },
+              "ground_error_db": -19.88651169907802,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.4869805574417114,
+              "candidate_peak": 0.4788135588169098,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s120-r0/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=2.0 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s120-2.0-r0.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.25": {
+              "error_db": -19.834909967472505,
+              "full_range_error_db": -19.834909967473905,
+              "height_error_db": null,
+              "level_delta_db": -0.13461761050061072,
+              "per_channel": {
+                "L": {
+                  "error_db": -19.665001526575953,
+                  "reference_rms_dbfs": -28.895677719146274,
+                  "level_delta_db": -0.13615765106482874,
+                  "correlation": 0.9946365897153031
+                },
+                "R": {
+                  "error_db": -19.94369740574865,
+                  "reference_rms_dbfs": -26.819804308486876,
+                  "level_delta_db": -0.13366301344906534,
+                  "correlation": 0.994974613471488
+                }
+              },
+              "per_second_full_range_error_db": [
+                -20.201115641860063,
+                -18.107640427182968,
+                -19.83286652409329,
+                -20.423929313677615,
+                -20.149428292794177,
+                -19.11832204616315,
+                -19.001622240289194,
+                -18.580769681887894,
+                -17.719634600907558,
+                -19.615807841022075
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 1617.2749005581516,
+                  "error": 16.799364368055663
+                },
+                "height": {
+                  "reference": 0.0,
+                  "error": 0.0
+                },
+                "ground": {
+                  "reference": 1617.2749005581516,
+                  "error": 16.799364368055663
+                }
+              },
+              "ground_error_db": -19.834909967473905,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.4869805574417114,
+              "candidate_peak": 0.48334449529647827,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s120-r0.25/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=2.0 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s120-2.0-r0.25.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.5": {
+              "error_db": -19.767863050253535,
+              "full_range_error_db": -19.767863050255055,
+              "height_error_db": null,
+              "level_delta_db": -0.12615874817104847,
+              "per_channel": {
+                "L": {
+                  "error_db": -19.507072331976214,
+                  "reference_rms_dbfs": -28.895677719146274,
+                  "level_delta_db": -0.13360079710635284,
+                  "correlation": 0.9944305151750792
+                },
+                "R": {
+                  "error_db": -19.937796367624284,
+                  "reference_rms_dbfs": -26.819804308486876,
+                  "level_delta_db": -0.12155085166905716,
+                  "correlation": 0.9949543098837864
+                }
+              },
+              "per_second_full_range_error_db": [
+                -19.908583289295024,
+                -18.09560628446558,
+                -19.80157614149994,
+                -20.377497992243597,
+                -20.073666503094316,
+                -19.165613178663257,
+                -19.25558715015579,
+                -18.56342456879706,
+                -17.612111226532207,
+                -19.70285093630245
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 1617.2749005581516,
+                  "error": 17.060727310719567
+                },
+                "height": {
+                  "reference": 0.0,
+                  "error": 0.0
+                },
+                "ground": {
+                  "reference": 1617.2749005581516,
+                  "error": 17.060727310719567
+                }
+              },
+              "ground_error_db": -19.767863050255055,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.4869805574417114,
+              "candidate_peak": 0.48627185821533203,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s120-r0.5/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=2.0 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s120-2.0-r0.5.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            }
+          }
+        },
+        "7.1.4": {
+          "reference_render": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+              "salsadamfsrc location=\"/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos\" ! identity name=object_pcm ! salsaoar layout=7.1.4 limiter-enable=false",
+              "/tmp/salsa-angle-eval/screen/s120-7.1.4-reference.wav",
+              "120.0",
+              "130.0",
+              "--warp-mode",
+              "3"
+            ],
+            "frames_written": 480768,
+            "frames_measured": 480000
+          },
+          "candidates": {
+            "0": {
+              "error_db": -17.414390401837764,
+              "full_range_error_db": -17.097857510823232,
+              "height_error_db": -17.02489900766674,
+              "level_delta_db": -0.13695816404061628,
+              "per_channel": {
+                "L": {
+                  "error_db": -18.570281831467454,
+                  "reference_rms_dbfs": -33.30818372882632,
+                  "level_delta_db": -0.14418491094683997,
+                  "correlation": 0.9930721486724866
+                },
+                "R": {
+                  "error_db": -19.83398439278772,
+                  "reference_rms_dbfs": -29.902047050871342,
+                  "level_delta_db": -0.1125173319679969,
+                  "correlation": 0.9948213402060165
+                },
+                "C": {
+                  "error_db": -20.705610159445943,
+                  "reference_rms_dbfs": -30.556466782962097,
+                  "level_delta_db": -0.11745636510795612,
+                  "correlation": 0.9957833719820437
+                },
+                "LFE": {
+                  "error_db": -18.73474802896991,
+                  "reference_rms_dbfs": -29.642311584715564,
+                  "level_delta_db": -0.051764210917182384,
+                  "correlation": 0.99328669909563
+                },
+                "Lrs": {
+                  "error_db": -11.041180561034468,
+                  "reference_rms_dbfs": -41.363727665913444,
+                  "level_delta_db": -0.4546408764765716,
+                  "correlation": 0.9599145045093234
+                },
+                "Rrs": {
+                  "error_db": -11.796254471512723,
+                  "reference_rms_dbfs": -38.45933687935192,
+                  "level_delta_db": -0.45250377070162223,
+                  "correlation": 0.9665260205649072
+                },
+                "Ls": {
+                  "error_db": -10.732603554707163,
+                  "reference_rms_dbfs": -42.03278238564273,
+                  "level_delta_db": -0.5742483260315044,
+                  "correlation": 0.9570607421395516
+                },
+                "Rs": {
+                  "error_db": -13.541551688909902,
+                  "reference_rms_dbfs": -35.93570296315028,
+                  "level_delta_db": -0.33419929919023317,
+                  "correlation": 0.9777510472242678
+                },
+                "Ltf": {
+                  "error_db": -19.10316206473184,
+                  "reference_rms_dbfs": -34.37856680092634,
+                  "level_delta_db": -0.07410635049059187,
+                  "correlation": 0.9938368611136723
+                },
+                "Rtf": {
+                  "error_db": -18.28079769044743,
+                  "reference_rms_dbfs": -34.73444995773733,
+                  "level_delta_db": -0.10171156956405998,
+                  "correlation": 0.9925527521996621
+                },
+                "Ltr": {
+                  "error_db": -13.000308573875607,
+                  "reference_rms_dbfs": -41.306884016138824,
+                  "level_delta_db": -0.33500124988100655,
+                  "correlation": 0.9747009626745974
+                },
+                "Rtr": {
+                  "error_db": -13.481899719498633,
+                  "reference_rms_dbfs": -40.584165130794815,
+                  "level_delta_db": -0.27643239495605454,
+                  "correlation": 0.9773537721490704
+                }
+              },
+              "per_second_full_range_error_db": [
+                -18.516800742278658,
+                -12.671770443836358,
+                -17.82415574112048,
+                -18.53337073668362,
+                -19.10408605204884,
+                -15.817615385619902,
+                -14.149266287480462,
+                -14.60717141560578,
+                -13.32613769680173,
+                -15.234990936268025
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 1807.2301422050084,
+                  "error": 35.255567544548406
+                },
+                "height": {
+                  "reference": 413.98530918470885,
+                  "error": 8.212871524210655
+                },
+                "ground": {
+                  "reference": 1393.2448330202985,
+                  "error": 27.04269602033774
+                }
+              },
+              "ground_error_db": -17.119774547128156,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.48524585366249084,
+              "candidate_peak": 0.46608543395996094,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s120-r0/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=7.1.4 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s120-7.1.4-r0.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.25": {
+              "error_db": -17.37846634414868,
+              "full_range_error_db": -17.05486141919224,
+              "height_error_db": -17.15401290985136,
+              "level_delta_db": -0.13321812266047262,
+              "per_channel": {
+                "L": {
+                  "error_db": -18.512278333475816,
+                  "reference_rms_dbfs": -33.30818372882632,
+                  "level_delta_db": -0.13782609053912415,
+                  "correlation": 0.9929705036868923
+                },
+                "R": {
+                  "error_db": -19.709802065147,
+                  "reference_rms_dbfs": -29.902047050871342,
+                  "level_delta_db": -0.11478329828460178,
+                  "correlation": 0.9946706908617806
+                },
+                "C": {
+                  "error_db": -20.51031608649327,
+                  "reference_rms_dbfs": -30.556466782962097,
+                  "level_delta_db": -0.09631774250755523,
+                  "correlation": 0.9955662289955721
+                },
+                "LFE": {
+                  "error_db": -18.73474802896991,
+                  "reference_rms_dbfs": -29.642311584715564,
+                  "level_delta_db": -0.051764210917182384,
+                  "correlation": 0.99328669909563
+                },
+                "Lrs": {
+                  "error_db": -10.933913463581813,
+                  "reference_rms_dbfs": -41.363727665913444,
+                  "level_delta_db": -0.44491674045762186,
+                  "correlation": 0.9588673809476214
+                },
+                "Rrs": {
+                  "error_db": -11.795567176471806,
+                  "reference_rms_dbfs": -38.45933687935192,
+                  "level_delta_db": -0.462310788187407,
+                  "correlation": 0.9665406379425046
+                },
+                "Ls": {
+                  "error_db": -10.591685392290493,
+                  "reference_rms_dbfs": -42.03278238564273,
+                  "level_delta_db": -0.5894170029935871,
+                  "correlation": 0.9556081070179411
+                },
+                "Rs": {
+                  "error_db": -13.475509150072964,
+                  "reference_rms_dbfs": -35.93570296315028,
+                  "level_delta_db": -0.31879702719669506,
+                  "correlation": 0.9773734637262913
+                },
+                "Ltf": {
+                  "error_db": -19.141803088600515,
+                  "reference_rms_dbfs": -34.37856680092634,
+                  "level_delta_db": -0.06965170748271284,
+                  "correlation": 0.9938906827070866
+                },
+                "Rtf": {
+                  "error_db": -18.388078644892868,
+                  "reference_rms_dbfs": -34.73444995773733,
+                  "level_delta_db": -0.12231086626175987,
+                  "correlation": 0.9927493102033219
+                },
+                "Ltr": {
+                  "error_db": -13.225621492887134,
+                  "reference_rms_dbfs": -41.306884016138824,
+                  "level_delta_db": -0.32075108237332983,
+                  "correlation": 0.9759962120517545
+                },
+                "Rtr": {
+                  "error_db": -13.653687610445566,
+                  "reference_rms_dbfs": -40.584165130794815,
+                  "level_delta_db": -0.26662944974900693,
+                  "correlation": 0.9782415306405293
+                }
+              },
+              "per_second_full_range_error_db": [
+                -18.411390059557423,
+                -12.614665530257053,
+                -17.85262880464736,
+                -18.483251239567167,
+                -19.001805979086818,
+                -15.928576803863578,
+                -14.157709441303004,
+                -14.534814472758397,
+                -13.252385650498255,
+                -15.249566093118998
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 1807.2301422050084,
+                  "error": 35.60633876758268
+                },
+                "height": {
+                  "reference": 413.98530918470885,
+                  "error": 7.972300108869871
+                },
+                "ground": {
+                  "reference": 1393.2448330202985,
+                  "error": 27.63403865871279
+                }
+              },
+              "ground_error_db": -17.025830802963142,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.48524585366249084,
+              "candidate_peak": 0.46732696890830994,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s120-r0.25/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=7.1.4 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s120-7.1.4-r0.25.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.5": {
+              "error_db": -17.32134107805882,
+              "full_range_error_db": -16.986633473485945,
+              "height_error_db": -17.26918390985267,
+              "level_delta_db": -0.1324293416869463,
+              "per_channel": {
+                "L": {
+                  "error_db": -18.394696543777687,
+                  "reference_rms_dbfs": -33.30818372882632,
+                  "level_delta_db": -0.14915832037733762,
+                  "correlation": 0.9927860872230265
+                },
+                "R": {
+                  "error_db": -19.656718599235106,
+                  "reference_rms_dbfs": -29.902047050871342,
+                  "level_delta_db": -0.10547552240345498,
+                  "correlation": 0.9945963629913603
+                },
+                "C": {
+                  "error_db": -20.468821805004374,
+                  "reference_rms_dbfs": -30.556466782962097,
+                  "level_delta_db": -0.1076349945432621,
+                  "correlation": 0.9955324540421884
+                },
+                "LFE": {
+                  "error_db": -18.73474802896991,
+                  "reference_rms_dbfs": -29.642311584715564,
+                  "level_delta_db": -0.051764210917182384,
+                  "correlation": 0.99328669909563
+                },
+                "Lrs": {
+                  "error_db": -10.67776157185558,
+                  "reference_rms_dbfs": -41.363727665913444,
+                  "level_delta_db": -0.5030138495460132,
+                  "correlation": 0.9563516439150943
+                },
+                "Rrs": {
+                  "error_db": -11.66670430591739,
+                  "reference_rms_dbfs": -38.45933687935192,
+                  "level_delta_db": -0.46404711393658477,
+                  "correlation": 0.9654937767618695
+                },
+                "Ls": {
+                  "error_db": -10.425513778781069,
+                  "reference_rms_dbfs": -42.03278238564273,
+                  "level_delta_db": -0.5934439324808591,
+                  "correlation": 0.9537959078587579
+                },
+                "Rs": {
+                  "error_db": -13.339573572523255,
+                  "reference_rms_dbfs": -35.93570296315028,
+                  "level_delta_db": -0.3365427324384903,
+                  "correlation": 0.9766605513293941
+                },
+                "Ltf": {
+                  "error_db": -19.07377269705315,
+                  "reference_rms_dbfs": -34.37856680092634,
+                  "level_delta_db": -0.06040298152130378,
+                  "correlation": 0.9937923891421606
+                },
+                "Rtf": {
+                  "error_db": -18.518989692791326,
+                  "reference_rms_dbfs": -34.73444995773733,
+                  "level_delta_db": -0.0829337527889875,
+                  "correlation": 0.9929462476014719
+                },
+                "Ltr": {
+                  "error_db": -13.539432050620013,
+                  "reference_rms_dbfs": -41.306884016138824,
+                  "level_delta_db": -0.3056374639568842,
+                  "correlation": 0.9776941904539266
+                },
+                "Rtr": {
+                  "error_db": -13.787893508880986,
+                  "reference_rms_dbfs": -40.584165130794815,
+                  "level_delta_db": -0.261490452808083,
+                  "correlation": 0.9789127257397374
+                }
+              },
+              "per_second_full_range_error_db": [
+                -18.32411257741924,
+                -12.528071958619782,
+                -17.71949953067377,
+                -18.524656771702823,
+                -18.940038091357778,
+                -15.822236923743647,
+                -14.031093814054215,
+                -14.47685087326832,
+                -13.120444244313582,
+                -15.32399687397248
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 1807.2301422050084,
+                  "error": 36.17013369845958
+                },
+                "height": {
+                  "reference": 413.98530918470885,
+                  "error": 7.763660557016767
+                },
+                "ground": {
+                  "reference": 1393.2448330202985,
+                  "error": 28.406473141442817
+                }
+              },
+              "ground_error_db": -16.906101246791884,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.48524585366249084,
+              "candidate_peak": 0.46891188621520996,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s120-r0.5/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=7.1.4 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s120-7.1.4-r0.5.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            }
+          }
+        },
+        "9.1.6": {
+          "reference_render": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+              "salsadamfsrc location=\"/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos\" ! identity name=object_pcm ! salsaoar layout=9.1.6 limiter-enable=false",
+              "/tmp/salsa-angle-eval/screen/s120-9.1.6-reference.wav",
+              "120.0",
+              "130.0",
+              "--warp-mode",
+              "3"
+            ],
+            "frames_written": 480768,
+            "frames_measured": 480000
+          },
+          "candidates": {
+            "0": {
+              "error_db": -15.397186369312628,
+              "full_range_error_db": -14.764928278337035,
+              "height_error_db": -14.741559405364363,
+              "level_delta_db": -0.19584823400310258,
+              "per_channel": {
+                "L": {
+                  "error_db": -15.099273455470005,
+                  "reference_rms_dbfs": -34.21270081265499,
+                  "level_delta_db": -0.2540449541052263,
+                  "correlation": 0.9845150156371368
+                },
+                "R": {
+                  "error_db": -17.194466005659333,
+                  "reference_rms_dbfs": -30.74002520190522,
+                  "level_delta_db": -0.15462408817580545,
+                  "correlation": 0.9904476644199677
+                },
+                "C": {
+                  "error_db": -20.163436818728005,
+                  "reference_rms_dbfs": -30.895554954053715,
+                  "level_delta_db": -0.12653991634437928,
+                  "correlation": 0.9952201233140052
+                },
+                "LFE": {
+                  "error_db": -18.73474802896991,
+                  "reference_rms_dbfs": -29.642311584715564,
+                  "level_delta_db": -0.051764210917182384,
+                  "correlation": 0.99328669909563
+                },
+                "Lrs": {
+                  "error_db": -11.041180561034468,
+                  "reference_rms_dbfs": -41.363727665913444,
+                  "level_delta_db": -0.4546408764765716,
+                  "correlation": 0.9599145045093234
+                },
+                "Rrs": {
+                  "error_db": -11.796254471512723,
+                  "reference_rms_dbfs": -38.45933687935192,
+                  "level_delta_db": -0.45250377070162223,
+                  "correlation": 0.9665260205649072
+                },
+                "Ls": {
+                  "error_db": -7.895000992597197,
+                  "reference_rms_dbfs": -45.57235580178471,
+                  "level_delta_db": -1.054331469491723,
+                  "correlation": 0.9157147375423158
+                },
+                "Rs": {
+                  "error_db": -12.33566968939833,
+                  "reference_rms_dbfs": -37.22843728247438,
+                  "level_delta_db": -0.45148853945465894,
+                  "correlation": 0.9705918685835668
+                },
+                "Ltf": {
+                  "error_db": -16.732383305375272,
+                  "reference_rms_dbfs": -35.17061160431818,
+                  "level_delta_db": -0.11732609858569612,
+                  "correlation": 0.989336537875525
+                },
+                "Rtf": {
+                  "error_db": -16.248499207197938,
+                  "reference_rms_dbfs": -35.72312669843275,
+                  "level_delta_db": -0.1651905776946266,
+                  "correlation": 0.9880921523639208
+                },
+                "Ltr": {
+                  "error_db": -9.816077172595008,
+                  "reference_rms_dbfs": -45.88679315125872,
+                  "level_delta_db": -0.5824451420574127,
+                  "correlation": 0.9464683529823227
+                },
+                "Rtr": {
+                  "error_db": -10.029344988518439,
+                  "reference_rms_dbfs": -45.078733718663884,
+                  "level_delta_db": -0.5208106224171933,
+                  "correlation": 0.9490659540197068
+                },
+                "Ltm": {
+                  "error_db": -12.902575042259564,
+                  "reference_rms_dbfs": -39.890988770999265,
+                  "level_delta_db": -0.29442951636659176,
+                  "correlation": 0.9740630934098995
+                },
+                "Rtm": {
+                  "error_db": -14.005508542276555,
+                  "reference_rms_dbfs": -39.4385358458888,
+                  "level_delta_db": -0.19801429249859892,
+                  "correlation": 0.9799213240295772
+                },
+                "Lw": {
+                  "error_db": -10.47900201478174,
+                  "reference_rms_dbfs": -38.32197797453295,
+                  "level_delta_db": -0.5598607952951896,
+                  "correlation": 0.954318192484284
+                },
+                "Rw": {
+                  "error_db": -11.990124415565086,
+                  "reference_rms_dbfs": -35.93352532779542,
+                  "level_delta_db": -0.42902638564735357,
+                  "correlation": 0.9679993984985061
+                }
+              },
+              "per_second_full_range_error_db": [
+                -16.744384628477153,
+                -9.734878107665923,
+                -15.592350750667274,
+                -17.161611527002535,
+                -18.415527046348046,
+                -13.704991116584251,
+                -11.110958888507607,
+                -10.790004726084664,
+                -9.789064951650445,
+                -13.365189210641738
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 1783.633431555472,
+                  "error": 59.54054095737365
+                },
+                "height": {
+                  "reference": 405.5757700439432,
+                  "error": 13.611815720298676
+                },
+                "ground": {
+                  "reference": 1378.0576615115313,
+                  "error": 45.92872523707499
+                }
+              },
+              "ground_error_db": -14.771829983244695,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.48408082127571106,
+              "candidate_peak": 0.46608543395996094,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s120-r0/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=9.1.6 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s120-9.1.6-r0.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.25": {
+              "error_db": -15.348376505290993,
+              "full_range_error_db": -14.710436328939542,
+              "height_error_db": -14.79014105280249,
+              "level_delta_db": -0.19196527520687273,
+              "per_channel": {
+                "L": {
+                  "error_db": -15.042028130627862,
+                  "reference_rms_dbfs": -34.21270081265499,
+                  "level_delta_db": -0.23970999954434968,
+                  "correlation": 0.9842835517098782
+                },
+                "R": {
+                  "error_db": -17.073977799152797,
+                  "reference_rms_dbfs": -30.74002520190522,
+                  "level_delta_db": -0.15967655025793756,
+                  "correlation": 0.9901791972916134
+                },
+                "C": {
+                  "error_db": -19.883336861061785,
+                  "reference_rms_dbfs": -30.895554954053715,
+                  "level_delta_db": -0.10109976879980102,
+                  "correlation": 0.994871475037144
+                },
+                "LFE": {
+                  "error_db": -18.73474802896991,
+                  "reference_rms_dbfs": -29.642311584715564,
+                  "level_delta_db": -0.051764210917182384,
+                  "correlation": 0.99328669909563
+                },
+                "Lrs": {
+                  "error_db": -10.933913463581813,
+                  "reference_rms_dbfs": -41.363727665913444,
+                  "level_delta_db": -0.44491674045762186,
+                  "correlation": 0.9588673809476214
+                },
+                "Rrs": {
+                  "error_db": -11.795567176471806,
+                  "reference_rms_dbfs": -38.45933687935192,
+                  "level_delta_db": -0.462310788187407,
+                  "correlation": 0.9665406379425046
+                },
+                "Ls": {
+                  "error_db": -7.76271081512478,
+                  "reference_rms_dbfs": -45.57235580178471,
+                  "level_delta_db": -1.062715128632221,
+                  "correlation": 0.9129063508246011
+                },
+                "Rs": {
+                  "error_db": -12.314450520372503,
+                  "reference_rms_dbfs": -37.22843728247438,
+                  "level_delta_db": -0.43281131458144667,
+                  "correlation": 0.9703981013122899
+                },
+                "Ltf": {
+                  "error_db": -16.63754249963921,
+                  "reference_rms_dbfs": -35.17061160431818,
+                  "level_delta_db": -0.11676327049865541,
+                  "correlation": 0.9890989338139023
+                },
+                "Rtf": {
+                  "error_db": -16.193475627896184,
+                  "reference_rms_dbfs": -35.72312669843275,
+                  "level_delta_db": -0.19120009000625934,
+                  "correlation": 0.9879627399520543
+                },
+                "Ltr": {
+                  "error_db": -9.844125509888416,
+                  "reference_rms_dbfs": -45.88679315125872,
+                  "level_delta_db": -0.5955194888929143,
+                  "correlation": 0.9468461064071623
+                },
+                "Rtr": {
+                  "error_db": -10.076617921762978,
+                  "reference_rms_dbfs": -45.078733718663884,
+                  "level_delta_db": -0.5141186945229865,
+                  "correlation": 0.9496310766826962
+                },
+                "Ltm": {
+                  "error_db": -13.22291931531666,
+                  "reference_rms_dbfs": -39.890988770999265,
+                  "level_delta_db": -0.26241681782006065,
+                  "correlation": 0.9759206866989433
+                },
+                "Rtm": {
+                  "error_db": -14.116764398846557,
+                  "reference_rms_dbfs": -39.4385358458888,
+                  "level_delta_db": -0.1976928347259908,
+                  "correlation": 0.9804356223633902
+                },
+                "Lw": {
+                  "error_db": -10.437275152802117,
+                  "reference_rms_dbfs": -38.32197797453295,
+                  "level_delta_db": -0.5542831930541161,
+                  "correlation": 0.9538468486196583
+                },
+                "Rw": {
+                  "error_db": -11.913876601541716,
+                  "reference_rms_dbfs": -35.93352532779542,
+                  "level_delta_db": -0.4418554201558745,
+                  "correlation": 0.9674351051752251
+                }
+              },
+              "per_second_full_range_error_db": [
+                -16.620441319318044,
+                -9.656653402096378,
+                -15.59901460180195,
+                -17.074904697048577,
+                -18.329393248940956,
+                -13.847971569317053,
+                -11.160668266288777,
+                -10.755258407811825,
+                -9.693969318746472,
+                -13.301368244869312
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 1783.633431555472,
+                  "error": 60.29231660906059
+                },
+                "height": {
+                  "reference": 405.5757700439432,
+                  "error": 13.460397837436838
+                },
+                "ground": {
+                  "reference": 1378.0576615115313,
+                  "error": 46.83191877162384
+                }
+              },
+              "ground_error_db": -14.687254381395274,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.48408082127571106,
+              "candidate_peak": 0.46732696890830994,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s120-r0.25/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=9.1.6 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s120-9.1.6-r0.25.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.5": {
+              "error_db": -15.285726452104191,
+              "full_range_error_db": -14.640596646744086,
+              "height_error_db": -14.863813277356012,
+              "level_delta_db": -0.19271612622328332,
+              "per_channel": {
+                "L": {
+                  "error_db": -14.86180072167316,
+                  "reference_rms_dbfs": -34.21270081265499,
+                  "level_delta_db": -0.2649931261436932,
+                  "correlation": 0.9836371446610415
+                },
+                "R": {
+                  "error_db": -17.033449900447323,
+                  "reference_rms_dbfs": -30.74002520190522,
+                  "level_delta_db": -0.14819863125662458,
+                  "correlation": 0.9900754324614583
+                },
+                "C": {
+                  "error_db": -19.737925009417413,
+                  "reference_rms_dbfs": -30.895554954053715,
+                  "level_delta_db": -0.1158976992410668,
+                  "correlation": 0.9947066664096085
+                },
+                "LFE": {
+                  "error_db": -18.73474802896991,
+                  "reference_rms_dbfs": -29.642311584715564,
+                  "level_delta_db": -0.051764210917182384,
+                  "correlation": 0.99328669909563
+                },
+                "Lrs": {
+                  "error_db": -10.67776157185558,
+                  "reference_rms_dbfs": -41.363727665913444,
+                  "level_delta_db": -0.5030138495460132,
+                  "correlation": 0.9563516439150943
+                },
+                "Rrs": {
+                  "error_db": -11.66670430591739,
+                  "reference_rms_dbfs": -38.45933687935192,
+                  "level_delta_db": -0.46404711393658477,
+                  "correlation": 0.9654937767618695
+                },
+                "Ls": {
+                  "error_db": -7.7479360658167895,
+                  "reference_rms_dbfs": -45.57235580178471,
+                  "level_delta_db": -1.0532402307162871,
+                  "correlation": 0.9125542919680649
+                },
+                "Rs": {
+                  "error_db": -12.214089343694393,
+                  "reference_rms_dbfs": -37.22843728247438,
+                  "level_delta_db": -0.4562888776263608,
+                  "correlation": 0.9697300021363637
+                },
+                "Ltf": {
+                  "error_db": -16.573045149419684,
+                  "reference_rms_dbfs": -35.17061160431818,
+                  "level_delta_db": -0.10806116642517691,
+                  "correlation": 0.988932686014621
+                },
+                "Rtf": {
+                  "error_db": -16.216684642814393,
+                  "reference_rms_dbfs": -35.72312669843275,
+                  "level_delta_db": -0.14488895943027016,
+                  "correlation": 0.9879899777776135
+                },
+                "Ltr": {
+                  "error_db": -9.895788017324668,
+                  "reference_rms_dbfs": -45.88679315125872,
+                  "level_delta_db": -0.5447031793174963,
+                  "correlation": 0.947438143383892
+                },
+                "Rtr": {
+                  "error_db": -10.047967232476829,
+                  "reference_rms_dbfs": -45.078733718663884,
+                  "level_delta_db": -0.4886617017992833,
+                  "correlation": 0.9492703621778126
+                },
+                "Ltm": {
+                  "error_db": -13.562631717305237,
+                  "reference_rms_dbfs": -39.890988770999265,
+                  "level_delta_db": -0.2585592943099212,
+                  "correlation": 0.9777635228395033
+                },
+                "Rtm": {
+                  "error_db": -14.274527731393746,
+                  "reference_rms_dbfs": -39.4385358458888,
+                  "level_delta_db": -0.1967760285694983,
+                  "correlation": 0.9811424322872987
+                },
+                "Lw": {
+                  "error_db": -10.343491398853676,
+                  "reference_rms_dbfs": -38.32197797453295,
+                  "level_delta_db": -0.5711030678759517,
+                  "correlation": 0.9528249815977295
+                },
+                "Rw": {
+                  "error_db": -11.820371068387018,
+                  "reference_rms_dbfs": -35.93352532779542,
+                  "level_delta_db": -0.4367736778978317,
+                  "correlation": 0.9666888307989931
+                }
+              },
+              "per_second_full_range_error_db": [
+                -16.454780115297748,
+                -9.611980733397372,
+                -15.552023056648316,
+                -17.100419213766433,
+                -18.200337374311566,
+                -13.71784079358805,
+                -10.994460198287172,
+                -10.727046084859591,
+                -9.604972357172132,
+                -13.419885421870507
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 1783.633431555472,
+                  "error": 61.26972615868113
+                },
+                "height": {
+                  "reference": 405.5757700439432,
+                  "error": 13.23398608582681
+                },
+                "ground": {
+                  "reference": 1378.0576615115313,
+                  "error": 48.03574007285432
+                }
+              },
+              "ground_error_db": -14.577029038212304,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.48408082127571106,
+              "candidate_peak": 0.46891188621520996,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s120-r0.5/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=9.1.6 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s120-9.1.6-r0.5.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            }
+          }
+        }
+      },
+      "common_headroom_gain": 1.0
+    },
+    "180": {
+      "encodes": {
+        "0": {
+          "attempts": [
+            {
+              "command": [
+                "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+                "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+                "--out",
+                "/tmp/salsa-angle-eval/screen/s180-r0/auto.ogg",
+                "--reference-start",
+                "8640000",
+                "--max-frames",
+                "480000",
+                "--ceiling-horizontal-gain",
+                "0.0",
+                "--lfe-bitrate",
+                "24000",
+                "--beta",
+                "1e-6",
+                "--no-progress",
+                "--front-bitrate",
+                "120000",
+                "--surround-bitrate",
+                "96000",
+                "--aux-bitrate",
+                "120000",
+                "--center-bitrate",
+                "84000"
+              ],
+              "stream": "/tmp/salsa-angle-eval/screen/s180-r0/auto.ogg",
+              "core_targets": [
+                120000,
+                96000,
+                120000,
+                84000
+              ],
+              "requested_headroom_db": null,
+              "elapsed_seconds": 38.33983812504448,
+              "cached": false,
+              "stream_sha256": "e746619c032408e90aa3d994831417f26040f954fe957135d4dfd45529c27af2",
+              "report": {
+                "ceiling_horizontal_gain": 0.0,
+                "headroom_gain": 1.0,
+                "core_bytes": 556500,
+                "metadata_bytes": 400872,
+                "transport_bytes": 1345745,
+                "total_bytes": 1345745,
+                "duration_samples": 480000,
+                "core_bitrate": 445200.0,
+                "metadata_bitrate": 320697.6,
+                "total_bitrate": 1076596.0,
+                "peak_metadata_bitrate": 751360.0,
+                "object_count": 91,
+                "opus_wrapper": "opus 0.4.0",
+                "opus_native": "libopus 1.6.1",
+                "warnings": [
+                  "decorr: not represented by this consumer",
+                  "size: not represented by this consumer",
+                  "elevation: not represented by this consumer",
+                  "zones: not represented by this consumer"
+                ]
+              }
+            }
+          ],
+          "selected": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+              "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+              "--out",
+              "/tmp/salsa-angle-eval/screen/s180-r0/auto.ogg",
+              "--reference-start",
+              "8640000",
+              "--max-frames",
+              "480000",
+              "--ceiling-horizontal-gain",
+              "0.0",
+              "--lfe-bitrate",
+              "24000",
+              "--beta",
+              "1e-6",
+              "--no-progress",
+              "--front-bitrate",
+              "120000",
+              "--surround-bitrate",
+              "96000",
+              "--aux-bitrate",
+              "120000",
+              "--center-bitrate",
+              "84000"
+            ],
+            "stream": "/tmp/salsa-angle-eval/screen/s180-r0/auto.ogg",
+            "core_targets": [
+              120000,
+              96000,
+              120000,
+              84000
+            ],
+            "requested_headroom_db": null,
+            "elapsed_seconds": 38.33983812504448,
+            "cached": false,
+            "stream_sha256": "e746619c032408e90aa3d994831417f26040f954fe957135d4dfd45529c27af2",
+            "report": {
+              "ceiling_horizontal_gain": 0.0,
+              "headroom_gain": 1.0,
+              "core_bytes": 556500,
+              "metadata_bytes": 400872,
+              "transport_bytes": 1345745,
+              "total_bytes": 1345745,
+              "duration_samples": 480000,
+              "core_bitrate": 445200.0,
+              "metadata_bitrate": 320697.6,
+              "total_bitrate": 1076596.0,
+              "peak_metadata_bitrate": 751360.0,
+              "object_count": 91,
+              "opus_wrapper": "opus 0.4.0",
+              "opus_native": "libopus 1.6.1",
+              "warnings": [
+                "decorr: not represented by this consumer",
+                "size: not represented by this consumer",
+                "elevation: not represented by this consumer",
+                "zones: not represented by this consumer"
+              ]
+            }
+          }
+        },
+        "0.25": {
+          "attempts": [
+            {
+              "command": [
+                "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+                "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+                "--out",
+                "/tmp/salsa-angle-eval/screen/s180-r0.25/auto.ogg",
+                "--reference-start",
+                "8640000",
+                "--max-frames",
+                "480000",
+                "--ceiling-horizontal-gain",
+                "0.25",
+                "--lfe-bitrate",
+                "24000",
+                "--beta",
+                "1e-6",
+                "--no-progress",
+                "--front-bitrate",
+                "120000",
+                "--surround-bitrate",
+                "96000",
+                "--aux-bitrate",
+                "120000",
+                "--center-bitrate",
+                "84000"
+              ],
+              "stream": "/tmp/salsa-angle-eval/screen/s180-r0.25/auto.ogg",
+              "core_targets": [
+                120000,
+                96000,
+                120000,
+                84000
+              ],
+              "requested_headroom_db": null,
+              "elapsed_seconds": 38.371044958010316,
+              "cached": false,
+              "stream_sha256": "36dd97482e2a6d303636b1ad0763e24aa1d63e22003bf05277189f8e584cae00",
+              "report": {
+                "ceiling_horizontal_gain": 0.25,
+                "headroom_gain": 1.0,
+                "core_bytes": 556500,
+                "metadata_bytes": 402340,
+                "transport_bytes": 1347310,
+                "total_bytes": 1347310,
+                "duration_samples": 480000,
+                "core_bitrate": 445200.0,
+                "metadata_bitrate": 321872.0,
+                "total_bitrate": 1077848.0,
+                "peak_metadata_bitrate": 781120.0,
+                "object_count": 91,
+                "opus_wrapper": "opus 0.4.0",
+                "opus_native": "libopus 1.6.1",
+                "warnings": [
+                  "decorr: not represented by this consumer",
+                  "size: not represented by this consumer",
+                  "elevation: not represented by this consumer",
+                  "zones: not represented by this consumer"
+                ]
+              }
+            }
+          ],
+          "selected": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+              "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+              "--out",
+              "/tmp/salsa-angle-eval/screen/s180-r0.25/auto.ogg",
+              "--reference-start",
+              "8640000",
+              "--max-frames",
+              "480000",
+              "--ceiling-horizontal-gain",
+              "0.25",
+              "--lfe-bitrate",
+              "24000",
+              "--beta",
+              "1e-6",
+              "--no-progress",
+              "--front-bitrate",
+              "120000",
+              "--surround-bitrate",
+              "96000",
+              "--aux-bitrate",
+              "120000",
+              "--center-bitrate",
+              "84000"
+            ],
+            "stream": "/tmp/salsa-angle-eval/screen/s180-r0.25/auto.ogg",
+            "core_targets": [
+              120000,
+              96000,
+              120000,
+              84000
+            ],
+            "requested_headroom_db": null,
+            "elapsed_seconds": 38.371044958010316,
+            "cached": false,
+            "stream_sha256": "36dd97482e2a6d303636b1ad0763e24aa1d63e22003bf05277189f8e584cae00",
+            "report": {
+              "ceiling_horizontal_gain": 0.25,
+              "headroom_gain": 1.0,
+              "core_bytes": 556500,
+              "metadata_bytes": 402340,
+              "transport_bytes": 1347310,
+              "total_bytes": 1347310,
+              "duration_samples": 480000,
+              "core_bitrate": 445200.0,
+              "metadata_bitrate": 321872.0,
+              "total_bitrate": 1077848.0,
+              "peak_metadata_bitrate": 781120.0,
+              "object_count": 91,
+              "opus_wrapper": "opus 0.4.0",
+              "opus_native": "libopus 1.6.1",
+              "warnings": [
+                "decorr: not represented by this consumer",
+                "size: not represented by this consumer",
+                "elevation: not represented by this consumer",
+                "zones: not represented by this consumer"
+              ]
+            }
+          }
+        },
+        "0.5": {
+          "attempts": [
+            {
+              "command": [
+                "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+                "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+                "--out",
+                "/tmp/salsa-angle-eval/screen/s180-r0.5/auto.ogg",
+                "--reference-start",
+                "8640000",
+                "--max-frames",
+                "480000",
+                "--ceiling-horizontal-gain",
+                "0.5",
+                "--lfe-bitrate",
+                "24000",
+                "--beta",
+                "1e-6",
+                "--no-progress",
+                "--front-bitrate",
+                "120000",
+                "--surround-bitrate",
+                "96000",
+                "--aux-bitrate",
+                "120000",
+                "--center-bitrate",
+                "84000"
+              ],
+              "stream": "/tmp/salsa-angle-eval/screen/s180-r0.5/auto.ogg",
+              "core_targets": [
+                120000,
+                96000,
+                120000,
+                84000
+              ],
+              "requested_headroom_db": null,
+              "elapsed_seconds": 31.099582290975377,
+              "cached": false,
+              "stream_sha256": "d234cade8d523500363f121d7f95443cadc100d3160d01a0f2488e08163b87f5",
+              "report": {
+                "ceiling_horizontal_gain": 0.5,
+                "headroom_gain": 1.0,
+                "core_bytes": 556500,
+                "metadata_bytes": 402512,
+                "transport_bytes": 1347459,
+                "total_bytes": 1347459,
+                "duration_samples": 480000,
+                "core_bitrate": 445200.0,
+                "metadata_bitrate": 322009.6,
+                "total_bitrate": 1077967.2,
+                "peak_metadata_bitrate": 778880.0,
+                "object_count": 91,
+                "opus_wrapper": "opus 0.4.0",
+                "opus_native": "libopus 1.6.1",
+                "warnings": [
+                  "decorr: not represented by this consumer",
+                  "size: not represented by this consumer",
+                  "elevation: not represented by this consumer",
+                  "zones: not represented by this consumer"
+                ]
+              }
+            }
+          ],
+          "selected": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/salsa-spatial-encode",
+              "/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+              "--out",
+              "/tmp/salsa-angle-eval/screen/s180-r0.5/auto.ogg",
+              "--reference-start",
+              "8640000",
+              "--max-frames",
+              "480000",
+              "--ceiling-horizontal-gain",
+              "0.5",
+              "--lfe-bitrate",
+              "24000",
+              "--beta",
+              "1e-6",
+              "--no-progress",
+              "--front-bitrate",
+              "120000",
+              "--surround-bitrate",
+              "96000",
+              "--aux-bitrate",
+              "120000",
+              "--center-bitrate",
+              "84000"
+            ],
+            "stream": "/tmp/salsa-angle-eval/screen/s180-r0.5/auto.ogg",
+            "core_targets": [
+              120000,
+              96000,
+              120000,
+              84000
+            ],
+            "requested_headroom_db": null,
+            "elapsed_seconds": 31.099582290975377,
+            "cached": false,
+            "stream_sha256": "d234cade8d523500363f121d7f95443cadc100d3160d01a0f2488e08163b87f5",
+            "report": {
+              "ceiling_horizontal_gain": 0.5,
+              "headroom_gain": 1.0,
+              "core_bytes": 556500,
+              "metadata_bytes": 402512,
+              "transport_bytes": 1347459,
+              "total_bytes": 1347459,
+              "duration_samples": 480000,
+              "core_bitrate": 445200.0,
+              "metadata_bitrate": 322009.6,
+              "total_bitrate": 1077967.2,
+              "peak_metadata_bitrate": 778880.0,
+              "object_count": 91,
+              "opus_wrapper": "opus 0.4.0",
+              "opus_native": "libopus 1.6.1",
+              "warnings": [
+                "decorr: not represented by this consumer",
+                "size: not represented by this consumer",
+                "elevation: not represented by this consumer",
+                "zones: not represented by this consumer"
+              ]
+            }
+          }
+        }
+      },
+      "layouts": {
+        "2.0": {
+          "reference_render": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+              "salsadamfsrc location=\"/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos\" ! identity name=object_pcm ! salsaoar layout=2.0 limiter-enable=false",
+              "/tmp/salsa-angle-eval/screen/s180-2.0-reference.wav",
+              "180.0",
+              "190.0",
+              "--warp-mode",
+              "3"
+            ],
+            "frames_written": 480768,
+            "frames_measured": 480000
+          },
+          "candidates": {
+            "0": {
+              "error_db": -18.95578302687025,
+              "full_range_error_db": -18.955783026871153,
+              "height_error_db": null,
+              "level_delta_db": -0.14632605432951348,
+              "per_channel": {
+                "L": {
+                  "error_db": -18.764871749232263,
+                  "reference_rms_dbfs": -33.88260986282303,
+                  "level_delta_db": -0.15841237976981784,
+                  "correlation": 0.9933992017846299
+                },
+                "R": {
+                  "error_db": -19.12685567787856,
+                  "reference_rms_dbfs": -33.22503901615486,
+                  "level_delta_db": -0.13596473986906418,
+                  "correlation": 0.9939126464737983
+                }
+              },
+              "per_second_full_range_error_db": [
+                -18.871562992224394,
+                -19.93284056935769,
+                -19.275830740793364,
+                -19.381181362877587,
+                -19.34150410167842,
+                -19.64247133379638,
+                -18.67652712683857,
+                -18.337043257674917,
+                -17.52133689871513,
+                -19.368408429637874
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 424.748787362971,
+                  "error": 5.401990859090468
+                },
+                "height": {
+                  "reference": 0.0,
+                  "error": 0.0
+                },
+                "ground": {
+                  "reference": 424.748787362971,
+                  "error": 5.401990859090468
+                }
+              },
+              "ground_error_db": -18.955783026871153,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.15513592958450317,
+              "candidate_peak": 0.1558847278356552,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s180-r0/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=2.0 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s180-2.0-r0.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.25": {
+              "error_db": -19.060910719070442,
+              "full_range_error_db": -19.060910719071327,
+              "height_error_db": null,
+              "level_delta_db": -0.1582540797180035,
+              "per_channel": {
+                "L": {
+                  "error_db": -18.888291936594296,
+                  "reference_rms_dbfs": -33.88260986282303,
+                  "level_delta_db": -0.18386756270329602,
+                  "correlation": 0.9936272485775635
+                },
+                "R": {
+                  "error_db": -19.21496379564022,
+                  "reference_rms_dbfs": -33.22503901615486,
+                  "level_delta_db": -0.13635951470308558,
+                  "correlation": 0.9940377967341476
+                }
+              },
+              "per_second_full_range_error_db": [
+                -18.763401899755642,
+                -19.972165254033033,
+                -19.420857095606497,
+                -19.68083050263681,
+                -19.332319216261666,
+                -19.99247923838611,
+                -18.927228489873155,
+                -18.560053462425056,
+                -17.56512508683869,
+                -19.321904234550427
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 424.748787362971,
+                  "error": 5.272797293927031
+                },
+                "height": {
+                  "reference": 0.0,
+                  "error": 0.0
+                },
+                "ground": {
+                  "reference": 424.748787362971,
+                  "error": 5.272797293927031
+                }
+              },
+              "ground_error_db": -19.060910719071327,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.15513592958450317,
+              "candidate_peak": 0.15696483850479126,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s180-r0.25/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=2.0 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s180-2.0-r0.25.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.5": {
+              "error_db": -19.042095473214587,
+              "full_range_error_db": -19.042095473215532,
+              "height_error_db": null,
+              "level_delta_db": -0.15412135150351824,
+              "per_channel": {
+                "L": {
+                  "error_db": -18.787207722386324,
+                  "reference_rms_dbfs": -33.88260986282303,
+                  "level_delta_db": -0.17146206065601238,
+                  "correlation": 0.9934523246092886
+                },
+                "R": {
+                  "error_db": -19.273798793253864,
+                  "reference_rms_dbfs": -33.22503901615486,
+                  "level_delta_db": -0.13927224386020412,
+                  "correlation": 0.9941229891583349
+                }
+              },
+              "per_second_full_range_error_db": [
+                -18.66402298881999,
+                -19.856746369527126,
+                -19.377348449414203,
+                -19.56947296824599,
+                -19.48918874746355,
+                -19.878927032231477,
+                -19.130457653912636,
+                -19.059912602479802,
+                -17.494476517789145,
+                -19.560850711159055
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 424.748787362971,
+                  "error": 5.295690560427873
+                },
+                "height": {
+                  "reference": 0.0,
+                  "error": 0.0
+                },
+                "ground": {
+                  "reference": 424.748787362971,
+                  "error": 5.295690560427873
+                }
+              },
+              "ground_error_db": -19.042095473215532,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.15513592958450317,
+              "candidate_peak": 0.15762396156787872,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s180-r0.5/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=2.0 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s180-2.0-r0.5.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            }
+          }
+        },
+        "7.1.4": {
+          "reference_render": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+              "salsadamfsrc location=\"/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos\" ! identity name=object_pcm ! salsaoar layout=7.1.4 limiter-enable=false",
+              "/tmp/salsa-angle-eval/screen/s180-7.1.4-reference.wav",
+              "180.0",
+              "190.0",
+              "--warp-mode",
+              "3"
+            ],
+            "frames_written": 480768,
+            "frames_measured": 480000
+          },
+          "candidates": {
+            "0": {
+              "error_db": -16.578525778844757,
+              "full_range_error_db": -14.662394967713956,
+              "height_error_db": -12.07017986034147,
+              "level_delta_db": -0.1402891977434478,
+              "per_channel": {
+                "L": {
+                  "error_db": -19.161595080914505,
+                  "reference_rms_dbfs": -35.47611693402973,
+                  "level_delta_db": -0.12078113694020567,
+                  "correlation": 0.9939470442000169
+                },
+                "R": {
+                  "error_db": -19.577928629882532,
+                  "reference_rms_dbfs": -34.785375545251426,
+                  "level_delta_db": -0.10916611494484689,
+                  "correlation": 0.9944989649972296
+                },
+                "C": {
+                  "error_db": -20.286865140836014,
+                  "reference_rms_dbfs": -38.96447584824489,
+                  "level_delta_db": -0.14841959863839194,
+                  "correlation": 0.9953849248756865
+                },
+                "LFE": {
+                  "error_db": -19.29687690977327,
+                  "reference_rms_dbfs": -28.99642541683271,
+                  "level_delta_db": -0.04902674995698412,
+                  "correlation": 0.9941039402879008
+                },
+                "Lrs": {
+                  "error_db": -9.980101412633315,
+                  "reference_rms_dbfs": -43.53349335369188,
+                  "level_delta_db": -0.6737378416510896,
+                  "correlation": 0.9487289589537885
+                },
+                "Rrs": {
+                  "error_db": -9.552325394002187,
+                  "reference_rms_dbfs": -43.06446669964564,
+                  "level_delta_db": -0.848857962642672,
+                  "correlation": 0.9436596402908789
+                },
+                "Ls": {
+                  "error_db": -10.335622332012157,
+                  "reference_rms_dbfs": -43.119771949579366,
+                  "level_delta_db": -0.5905133945428842,
+                  "correlation": 0.9527744688345212
+                },
+                "Rs": {
+                  "error_db": -9.370982575306714,
+                  "reference_rms_dbfs": -42.931254576591215,
+                  "level_delta_db": -0.7660354308107321,
+                  "correlation": 0.9407705829866849
+                },
+                "Ltf": {
+                  "error_db": -14.268699122476491,
+                  "reference_rms_dbfs": -43.12807515064166,
+                  "level_delta_db": -0.18909795943536545,
+                  "correlation": 0.9811140367767471
+                },
+                "Rtf": {
+                  "error_db": -12.267333550719911,
+                  "reference_rms_dbfs": -44.722366574926895,
+                  "level_delta_db": -0.33437709537255644,
+                  "correlation": 0.9699123643130793
+                },
+                "Ltr": {
+                  "error_db": -10.912423439624227,
+                  "reference_rms_dbfs": -46.6932099972389,
+                  "level_delta_db": -0.5274333645532385,
+                  "correlation": 0.9587816996928358
+                },
+                "Rtr": {
+                  "error_db": -9.449004406293561,
+                  "reference_rms_dbfs": -47.63466519649299,
+                  "level_delta_db": -0.7189900233361425,
+                  "correlation": 0.9417657477936516
+                }
+              },
+              "per_second_full_range_error_db": [
+                -15.592031858240386,
+                -17.150941015700038,
+                -15.376867853019123,
+                -14.74639278791847,
+                -14.143036702231598,
+                -11.708433821870901,
+                -13.439906730445248,
+                -13.92233463703815,
+                -13.741316132003522,
+                -15.002443524235078
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 507.3464904387138,
+                  "error": 17.340641659282927
+                },
+                "height": {
+                  "reference": 58.092270171576516,
+                  "error": 3.6066197987712583
+                },
+                "ground": {
+                  "reference": 449.25422026713727,
+                  "error": 13.734021860511653
+                }
+              },
+              "ground_error_db": -15.146944312089811,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.1533290147781372,
+              "candidate_peak": 0.15639641880989075,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s180-r0/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=7.1.4 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s180-7.1.4-r0.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.25": {
+              "error_db": -16.567269622711503,
+              "full_range_error_db": -14.646531549899436,
+              "height_error_db": -12.230777578176728,
+              "level_delta_db": -0.14436477254815036,
+              "per_channel": {
+                "L": {
+                  "error_db": -19.140617824005545,
+                  "reference_rms_dbfs": -35.47611693402973,
+                  "level_delta_db": -0.15750954712107507,
+                  "correlation": 0.9939588258303568
+                },
+                "R": {
+                  "error_db": -19.561837153582353,
+                  "reference_rms_dbfs": -34.785375545251426,
+                  "level_delta_db": -0.11600273301284611,
+                  "correlation": 0.9944840439551795
+                },
+                "C": {
+                  "error_db": -20.270701700174293,
+                  "reference_rms_dbfs": -38.96447584824489,
+                  "level_delta_db": -0.14213791201510037,
+                  "correlation": 0.9953585302940862
+                },
+                "LFE": {
+                  "error_db": -19.29687690977327,
+                  "reference_rms_dbfs": -28.99642541683271,
+                  "level_delta_db": -0.04902674995698412,
+                  "correlation": 0.9941039402879008
+                },
+                "Lrs": {
+                  "error_db": -9.93074628002122,
+                  "reference_rms_dbfs": -43.53349335369188,
+                  "level_delta_db": -0.6937916286868173,
+                  "correlation": 0.9481636054741348
+                },
+                "Rrs": {
+                  "error_db": -9.402032402658879,
+                  "reference_rms_dbfs": -43.06446669964564,
+                  "level_delta_db": -0.8648481843812654,
+                  "correlation": 0.9415728121115422
+                },
+                "Ls": {
+                  "error_db": -10.307134137215064,
+                  "reference_rms_dbfs": -43.119771949579366,
+                  "level_delta_db": -0.5860761158627642,
+                  "correlation": 0.9524392923303987
+                },
+                "Rs": {
+                  "error_db": -9.300016853353313,
+                  "reference_rms_dbfs": -42.931254576591215,
+                  "level_delta_db": -0.7604035305221604,
+                  "correlation": 0.9397152254501057
+                },
+                "Ltf": {
+                  "error_db": -14.32144292686133,
+                  "reference_rms_dbfs": -43.12807515064166,
+                  "level_delta_db": -0.16481048830055664,
+                  "correlation": 0.9813406574447999
+                },
+                "Rtf": {
+                  "error_db": -12.487196869135435,
+                  "reference_rms_dbfs": -44.722366574926895,
+                  "level_delta_db": -0.3333219357687607,
+                  "correlation": 0.9714331226490238
+                },
+                "Ltr": {
+                  "error_db": -11.131970698080863,
+                  "reference_rms_dbfs": -46.6932099972389,
+                  "level_delta_db": -0.48119656985030634,
+                  "correlation": 0.9608126180706502
+                },
+                "Rtr": {
+                  "error_db": -9.59915184271887,
+                  "reference_rms_dbfs": -47.63466519649299,
+                  "level_delta_db": -0.6300201628639013,
+                  "correlation": 0.9436719496419845
+                }
+              },
+              "per_second_full_range_error_db": [
+                -15.56370015389489,
+                -17.119947971217584,
+                -15.347886078164807,
+                -14.751622673566533,
+                -14.097511812782887,
+                -11.82338632053125,
+                -13.38975146080344,
+                -13.741460629336338,
+                -13.730119693753448,
+                -15.055619238436716
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 507.3464904387138,
+                  "error": 17.404097416028723
+                },
+                "height": {
+                  "reference": 58.092270171576516,
+                  "error": 3.4756864489156922
+                },
+                "ground": {
+                  "reference": 449.25422026713727,
+                  "error": 13.928410967113035
+                }
+              },
+              "ground_error_db": -15.085905930879584,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.1533290147781372,
+              "candidate_peak": 0.15639641880989075,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s180-r0.25/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=7.1.4 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s180-7.1.4-r0.25.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.5": {
+              "error_db": -16.5109636690096,
+              "full_range_error_db": -14.567429459284838,
+              "height_error_db": -12.232983951673456,
+              "level_delta_db": -0.14427546004542854,
+              "per_channel": {
+                "L": {
+                  "error_db": -18.976482861735178,
+                  "reference_rms_dbfs": -35.47611693402973,
+                  "level_delta_db": -0.14466536343479514,
+                  "correlation": 0.9937036059568561
+                },
+                "R": {
+                  "error_db": -19.53765814940448,
+                  "reference_rms_dbfs": -34.785375545251426,
+                  "level_delta_db": -0.11990727227213313,
+                  "correlation": 0.9944563212467127
+                },
+                "C": {
+                  "error_db": -19.96872578273674,
+                  "reference_rms_dbfs": -38.96447584824489,
+                  "level_delta_db": -0.15790982815508645,
+                  "correlation": 0.9950367312912094
+                },
+                "LFE": {
+                  "error_db": -19.29687690977327,
+                  "reference_rms_dbfs": -28.99642541683271,
+                  "level_delta_db": -0.04902674995698412,
+                  "correlation": 0.9941039402879008
+                },
+                "Lrs": {
+                  "error_db": -9.754843480408743,
+                  "reference_rms_dbfs": -43.53349335369188,
+                  "level_delta_db": -0.6914709355307419,
+                  "correlation": 0.9458830211633376
+                },
+                "Rrs": {
+                  "error_db": -9.279844379676804,
+                  "reference_rms_dbfs": -43.06446669964564,
+                  "level_delta_db": -0.8815595160740541,
+                  "correlation": 0.9398322546569415
+                },
+                "Ls": {
+                  "error_db": -10.248546668399182,
+                  "reference_rms_dbfs": -43.119771949579366,
+                  "level_delta_db": -0.589604717901001,
+                  "correlation": 0.95176939863642
+                },
+                "Rs": {
+                  "error_db": -9.284690818452749,
+                  "reference_rms_dbfs": -42.931254576591215,
+                  "level_delta_db": -0.7866534318223428,
+                  "correlation": 0.939563290267217
+                },
+                "Ltf": {
+                  "error_db": -14.248832471781423,
+                  "reference_rms_dbfs": -43.12807515064166,
+                  "level_delta_db": -0.15970833420406585,
+                  "correlation": 0.9810233067639146
+                },
+                "Rtf": {
+                  "error_db": -12.493119387783603,
+                  "reference_rms_dbfs": -44.722366574926895,
+                  "level_delta_db": -0.30271117294755434,
+                  "correlation": 0.9714469446099273
+                },
+                "Ltr": {
+                  "error_db": -11.174028687649889,
+                  "reference_rms_dbfs": -46.6932099972389,
+                  "level_delta_db": -0.4567112993474033,
+                  "correlation": 0.9611663359343278
+                },
+                "Rtr": {
+                  "error_db": -9.634941477691019,
+                  "reference_rms_dbfs": -47.63466519649299,
+                  "level_delta_db": -0.6254465008851997,
+                  "correlation": 0.9441485278839916
+                }
+              },
+              "per_second_full_range_error_db": [
+                -15.44826665350172,
+                -17.034375781153763,
+                -15.251328054222785,
+                -14.680258826159298,
+                -14.074580648605696,
+                -11.62870581202808,
+                -13.365280846281804,
+                -13.623169981713444,
+                -13.630063771373472,
+                -14.99257436931353
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 507.3464904387138,
+                  "error": 17.723998906579997
+                },
+                "height": {
+                  "reference": 58.092270171576516,
+                  "error": 3.473921122591326
+                },
+                "ground": {
+                  "reference": 449.25422026713727,
+                  "error": 14.250077783988662
+                }
+              },
+              "ground_error_db": -14.986749305908567,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.1533290147781372,
+              "candidate_peak": 0.15639641880989075,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s180-r0.5/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=7.1.4 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s180-7.1.4-r0.5.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            }
+          }
+        },
+        "9.1.6": {
+          "reference_render": {
+            "command": [
+              "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+              "salsadamfsrc location=\"/Users/a1/Downloads/ATMOS ADM & DAMF Files/ATMOS DAMF/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24/sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos\" ! identity name=object_pcm ! salsaoar layout=9.1.6 limiter-enable=false",
+              "/tmp/salsa-angle-eval/screen/s180-9.1.6-reference.wav",
+              "180.0",
+              "190.0",
+              "--warp-mode",
+              "3"
+            ],
+            "frames_written": 480768,
+            "frames_measured": 480000
+          },
+          "candidates": {
+            "0": {
+              "error_db": -14.349875493040257,
+              "full_range_error_db": -11.751666145635355,
+              "height_error_db": -8.879939913818372,
+              "level_delta_db": -0.23000991279191504,
+              "per_channel": {
+                "L": {
+                  "error_db": -14.845168916396826,
+                  "reference_rms_dbfs": -36.819032935515025,
+                  "level_delta_db": -0.2714644966975494,
+                  "correlation": 0.9835829960426921
+                },
+                "R": {
+                  "error_db": -15.230085813377372,
+                  "reference_rms_dbfs": -36.06702712487913,
+                  "level_delta_db": -0.24595999197749252,
+                  "correlation": 0.9849747419176793
+                },
+                "C": {
+                  "error_db": -18.30673246151101,
+                  "reference_rms_dbfs": -40.413573353408054,
+                  "level_delta_db": -0.16832829396484175,
+                  "correlation": 0.9926592068112584
+                },
+                "LFE": {
+                  "error_db": -19.29687690977327,
+                  "reference_rms_dbfs": -28.99642541683271,
+                  "level_delta_db": -0.04902674995698412,
+                  "correlation": 0.9941039402879008
+                },
+                "Lrs": {
+                  "error_db": -9.980101412633315,
+                  "reference_rms_dbfs": -43.53349335369188,
+                  "level_delta_db": -0.6737378416510896,
+                  "correlation": 0.9487289589537885
+                },
+                "Rrs": {
+                  "error_db": -9.552325394002187,
+                  "reference_rms_dbfs": -43.06446669964564,
+                  "level_delta_db": -0.848857962642672,
+                  "correlation": 0.9436596402908789
+                },
+                "Ls": {
+                  "error_db": -7.985403287567081,
+                  "reference_rms_dbfs": -45.849720131175225,
+                  "level_delta_db": -1.0672838580664714,
+                  "correlation": 0.9176516341854242
+                },
+                "Rs": {
+                  "error_db": -6.951406665802451,
+                  "reference_rms_dbfs": -45.457957341095494,
+                  "level_delta_db": -1.4190695479771147,
+                  "correlation": 0.8945848370537068
+                },
+                "Ltf": {
+                  "error_db": -10.116827270420748,
+                  "reference_rms_dbfs": -45.24568903301027,
+                  "level_delta_db": -0.5532286335729449,
+                  "correlation": 0.9501551950938563
+                },
+                "Rtf": {
+                  "error_db": -9.091914111248084,
+                  "reference_rms_dbfs": -46.38807125131528,
+                  "level_delta_db": -0.8008351419433085,
+                  "correlation": 0.9366730540300258
+                },
+                "Ltr": {
+                  "error_db": -5.884801773336907,
+                  "reference_rms_dbfs": -51.8873209941658,
+                  "level_delta_db": -1.5978303022455593,
+                  "correlation": 0.8619501408850391
+                },
+                "Rtr": {
+                  "error_db": -5.244855602400298,
+                  "reference_rms_dbfs": -51.42285720077257,
+                  "level_delta_db": -1.9512506602809854,
+                  "correlation": 0.8382507656375726
+                },
+                "Ltm": {
+                  "error_db": -10.549812635106147,
+                  "reference_rms_dbfs": -44.982299450579134,
+                  "level_delta_db": -0.31335245816558255,
+                  "correlation": 0.9549781446453365
+                },
+                "Rtm": {
+                  "error_db": -8.327998990559479,
+                  "reference_rms_dbfs": -46.8959493207501,
+                  "level_delta_db": -0.5583815589475933,
+                  "correlation": 0.9237080062052095
+                },
+                "Lw": {
+                  "error_db": -11.178070401290567,
+                  "reference_rms_dbfs": -39.49732518787103,
+                  "level_delta_db": -0.519526108857339,
+                  "correlation": 0.9613187449220361
+                },
+                "Rw": {
+                  "error_db": -10.569487238245701,
+                  "reference_rms_dbfs": -39.187311013325264,
+                  "level_delta_db": -0.6606358921315452,
+                  "correlation": 0.9555729350851294
+                }
+              },
+              "per_second_full_range_error_db": [
+                -13.504401751635202,
+                -14.731197189276186,
+                -12.710020946814769,
+                -11.500229573605234,
+                -11.183434026941686,
+                -10.605773362056574,
+                -10.547883495370705,
+                -10.618594850835542,
+                -10.603973205329197,
+                -13.22684089663527
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 502.0873574391172,
+                  "error": 33.54383177754688
+                },
+                "height": {
+                  "reference": 56.9881291271644,
+                  "error": 7.375482014542305
+                },
+                "ground": {
+                  "reference": 445.09922831195314,
+                  "error": 26.168349763004592
+                }
+              },
+              "ground_error_db": -12.30680505444444,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.1533290147781372,
+              "candidate_peak": 0.15639641880989075,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s180-r0/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=9.1.6 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s180-9.1.6-r0.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.25": {
+              "error_db": -14.344402637473522,
+              "full_range_error_db": -11.745034030359614,
+              "height_error_db": -9.008891305797047,
+              "level_delta_db": -0.23275985987161754,
+              "per_channel": {
+                "L": {
+                  "error_db": -14.751564324145308,
+                  "reference_rms_dbfs": -36.819032935515025,
+                  "level_delta_db": -0.31345560213576584,
+                  "correlation": 0.9832937721403301
+                },
+                "R": {
+                  "error_db": -15.156716849736947,
+                  "reference_rms_dbfs": -36.06702712487913,
+                  "level_delta_db": -0.2460555809799568,
+                  "correlation": 0.9847120593604543
+                },
+                "C": {
+                  "error_db": -18.1241060194551,
+                  "reference_rms_dbfs": -40.413573353408054,
+                  "level_delta_db": -0.15865942160638558,
+                  "correlation": 0.9923236507889771
+                },
+                "LFE": {
+                  "error_db": -19.29687690977327,
+                  "reference_rms_dbfs": -28.99642541683271,
+                  "level_delta_db": -0.04902674995698412,
+                  "correlation": 0.9941039402879008
+                },
+                "Lrs": {
+                  "error_db": -9.93074628002122,
+                  "reference_rms_dbfs": -43.53349335369188,
+                  "level_delta_db": -0.6937916286868173,
+                  "correlation": 0.9481636054741348
+                },
+                "Rrs": {
+                  "error_db": -9.402032402658879,
+                  "reference_rms_dbfs": -43.06446669964564,
+                  "level_delta_db": -0.8648481843812654,
+                  "correlation": 0.9415728121115422
+                },
+                "Ls": {
+                  "error_db": -8.063776311133159,
+                  "reference_rms_dbfs": -45.849720131175225,
+                  "level_delta_db": -1.0428686228171424,
+                  "correlation": 0.9191651208726168
+                },
+                "Rs": {
+                  "error_db": -6.980177394224954,
+                  "reference_rms_dbfs": -45.457957341095494,
+                  "level_delta_db": -1.4171630070585102,
+                  "correlation": 0.8953590933342808
+                },
+                "Ltf": {
+                  "error_db": -10.082094685766593,
+                  "reference_rms_dbfs": -45.24568903301027,
+                  "level_delta_db": -0.5260096391738769,
+                  "correlation": 0.9497074683041468
+                },
+                "Rtf": {
+                  "error_db": -9.068374721379268,
+                  "reference_rms_dbfs": -46.38807125131528,
+                  "level_delta_db": -0.7730779848285934,
+                  "correlation": 0.9362326265501408
+                },
+                "Ltr": {
+                  "error_db": -5.854346670407502,
+                  "reference_rms_dbfs": -51.8873209941658,
+                  "level_delta_db": -1.6189801557933234,
+                  "correlation": 0.8609321440880865
+                },
+                "Rtr": {
+                  "error_db": -5.406287854076171,
+                  "reference_rms_dbfs": -51.42285720077257,
+                  "level_delta_db": -1.826478478010628,
+                  "correlation": 0.8444997785086492
+                },
+                "Ltm": {
+                  "error_db": -10.870706169855723,
+                  "reference_rms_dbfs": -44.982299450579134,
+                  "level_delta_db": -0.24594855429700774,
+                  "correlation": 0.9583091873461325
+                },
+                "Rtm": {
+                  "error_db": -8.661779967002772,
+                  "reference_rms_dbfs": -46.8959493207501,
+                  "level_delta_db": -0.6037136297047374,
+                  "correlation": 0.9294744483558438
+                },
+                "Lw": {
+                  "error_db": -11.086331793434283,
+                  "reference_rms_dbfs": -39.49732518787103,
+                  "level_delta_db": -0.5308445312612118,
+                  "correlation": 0.9604797084775066
+                },
+                "Rw": {
+                  "error_db": -10.606916534008056,
+                  "reference_rms_dbfs": -39.187311013325264,
+                  "level_delta_db": -0.6568538548402643,
+                  "correlation": 0.955966382715879
+                }
+              },
+              "per_second_full_range_error_db": [
+                -13.454258590186853,
+                -14.639715425480668,
+                -12.676320611778223,
+                -11.595741351427222,
+                -11.106974732559989,
+                -10.695928347832611,
+                -10.55407343756828,
+                -10.49798617033665,
+                -10.571542972243712,
+                -13.349185371778752
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 502.0873574391172,
+                  "error": 33.59509572847547
+                },
+                "height": {
+                  "reference": 56.9881291271644,
+                  "error": 7.159707317587223
+                },
+                "ground": {
+                  "reference": 445.09922831195314,
+                  "error": 26.43538841088825
+                }
+              },
+              "ground_error_db": -12.2627114552117,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.1533290147781372,
+              "candidate_peak": 0.15639641880989075,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s180-r0.25/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=9.1.6 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s180-9.1.6-r0.25.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            },
+            "0.5": {
+              "error_db": -14.300383609425403,
+              "full_range_error_db": -11.691754950992323,
+              "height_error_db": -8.981005852773642,
+              "level_delta_db": -0.23453546544776924,
+              "per_channel": {
+                "L": {
+                  "error_db": -14.667077121655296,
+                  "reference_rms_dbfs": -36.819032935515025,
+                  "level_delta_db": -0.2952977073468279,
+                  "correlation": 0.9829164840341902
+                },
+                "R": {
+                  "error_db": -15.173564428369023,
+                  "reference_rms_dbfs": -36.06702712487913,
+                  "level_delta_db": -0.26123523975664337,
+                  "correlation": 0.9847965093999339
+                },
+                "C": {
+                  "error_db": -17.682003465921976,
+                  "reference_rms_dbfs": -40.413573353408054,
+                  "level_delta_db": -0.17578516534516545,
+                  "correlation": 0.991504001023827
+                },
+                "LFE": {
+                  "error_db": -19.29687690977327,
+                  "reference_rms_dbfs": -28.99642541683271,
+                  "level_delta_db": -0.04902674995698412,
+                  "correlation": 0.9941039402879008
+                },
+                "Lrs": {
+                  "error_db": -9.754843480408743,
+                  "reference_rms_dbfs": -43.53349335369188,
+                  "level_delta_db": -0.6914709355307419,
+                  "correlation": 0.9458830211633376
+                },
+                "Rrs": {
+                  "error_db": -9.279844379676804,
+                  "reference_rms_dbfs": -43.06446669964564,
+                  "level_delta_db": -0.8815595160740541,
+                  "correlation": 0.9398322546569415
+                },
+                "Ls": {
+                  "error_db": -8.034877597265936,
+                  "reference_rms_dbfs": -45.849720131175225,
+                  "level_delta_db": -1.050266889423631,
+                  "correlation": 0.9186046043844496
+                },
+                "Rs": {
+                  "error_db": -6.935745879514772,
+                  "reference_rms_dbfs": -45.457957341095494,
+                  "level_delta_db": -1.4790326312027688,
+                  "correlation": 0.8944868688984529
+                },
+                "Ltf": {
+                  "error_db": -9.978548471296174,
+                  "reference_rms_dbfs": -45.24568903301027,
+                  "level_delta_db": -0.5406860944554706,
+                  "correlation": 0.9484632453734766
+                },
+                "Rtf": {
+                  "error_db": -9.061489156373518,
+                  "reference_rms_dbfs": -46.38807125131528,
+                  "level_delta_db": -0.7914723666917804,
+                  "correlation": 0.9361723280317653
+                },
+                "Ltr": {
+                  "error_db": -5.79583463750843,
+                  "reference_rms_dbfs": -51.8873209941658,
+                  "level_delta_db": -1.6386280665726536,
+                  "correlation": 0.85887699798104
+                },
+                "Rtr": {
+                  "error_db": -5.178843981705027,
+                  "reference_rms_dbfs": -51.42285720077257,
+                  "level_delta_db": -1.951141029307306,
+                  "correlation": 0.8353848869866739
+                },
+                "Ltm": {
+                  "error_db": -10.968107198566088,
+                  "reference_rms_dbfs": -44.982299450579134,
+                  "level_delta_db": -0.20432379825584643,
+                  "correlation": 0.9593152293499693
+                },
+                "Rtm": {
+                  "error_db": -8.75005937815396,
+                  "reference_rms_dbfs": -46.8959493207501,
+                  "level_delta_db": -0.49297351080354773,
+                  "correlation": 0.9310422340271982
+                },
+                "Lw": {
+                  "error_db": -11.146245568201746,
+                  "reference_rms_dbfs": -39.49732518787103,
+                  "level_delta_db": -0.5346047680134932,
+                  "correlation": 0.9610556609184889
+                },
+                "Rw": {
+                  "error_db": -10.52635911101006,
+                  "reference_rms_dbfs": -39.187311013325264,
+                  "level_delta_db": -0.6745287198658814,
+                  "correlation": 0.9551472167928191
+                }
+              },
+              "per_second_full_range_error_db": [
+                -13.335992737467246,
+                -14.620805551246235,
+                -12.552961209329636,
+                -11.524287490322369,
+                -11.13158686325442,
+                -10.539711087076277,
+                -10.57626362751761,
+                -10.385753375961233,
+                -10.523313270308897,
+                -13.299714086213969
+              ],
+              "energy": {
+                "full_range": {
+                  "reference": 502.0873574391172,
+                  "error": 34.009777515018015
+                },
+                "height": {
+                  "reference": 56.9881291271644,
+                  "error": 7.205826721011977
+                },
+                "ground": {
+                  "reference": 445.09922831195314,
+                  "error": 26.803950794005996
+                }
+              },
+              "ground_error_db": -12.202580293296686,
+              "residual_lag_samples": 0,
+              "delay_samples": 0,
+              "reference_peak": 0.1533290147781372,
+              "candidate_peak": 0.15639641880989075,
+              "render": {
+                "command": [
+                  "/Users/a1/ddp_research/salsa/target/release/examples/render_segment",
+                  "filesrc location=\"/tmp/salsa-angle-eval/screen/s180-r0.5/auto.ogg\" ! salsaspatialparse ! salsaspatialdec ! identity name=object_pcm ! salsaoar layout=9.1.6 limiter-enable=false",
+                  "/tmp/salsa-angle-eval/screen/s180-9.1.6-r0.5.wav",
+                  "--warp-mode",
+                  "3"
+                ],
+                "frames_written": 480960,
+                "frames_measured": 480000
+              }
+            }
+          }
+        }
+      },
+      "common_headroom_gain": 1.0
+    }
+  },
+  "summary": {
+    "2.0": {
+      "0.25": {
+        "segments": 3,
+        "positive_delta": "Candidate improves over baseline",
+        "full_range": {
+          "baseline_mean_error_db": -19.682589896064105,
+          "candidate_mean_error_db": -19.717183234901654,
+          "mean_delta_db": 0.03459333883755041,
+          "pooled_delta_db": 0.017571219709774353,
+          "min_delta_db": -0.05160173160411574,
+          "max_delta_db": 0.10512769220017404,
+          "improved_segments": 2
+        },
+        "ground": {
+          "baseline_mean_error_db": -19.682589896064105,
+          "candidate_mean_error_db": -19.717183234901654,
+          "mean_delta_db": 0.03459333883755041,
+          "pooled_delta_db": 0.017571219709774353,
+          "min_delta_db": -0.05160173160411574,
+          "max_delta_db": 0.10512769220017404,
+          "improved_segments": 2
+        }
+      },
+      "0.5": {
+        "segments": 3,
+        "positive_delta": "Candidate improves over baseline",
+        "full_range": {
+          "baseline_mean_error_db": -19.682589896064105,
+          "candidate_mean_error_db": -19.713885496448594,
+          "mean_delta_db": 0.03129560038449123,
+          "pooled_delta_db": 0.025518332512886047,
+          "min_delta_db": -0.11864864882296544,
+          "max_delta_db": 0.12622300363205952,
+          "improved_segments": 2
+        },
+        "ground": {
+          "baseline_mean_error_db": -19.682589896064105,
+          "candidate_mean_error_db": -19.713885496448594,
+          "mean_delta_db": 0.03129560038449123,
+          "pooled_delta_db": 0.025518332512886047,
+          "min_delta_db": -0.11864864882296544,
+          "max_delta_db": 0.12622300363205952,
+          "improved_segments": 2
+        }
+      }
+    },
+    "7.1.4": {
+      "0.25": {
+        "segments": 3,
+        "positive_delta": "Candidate improves over baseline",
+        "full_range": {
+          "baseline_mean_error_db": -16.209743640282642,
+          "candidate_mean_error_db": -16.188056388017568,
+          "mean_delta_db": -0.021687252265072843,
+          "pooled_delta_db": -0.02109503347484661,
+          "min_delta_db": -0.04299609163099305,
+          "max_delta_db": -0.006202247349705203,
+          "improved_segments": 0
+        },
+        "height": {
+          "baseline_mean_error_db": -15.08597754881148,
+          "candidate_mean_error_db": -15.214114445276797,
+          "mean_delta_db": 0.1281368964653146,
+          "pooled_delta_db": 0.11792076786284583,
+          "min_delta_db": 0.09469906937606609,
+          "max_delta_db": 0.16059771783525711,
+          "improved_segments": 3
+        },
+        "ground": {
+          "baseline_mean_error_db": -16.44165054592636,
+          "candidate_mean_error_db": -16.378087888088846,
+          "mean_delta_db": -0.0635626578375117,
+          "pooled_delta_db": -0.06101064818034041,
+          "min_delta_db": -0.0939437441650135,
+          "max_delta_db": -0.03570584813729383,
+          "improved_segments": 0
+        }
+      },
+      "0.5": {
+        "segments": 3,
+        "positive_delta": "Candidate improves over baseline",
+        "full_range": {
+          "baseline_mean_error_db": -16.209743640282642,
+          "candidate_mean_error_db": -16.131160115603237,
+          "mean_delta_db": -0.07858352467940517,
+          "pooled_delta_db": -0.07044830762432377,
+          "min_delta_db": -0.11122403733728703,
+          "max_delta_db": -0.02956102827181084,
+          "improved_segments": 0
+        },
+        "height": {
+          "baseline_mean_error_db": -15.08597754881148,
+          "candidate_mean_error_db": -15.277239911899143,
+          "mean_delta_db": 0.19126236308765954,
+          "pooled_delta_db": 0.19442662146200132,
+          "min_delta_db": 0.16280409133198503,
+          "max_delta_db": 0.24428490218593168,
+          "improved_segments": 3
+        },
+        "ground": {
+          "baseline_mean_error_db": -16.44165054592636,
+          "candidate_mean_error_db": -16.288312015180917,
+          "mean_delta_db": -0.15333853074543904,
+          "pooled_delta_db": -0.14511619871031634,
+          "min_delta_db": -0.2136733003362714,
+          "max_delta_db": -0.08614728571880192,
+          "improved_segments": 0
+        }
+      }
+    },
+    "9.1.6": {
+      "0.25": {
+        "segments": 3,
+        "positive_delta": "Candidate improves over baseline",
+        "full_range": {
+          "baseline_mean_error_db": -13.765325288096179,
+          "candidate_mean_error_db": -13.74151825466629,
+          "mean_delta_db": -0.023807033429886697,
+          "pooled_delta_db": -0.025364942250557663,
+          "min_delta_db": -0.05449194939749269,
+          "max_delta_db": -0.006632115275740702,
+          "improved_segments": 0
+        },
+        "height": {
+          "baseline_mean_error_db": -12.440227789584446,
+          "candidate_mean_error_db": -12.512313126056156,
+          "mean_delta_db": 0.07208533647171105,
+          "pooled_delta_db": 0.05910064338847541,
+          "min_delta_db": 0.038722969998332246,
+          "max_delta_db": 0.12895139197867422,
+          "improved_segments": 3
+        },
+        "ground": {
+          "baseline_mean_error_db": -14.051694179988614,
+          "candidate_mean_error_db": -14.000157754648782,
+          "mean_delta_db": -0.05153642533983079,
+          "pooled_delta_db": -0.050752439045748596,
+          "min_delta_db": -0.08457560184942103,
+          "max_delta_db": -0.025940074937331303,
+          "improved_segments": 0
+        }
+      },
+      "0.5": {
+        "segments": 3,
+        "positive_delta": "Candidate improves over baseline",
+        "full_range": {
+          "baseline_mean_error_db": -13.765325288096179,
+          "candidate_mean_error_db": -13.682868379681254,
+          "mean_delta_db": -0.08245690841492248,
+          "pooled_delta_db": -0.08439493581184758,
+          "min_delta_db": -0.12433163159294836,
+          "max_delta_db": -0.05991119464303196,
+          "improved_segments": 0
+        },
+        "height": {
+          "baseline_mean_error_db": -12.440227789584446,
+          "candidate_mean_error_db": -12.54701589308641,
+          "mean_delta_db": 0.10678810350196659,
+          "pooled_delta_db": 0.10659081405238033,
+          "min_delta_db": 0.0970444995589812,
+          "max_delta_db": 0.12225387199164928,
+          "improved_segments": 3
+        },
+        "ground": {
+          "baseline_mean_error_db": -14.051694179988614,
+          "candidate_mean_error_db": -13.914221266568397,
+          "mean_delta_db": -0.13747291342021425,
+          "pooled_delta_db": -0.1408996760353593,
+          "min_delta_db": -0.19480094503239087,
+          "max_delta_db": -0.10422476114775492,
+          "improved_segments": 0
+        }
+      }
+    }
+  }
+}
