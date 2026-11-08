@@ -48,21 +48,12 @@ fn contract_exports_are_usable() {
         [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     ];
     let nu = [0.0; CORE_CHANNEL_COUNT];
-    let _ = solve_regularized(&d, &covariance, 0, &nu, 1e-3).unwrap();
+    let _ = solve_regularized(&d, &covariance, 0, &nu).unwrap();
     let core = vec![num_complex::Complex::new(0.0, 0.0); CORE_CHANNEL_COUNT * FFT_BINS];
     let nu_bands = [[0.0; CORE_CHANNEL_COUNT]; PARAM_BAND_COUNT];
     let unobservable = [false; PARAM_BAND_COUNT];
-    let objects = estimate_objects(
-        0,
-        &core,
-        &d,
-        &covariance,
-        &nu_bands,
-        1e-3,
-        true,
-        &unobservable,
-    )
-    .unwrap();
+    let objects =
+        estimate_objects(0, &core, &d, &covariance, &nu_bands, true, &unobservable).unwrap();
     assert_eq!(objects.len(), 2);
 
     let mut accumulator = StatisticsAccumulator::new(2);

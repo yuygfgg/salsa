@@ -1,0 +1,184 @@
+{
+  "date": "2026-11-09",
+  "source": "sollevante_lp_v01_DAMF_Nearfield_48k_24b_24.atmos",
+  "excerpt_seconds": 10.0,
+  "core_encoder": "CBR constrained LowDelay Opus, complexity 10, 20 ms packets; LFE and shared rear silence use unconstrained VBR",
+  "adopted_allocation": {
+    "rates_bps": {
+      "front": 200000,
+      "surround": 128000,
+      "aux": 120000,
+      "center": 112000,
+      "lfe": 24000
+    },
+    "total_core_bps": 584000,
+    "stream_mapping": {
+      "front": [
+        0,
+        1
+      ],
+      "surround": [
+        3,
+        4
+      ],
+      "aux": [
+        5,
+        6
+      ],
+      "center": [
+        2
+      ]
+    }
+  },
+  "per_substream_distortion": {
+    "start_sample": 5760000,
+    "metric": "10*log10(sum(error_power)/sum(core_power)) against the ideal seven-channel core",
+    "front": {
+      "actual_bps": 200000.0,
+      "error_db": -22.635194661542933
+    },
+    "surround": {
+      "actual_bps": 128000.0,
+      "error_db": -20.249667358648637
+    },
+    "aux": {
+      "actual_bps": 120000.0,
+      "error_db": -21.189841250034107
+    },
+    "center": {
+      "actual_bps": 112000.0,
+      "error_db": -22.460595728037692
+    },
+    "overall_core_error_db": -21.696614701779467
+  },
+  "rate_curves": {
+    "front": [
+      {
+        "actual_bps": 80000.0,
+        "error_db": -16.42607260474472
+      },
+      {
+        "actual_bps": 120000.0,
+        "error_db": -19.656752988215146
+      },
+      {
+        "actual_bps": 160000.0,
+        "error_db": -21.27086670871976
+      },
+      {
+        "actual_bps": 200000.0,
+        "error_db": -22.635194661542933
+      },
+      {
+        "actual_bps": 240000.0,
+        "error_db": -23.22172410801738
+      }
+    ],
+    "surround": [
+      {
+        "actual_bps": 64000.0,
+        "error_db": -14.796498909729973
+      },
+      {
+        "actual_bps": 96000.0,
+        "error_db": -18.003842018986496
+      },
+      {
+        "actual_bps": 128000.0,
+        "error_db": -20.249667358648637
+      },
+      {
+        "actual_bps": 160000.0,
+        "error_db": -21.397063419153255
+      },
+      {
+        "actual_bps": 192000.0,
+        "error_db": -22.168703287207478
+      }
+    ],
+    "aux": [
+      {
+        "actual_bps": 80000.0,
+        "error_db": -19.005305149174788
+      },
+      {
+        "actual_bps": 120000.0,
+        "error_db": -21.189841250034107
+      },
+      {
+        "actual_bps": 160000.0,
+        "error_db": -22.334735273080476
+      },
+      {
+        "actual_bps": 200000.0,
+        "error_db": -23.127163179214143
+      },
+      {
+        "actual_bps": 240000.0,
+        "error_db": -23.754106884699084
+      }
+    ],
+    "center": [
+      {
+        "actual_bps": 56000.0,
+        "error_db": -16.630174974105994
+      },
+      {
+        "actual_bps": 84000.0,
+        "error_db": -20.462239570778713
+      },
+      {
+        "actual_bps": 112000.0,
+        "error_db": -22.460595728037692
+      },
+      {
+        "actual_bps": 140000.0,
+        "error_db": -23.604583562632065
+      },
+      {
+        "actual_bps": 168000.0,
+        "error_db": -24.4083958136175
+      }
+    ]
+  },
+  "end_to_end": {
+    "reference": "DAMF render through salsaoar with warp mode 3",
+    "candidate": "salsaspatialparse ! salsaspatialdec ! salsaoar with warp mode 3",
+    "waveform_metric": "10*log10(sum((candidate-reference)^2)/sum(reference^2)), full range excluding LFE",
+    "perceptual_metric": "mean channel Zimtohrli 0.2.1 mapped MOS, -3 dB common gain, LFE excluded",
+    "7.1.4": {
+      "0": {
+        "total_bitrate": 801522.4,
+        "full_range_error_db": -14.639468688434832,
+        "zimtohrli_mos": 4.764938744631681
+      },
+      "30": {
+        "total_bitrate": 969784.0,
+        "full_range_error_db": -17.285615482917603,
+        "zimtohrli_mos": 4.337699109857732
+      },
+      "120": {
+        "total_bitrate": 970640.0,
+        "full_range_error_db": -17.98667409008378,
+        "zimtohrli_mos": 4.401337493549693
+      },
+      "180": {
+        "total_bitrate": 1003284.8,
+        "full_range_error_db": -15.217564422314112,
+        "zimtohrli_mos": 4.5907114202326
+      }
+    },
+    "9.1.6": {
+      "30": {
+        "total_bitrate": 969784.0,
+        "full_range_error_db": -14.496612448145058,
+        "zimtohrli_mos": 4.064835437138876
+      },
+      "120": {
+        "total_bitrate": 970640.0,
+        "full_range_error_db": -15.249822986096788,
+        "zimtohrli_mos": 4.1053595542907715
+      }
+    }
+  }
+}

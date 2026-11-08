@@ -9,7 +9,7 @@ use objectaudio_render::{
 };
 use rayon::prelude::*;
 use salsa_spatial::params::ParameterAnchor;
-use salsa_spatial::{CorrelationPair, PARAM_BAND_COUNT, REGULARIZATION_LAMBDA};
+use salsa_spatial::{CorrelationPair, PARAM_BAND_COUNT, RECONSTRUCTION_EPSILON};
 use salsa_spatial_dsp::reconstruct::solve_regularized_with_inverse;
 use salsa_spatial_dsp::{
     BandCovariance, core_gain_column, covariance_from_band_powers, solve_regularized,
@@ -423,18 +423,12 @@ fn evaluate_parameters_and_pairs(
                     (1.0 - amount) * first.error.nu[ch][band] + amount * second.error.nu[ch][band]
                 });
                 let (matrix, inverse) = if needs_derivatives {
-                    let (reconstruction, inverse) = solve_regularized_with_inverse(
-                        d_recon,
-                        &covariance,
-                        band,
-                        &nu,
-                        REGULARIZATION_LAMBDA,
-                    )?;
+                    let (reconstruction, inverse) =
+                        solve_regularized_with_inverse(d_recon, &covariance, band, &nu)?;
                     (reconstruction.matrix, Some(inverse))
                 } else {
                     (
-                        solve_regularized(d_recon, &covariance, band, &nu, REGULARIZATION_LAMBDA)?
-                            .matrix,
+                        solve_regularized(d_recon, &covariance, band, &nu)?.matrix,
                         None,
                     )
                 };
@@ -592,11 +586,17 @@ fn evaluate_parameters_and_pairs(
 
 /// The differential is dJ = 2 Re tr(H dC). Only diagonal and pair
 /// entries of H are needed, so no dense object-by-object matrix is formed.
+///
+/// The system is `K = K0 + epsilon diag(K0)` with `K0 = Z + trace(Z) diag(nu)`.
+/// Both the trace-scaled error envelope and the diagonal numerical floor
+/// depend on the covariance, so their contributions are part of the
+/// differential.
 struct CovarianceDifferential<'a> {
     d: &'a [[f64; 7]],
     t: Vec<ComplexRow>,
     v: Vec<ComplexRow>,
     trace_term: f64,
+    p_diag: [Complex<f64>; 7],
 }
 
 impl<'a> CovarianceDifferential<'a> {
@@ -616,12 +616,14 @@ impl<'a> CovarianceDifferential<'a> {
                 }
             }
         }
-        let mut trace_term = 0.0;
+        let mut p = [[Complex::new(0.0, 0.0); 7]; 7];
         for k in 0..7 {
             for l in 0..7 {
-                trace_term += (gm[k][l] * (nu[l] + REGULARIZATION_LAMBDA / 7.0) * inverse[l][k]).re;
+                p[k][l] = (0..7).map(|m| inverse[k][m] * gm[m][l]).sum();
             }
         }
+        let p_diag = std::array::from_fn(|k| p[k][k]);
+        let trace_term = (0..7).map(|k| (p_diag[k] * nu[k]).re).sum::<f64>();
         let t = d
             .iter()
             .map(|column| std::array::from_fn(|k| (0..7).map(|l| column[l] * inverse[l][k]).sum()))
@@ -640,14 +642,23 @@ impl<'a> CovarianceDifferential<'a> {
             t,
             v,
             trace_term,
+            p_diag,
         }
     }
 
     fn entry(&self, i: usize, j: usize) -> Complex<f64> {
-        (0..7)
+        let base = (0..7)
             .map(|k| self.t[i][k] * self.v[j][k])
-            .sum::<Complex<f64>>()
-            - self.trace_term * (0..7).map(|k| self.d[i][k] * self.d[j][k]).sum::<f64>()
+            .sum::<Complex<f64>>();
+        let mut floor = Complex::new(0.0, 0.0);
+        let mut dd = 0.0;
+        for k in 0..7 {
+            let product = self.d[i][k] * self.d[j][k];
+            floor += self.p_diag[k] * product;
+            dd += product;
+        }
+        base - Complex::new((1.0 + RECONSTRUCTION_EPSILON) * self.trace_term * dd, 0.0)
+            - Complex::new(RECONSTRUCTION_EPSILON, 0.0) * floor
     }
 
     fn log_power_gradient(&self, covariance: &BandCovariance, band: usize) -> Vec<f64> {
@@ -793,7 +804,10 @@ mod tests {
     #[test]
     fn lossy_core_score_matches_direct_waveform_error() {
         let (tile, context) = problem(&[[-1.0, 1.0, 0.0]], 0.5);
-        let gain = 0.5 / (1.25 + REGULARIZATION_LAMBDA / 7.0);
+        // The new solver removes the signal-level global loading; only the
+        // dimensionless numerical floor remains, so the unit downmix gain is
+        // 0.5 / (1 + 0.25) to within the floor.
+        let gain: f64 = 0.5 / 1.25;
         let expected = 1.1 * (1.0 - gain).powi(2);
         let actual = evaluate_distortion(&tile, &context).unwrap();
         assert!((actual - expected).abs() < 1e-10, "{actual} != {expected}");
@@ -909,19 +923,16 @@ mod tests {
             .map(|i| std::array::from_fn(|k| Complex::new(0.1 * (i + k) as f64, 0.02 * k as f64)))
             .collect();
         let c = covariance(cross);
-        let m = solve_regularized(&d, &c, 0, &nu, REGULARIZATION_LAMBDA)
-            .unwrap()
-            .matrix;
+        let m = solve_regularized(&d, &c, 0, &nu).unwrap().matrix;
         let g: Vec<ComplexRow> = m
             .iter()
             .zip(&target)
             .map(|(row, target)| std::array::from_fn(|k| row[k] - target[k]))
             .collect();
-        let (_, inverse) =
-            solve_regularized_with_inverse(&d, &c, 0, &nu, REGULARIZATION_LAMBDA).unwrap();
+        let (_, inverse) = solve_regularized_with_inverse(&d, &c, 0, &nu).unwrap();
         let derivative = CovarianceDifferential::new(&d, &m, &g, &inverse, &nu);
         let loss = |cross| {
-            let m = solve_regularized(&d, &covariance(cross), 0, &nu, REGULARIZATION_LAMBDA)
+            let m = solve_regularized(&d, &covariance(cross), 0, &nu)
                 .unwrap()
                 .matrix;
             m.iter()

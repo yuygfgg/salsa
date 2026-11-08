@@ -399,15 +399,8 @@ Define
 
 $$
 Z=DCD^H,\qquad
-T=\operatorname{diag}(\nu)+\frac{\lambda}{J}I,\qquad
-\Gamma=\operatorname{tr}(Z)T,\qquad
-K=Z+\Gamma.
-$$
-
-The decoder uses
-
-$$
-M=CD^HK^{-1},\qquad \hat s=My.
+E=\operatorname{tr}(Z)\operatorname{diag}(\nu),\qquad
+K_0=Z+E.
 $$
 
 The trace factor puts source and error covariance on the same scale. Under
@@ -425,19 +418,39 @@ Thus, the error term is normalized by the same source power as $C$.
 Only channelwise core-error powers are transmitted. The measured RD loss
 also contains cross-channel error effects through $R_{sy}$ and $R_{yy}$.
 
-The measured $\nu$ reduces amplification of noisy core channels. The positive
-floor $\lambda/J$ stabilizes directions with little core energy. This
-regularization trades residual object error for lower noise amplification.
-
-For $\operatorname{tr}(Z)>0$ and $\lambda>0$, $K$ is positive definite.
-The solve remains $J\times J$ regardless of the object count. A stable
-evaluation solves
+The measured $\nu$ alone reduces amplification of noisy core channels. It is
+separated from numerical stabilization. Let
 
 $$
-KW=DC,\qquad M=W^H.
+S=\operatorname{diag}(K_0)^{-1/2},\qquad
+R=SK_0S,
 $$
 
-No object-by-object inverse is required.
+with $S$ restricted to the supported observation channels, where the diagonal
+of $K_0$ is positive. The decoder uses
+
+$$
+M=CD^HS(R+\epsilon I)^{-1}S,\qquad \hat s=My.
+$$
+
+$S$ removes channel scale differences. The dimensionless floor $\epsilon$
+only stabilizes the normalized solve; it is not a signal-level regularization
+parameter. In unnormalized coordinates the same system is
+
+$$
+K=K_0+\epsilon\operatorname{diag}(K_0),\qquad
+M=CD^HK^{-1}.
+$$
+
+The normalized floor scales with each direction's own diagonal, so
+independent weak and strong directions do not share a common extra floor. It
+is about $10^{-12}$, far below any transmitted signal level. Channels with an
+exactly zero diagonal are excluded from the supported subspace and contribute
+no estimate; they do not turn active objects into inactive ones.
+
+The solve remains $J\times J$ regardless of the object count. Factoring
+$R+\epsilon I$ once gives both $M$ and the inverse actions used by the RD
+derivatives.
 
 If the source contributes negligible ideal core energy in a band, the
 encoder marks that band unobservable. The decoder emits zero for that band.
@@ -722,10 +735,13 @@ affected by an anchor contributes to that anchor's decision.
 ### 7.3 Differentiate through reconstruction
 
 Continuous power refinement uses the dependence of $M$ on $C$. Hold $D$
-and the measured error envelope fixed during a power step. Then
+and the measured error envelope fixed during a power step. Let
+$dZ=D(dC)D^H$ and let $\operatorname{diag}(\cdot)$ keep only the diagonal.
+Then
 
 $$
-dK=D(dC)D^H+\operatorname{tr}(D(dC)D^H)T,
+dK=dZ+\epsilon\operatorname{diag}(dZ)
++(1+\epsilon)\operatorname{tr}(dZ)\operatorname{diag}(\nu),
 $$
 
 $$
@@ -733,7 +749,8 @@ dM=(dC)D^HK^{-1}-M(dK)K^{-1}.
 $$
 
 The second term includes both the covariance inverse and the change in the
-trace-scaled regularizer. Dropping either contribution changes the gradient.
+trace-scaled error envelope and the diagonal numerical floor. Dropping any
+contribution changes the gradient.
 
 For active log power $\ell_j$, let $E_j$ be a diagonal matrix with a one
 at position $j$. With the correlation matrix held fixed,

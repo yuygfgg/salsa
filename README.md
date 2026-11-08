@@ -518,15 +518,12 @@ target/release/salsa-spatial-encode master.atmos -o stream.ogg \
 
 # Encode 20 seconds, starting at source time 60 seconds:
 target/release/salsa-spatial-encode master.atmos -o excerpt.ogg \
-  --reference-start 2880000 --max-frames 960000 \
-  --front-bitrate 135000 --surround-bitrate 107000 \
-  --aux-bitrate 135000 --center-bitrate 93000 --lfe-bitrate 24000 \
-  --beta 1e-6
+  --reference-start 2880000 --max-frames 960000
 ```
 
 Input must be 48 kHz. The 128-object limit includes expanded non-LFE bed
 channels. LFE is coded separately. The five active substream targets total
-584 kbps: front 160, surround 128, auxiliary 160, center 112, and LFE 24. The
+584 kbps: front 200, surround 128, auxiliary 120, center 112, and LFE 24. The
 shared silence encoder uses a 16 kbps VBR *target setting*, not a measured
 budget: exact-zero input produces three-byte packets, about 1.2 kbps payload or
 1.6 kbps with multistream framing. Metadata and container framing add to that
@@ -548,9 +545,9 @@ the metadata rate-distortion tradeoff; it does not specify a total bitrate.
 | :--- | :--- | :--- |
 | `MASTER` | *required* | DAMF manifest; audio and metadata sidecars are resolved from the manifest. |
 | `-o`, `--out PATH` | *required* | Output Salsa Ogg Opus multistream. |
-| `--front-bitrate BPS` | `160000` | Combined L/R Opus target. |
+| `--front-bitrate BPS` | `200000` | Combined L/R Opus target. |
 | `--surround-bitrate BPS` | `128000` | Combined Ls/Rs Opus target. |
-| `--aux-bitrate BPS` | `160000` | Combined H_L/H_R auxiliary Opus target. |
+| `--aux-bitrate BPS` | `120000` | Combined H_L/H_R auxiliary Opus target. |
 | `--center-bitrate BPS` | `112000` | Center Opus target. |
 | `--lfe-bitrate BPS` | `24000` | Mono LFE VBR target. |
 | `--beta F` | `1e-6` | Metadata RD weight per bit; larger values penalize metadata rate more. |

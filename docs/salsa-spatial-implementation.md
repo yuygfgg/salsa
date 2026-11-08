@@ -31,7 +31,7 @@ contains the current measurements.
 | Correlation magnitude | Steps of 1/16, capped at 15/16 |
 | Correlation phase | 32 directions |
 | Error-envelope quantizer | 2 dB |
-| Regularization floor | 0.001 |
+| Numerical system floor | 1e-12 (dimensionless, diagonally normalized) |
 | Position precision | 12 bits per coordinate |
 | Moving-trajectory knot spacing | At most 100 ms |
 | Trajectory gain-error bound | 0.005 in L2 norm |
@@ -58,9 +58,9 @@ the shared rear-silence stream use unconstrained VBR.
 
 | Substream | Type | Logical channels | Default target |
 |---|---|---|---:|
-| 0 | Stereo | FL, FR | 160 kbps |
+| 0 | Stereo | FL, FR | 200 kbps |
 | 1 | Stereo | SL, SR | 128 kbps |
-| 2 | Stereo | H_L, H_R | 160 kbps |
+| 2 | Stereo | H_L, H_R | 120 kbps |
 | 3 | Mono | FC | 112 kbps |
 | 4 | Mono | LFE | 24 kbps |
 | 5 | Mono | Shared rear silence | 16 kbps target; ~1.6 kbps measured |

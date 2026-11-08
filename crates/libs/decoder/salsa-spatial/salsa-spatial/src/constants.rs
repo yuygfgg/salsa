@@ -101,8 +101,11 @@ pub const CORRELATION_PHASE_STEPS: u16 = 32;
 pub const CORRECTION_SCALES_DB: [f64; 4] = [0.5, 1.0, 2.0, 4.0];
 /// Initial run-level RD weight per encoded bit.
 pub const DEFAULT_BETA: f64 = 1.0e-6;
-/// Diagonal loading of the reconstruction system.
-pub const REGULARIZATION_LAMBDA: f64 = 1.0e-3;
+/// Dimensionless floor applied to the diagonally normalized reconstruction
+/// system. This is a numerical-stabilization term, not an audio-quality knob:
+/// it is about four orders of magnitude above f64 roundoff for a seven-channel
+/// solve and far below any observable signal level.
+pub const RECONSTRUCTION_EPSILON: f64 = 1.0e-12;
 /// Integer parameter-state grid: half a decibel per unit.
 pub const HALF_DB_SCALE: f64 = 0.5;
 

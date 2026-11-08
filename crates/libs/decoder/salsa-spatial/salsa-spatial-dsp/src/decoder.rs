@@ -42,8 +42,8 @@ use objectaudio_ir::{
 use salsa_spatial::params::{ParameterAnchor, ParameterTile, SceneParameterDecoder};
 use salsa_spatial::{
     BaseFold, CORE_CHANNEL_COUNT, FFT_BINS, HALF_DB_SCALE, HOP_SAMPLES, LFE_CHANNEL_INDEX,
-    MAX_OBJECTS, PARAM_BAND_COUNT, REGULARIZATION_LAMBDA, SAMPLE_RATE, SalsaSpatialFrame,
-    SalsaSpatialStreamConfig, SceneSnapshot, TILE_SAMPLES, TrajectoryKnot,
+    MAX_OBJECTS, PARAM_BAND_COUNT, SAMPLE_RATE, SalsaSpatialFrame, SalsaSpatialStreamConfig,
+    SceneSnapshot, TILE_SAMPLES, TrajectoryKnot,
 };
 use salsa_spatial_core_decoder::{CoreDecodeError, OpusBedDecoder};
 use thiserror::Error;
@@ -723,7 +723,6 @@ impl SalsaSpatialDecoder {
                     &downmix,
                     &scene.covariance,
                     &scene.nu,
-                    REGULARIZATION_LAMBDA,
                     scene.active,
                     &scene.unobservable,
                 )?)

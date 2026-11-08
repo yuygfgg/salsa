@@ -38,13 +38,13 @@ struct Cli {
     #[arg(long, default_value_t = 0.0)]
     ceiling_horizontal_gain: f64,
     /// Front L/R Opus bitrate in bits/s.
-    #[arg(long, default_value_t = 160_000)]
+    #[arg(long, default_value_t = 200_000)]
     front_bitrate: u32,
     /// Surround Ls/Rs Opus bitrate in bits/s.
     #[arg(long, default_value_t = 128_000)]
     surround_bitrate: u32,
     /// Auxiliary H_L/H_R Opus bitrate in bits/s.
-    #[arg(long = "aux-bitrate", default_value_t = 160_000)]
+    #[arg(long = "aux-bitrate", default_value_t = 120_000)]
     aux_bitrate: u32,
     /// Center Opus bitrate in bits/s.
     #[arg(long, default_value_t = 112_000)]
