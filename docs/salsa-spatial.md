@@ -1,9 +1,12 @@
 # salsa-spatial codec design
 
-salsa-spatial represents an object scene with a 5.1.2 audio core and compact
-reconstruction parameters. The core carries seven full-range signals and one
-independent LFE signal. The parameters describe object powers, selected
-correlations, core error, and object trajectories.
+salsa-spatial represents an object scene with a 5.1(side) compatible core,
+two auxiliary height observations, and compact reconstruction parameters.
+
+The public container is a standard 7.1 Ogg Opus mapping-family-1 track. Its
+FL, FR, FC, LFE, SL, and SR channels carry the 5.1(side) fallback mix, BL and
+BR are silent, and the two auxiliary observations travel in hidden coded
+channels.
 
 The decoder derives an object synthesis matrix from those parameters and the
 known downmix. Object identities remain stable. The synthesis matrix can

@@ -11,7 +11,7 @@ contains the current measurements.
 |---|---|
 | Sample rate | 48 kHz |
 | Object limit | 128 non-LFE objects |
-| Core | Complete five-row fallback mix, two auxiliary height rows, separate LFE |
+| Core | 5.1(side)-compatible fallback (FL, FR, FC, LFE, SL, SR) plus two auxiliary height observations |
 | Vertical coding angle | Original curve by default; configurable ceiling horizontal gain |
 | Transport | One Ogg Opus multistream track, mapping family 1 |
 | Declared layout | Standard 7.1; BL and BR share one encoded silence channel |

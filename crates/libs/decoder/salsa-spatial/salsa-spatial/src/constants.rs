@@ -86,7 +86,7 @@ pub const INITIAL_CHANNEL_MAPPING: [u8; PUBLIC_OUTPUT_CHANNELS] = [0, 6, 1, 2, 3
 pub const INITIAL_LOGICAL_TO_CODED: [u8; INITIAL_CODED_CHANNELS] = [0, 1, 6, 7, 2, 3, 4, 5, 8];
 /// Initial core bitrates indexed by substream role:
 /// front, surround, auxiliary, center, LFE.
-pub const INITIAL_CORE_BITRATES: [u32; 5] = [160_000, 128_000, 160_000, 112_000, 24_000];
+pub const INITIAL_CORE_BITRATES: [u32; 5] = [200_000, 128_000, 120_000, 112_000, 24_000];
 /// Encoder lookahead for the tested restricted-low-delay configuration.
 pub const TESTED_LOOKAHEAD_SAMPLES: usize = 120;
 /// Maximum number of source objects covered by the first version.
