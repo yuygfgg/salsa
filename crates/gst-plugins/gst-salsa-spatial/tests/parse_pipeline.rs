@@ -1,4 +1,4 @@
-//! Parse-element framing against real `IamfWriter` output.
+//! Parse-element framing against real `OggSalsaWriter` output.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -8,7 +8,7 @@ use gst::prelude::*;
 use gstreamer as gst;
 use objectaudio_ir::ObjectState;
 use salsa_spatial::{
-    CorePacket, EnhancementTile, IamfWriter, SalsaSpatialFrame, SalsaSpatialStreamConfig,
+    EnhancementTile, MultistreamPacket, OggSalsaWriter, SalsaSpatialFrame, SalsaSpatialStreamConfig,
 };
 
 fn stream_bytes() -> Vec<u8> {
@@ -20,13 +20,14 @@ fn stream_bytes() -> Vec<u8> {
         ],
         ..Default::default()
     };
-    let packet = CorePacket {
-        front: vec![0x01],
-        surround: vec![0x02],
-        height: vec![0x03],
-        center: vec![0x04],
-        lfe: vec![0x05],
-    };
+    let packet = MultistreamPacket::new(vec![
+        vec![0xfc, 0x01],
+        vec![0xfc, 0x02],
+        vec![0xfc, 0x03],
+        vec![0xf8, 0x04],
+        vec![0xf8, 0x05],
+        vec![0xf8, 0x06],
+    ]);
     let frame = SalsaSpatialFrame {
         sample_rate: 48_000,
         start_sample: 0,
@@ -43,10 +44,10 @@ fn stream_bytes() -> Vec<u8> {
         snapshot: false,
         parameters: None,
     };
-    let mut writer = IamfWriter::new(&config).expect("writer");
-    let mut bytes = writer.write_frame(&frame).expect("first tile");
+    let (mut writer, mut bytes) = OggSalsaWriter::new(config.clone(), 1, 120).expect("writer");
+    bytes.extend(writer.write_frame(&frame).expect("first tile"));
     bytes.extend(writer.write_frame(&frame).expect("second tile"));
-    bytes.extend(writer.finish().expect("finish"));
+    bytes.extend(writer.finish());
     bytes
 }
 
@@ -54,7 +55,7 @@ fn stream_bytes() -> Vec<u8> {
 fn parser_emits_one_buffer_per_complete_tile() {
     salsa_gst_registry::init().expect("register salsa elements");
     let path =
-        std::env::temp_dir().join(format!("salsa-spatial-parser-{}.iamf", std::process::id()));
+        std::env::temp_dir().join(format!("salsa-spatial-parser-{}.ogg", std::process::id()));
     std::fs::write(&path, stream_bytes()).expect("write stream");
     let pipeline = gst::parse::launch(&format!(
         "filesrc location=\"{}\" ! salsaspatialparse name=parse ! fakesink name=sink sync=false",

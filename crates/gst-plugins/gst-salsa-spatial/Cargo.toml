@@ -25,3 +25,4 @@ gstreamer-audio.workspace = true
 
 [dev-dependencies]
 salsa-gst-registry.workspace = true
+opus.workspace = true

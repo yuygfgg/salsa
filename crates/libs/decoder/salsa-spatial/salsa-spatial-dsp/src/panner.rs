@@ -19,11 +19,10 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
 }
 
-/// Evaluate the shared core panner column for one ADM position.
+/// Evaluate the shared core panner as separate ground and height rows.
 ///
-/// Channel order is `L, R, C, Ls, Rs, H_L, H_R`. The returned column has unit
-/// squared norm for every input.
-pub fn core_gain_column(position: [f64; 3]) -> [f64; 7] {
+/// The ground rows are `L, R, C, Ls, Rs`; the height rows are `H_L, H_R`.
+pub fn core_gain_parts(position: [f64; 3]) -> ([f64; 5], [f64; 2]) {
     let [x, y, z] = position;
     let u = ((x + 1.0) / 2.0).clamp(0.0, 1.0);
     let v = (1.0 - y).clamp(0.0, 1.0);
@@ -51,14 +50,37 @@ pub fn core_gain_column(position: [f64; 3]) -> [f64; 7] {
 
     let floor_out = (PI * h / 2.0).cos();
     let height_out = (PI * h / 2.0).sin();
+    (
+        [
+            floor_out * floor[0],
+            floor_out * floor[1],
+            floor_out * floor[2],
+            floor_out * floor[3],
+            floor_out * floor[4],
+        ],
+        [height_out * height[0], height_out * height[1]],
+    )
+}
+
+/// Evaluate the shared core panner column for one ADM position.
+///
+/// Channel order is `L, R, C, Ls, Rs, H_L, H_R`. The returned column has unit
+/// squared norm for every input.
+pub fn core_gain_column(position: [f64; 3]) -> [f64; 7] {
+    let (ground, height) = core_gain_parts(position);
     [
-        floor_out * floor[0],
-        floor_out * floor[1],
-        floor_out * floor[2],
-        floor_out * floor[3],
-        floor_out * floor[4],
-        height_out * height[0],
-        height_out * height[1],
+        ground[0], ground[1], ground[2], ground[3], ground[4], height[0], height[1],
+    ]
+}
+
+/// Apply the base fold to an interpolated panner column, producing the
+/// reconstruction observation column `[D_base; D_aux]`.
+pub fn fold_observation_column(column: [f64; 7], fold: salsa_spatial::BaseFold) -> [f64; 7] {
+    let ground = [column[0], column[1], column[2], column[3], column[4]];
+    let height = [column[5], column[6]];
+    let base = fold.apply(ground, height);
+    [
+        base[0], base[1], base[2], base[3], base[4], height[0], height[1],
     ]
 }
 
@@ -178,6 +200,22 @@ pub fn interpolated_core_columns(
         output.push(column);
     }
     output
+}
+
+/// Interpolate the shared panner and apply the complete-fallback fold.
+///
+/// The returned seven rows are `[b_FL, b_FR, b_FC, b_SL, b_SR, H_L, H_R]`,
+/// where `b = g + A h`.
+pub fn interpolated_observation_columns(
+    knots: &[TrajectoryKnot],
+    start_sample: u64,
+    frames: usize,
+    fold: salsa_spatial::BaseFold,
+) -> Vec<[f64; 7]> {
+    interpolated_core_columns(knots, start_sample, frames)
+        .into_iter()
+        .map(|column| fold_observation_column(column, fold))
+        .collect()
 }
 
 #[cfg(test)]

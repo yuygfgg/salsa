@@ -68,12 +68,8 @@ fn core_packets(samples: &[Vec<f32>; 8]) -> Vec<CorePacket> {
         .zip(height)
         .zip(center)
         .zip(lfe)
-        .map(|((((front, surround), height), center), lfe)| CorePacket {
-            front,
-            surround,
-            height,
-            center,
-            lfe,
+        .map(|((((front, surround), height), center), lfe)| {
+            CorePacket::from_legacy(front, surround, height, center, lfe)
         })
         .collect()
 }
@@ -121,6 +117,7 @@ fn config(object_count: usize) -> SalsaSpatialStreamConfig {
             .collect(),
         core_bitrates: [160_000, 128_000, 160_000, 112_000, 16_000],
         beta: 1.0e-6,
+        ..SalsaSpatialStreamConfig::legacy()
     }
 }
 

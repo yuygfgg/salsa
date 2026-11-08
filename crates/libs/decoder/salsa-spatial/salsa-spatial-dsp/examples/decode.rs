@@ -1,13 +1,13 @@
-//! Decode a salsa-spatial IAMF stream and report or write the object PCM.
+//! Decode a salsa-spatial Ogg stream and report or write the object PCM.
 //!
 //! Usage:
-//! `cargo run -p salsa-spatial-dsp --example decode -- <input.iamf> [output.wav]`
+//! `cargo run -p salsa-spatial-dsp --example decode -- <input.ogg> [output.wav]`
 
 use std::fs;
 use std::io::{BufWriter, Write};
 
-use objectaudio_ir::{SpatialDecoder, SpatialFrame};
-use salsa_spatial::{IamfReader, SalsaSpatialStreamConfig};
+use objectaudio_ir::{SpatialDecoder, SpatialFrame, SpatialParser};
+use salsa_spatial::{SalsaSpatialParser, SalsaSpatialStreamConfig};
 use salsa_spatial_dsp::SalsaSpatialDecoder;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = args.next();
 
     let bytes = fs::read(&input)?;
-    let mut reader = IamfReader::new();
+    let mut reader = SalsaSpatialParser::new();
     let mut frames = reader.push_bytes(&bytes)?;
     frames.extend(reader.flush()?);
     let config: SalsaSpatialStreamConfig = reader

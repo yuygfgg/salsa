@@ -1,15 +1,102 @@
-//! Deterministic 5.1.2 core generation from the reconstructed trajectory.
+//! Deterministic fallback and observation generation.
 
-use salsa_spatial::TrajectoryKnot;
+use salsa_spatial::{BaseFold, TrajectoryKnot};
 use salsa_spatial_dsp::interpolated_core_columns;
 
 use crate::source::TileSource;
+
+/// Complete fallback mix, auxiliary observations and separate LFE, ready for
+/// the Opus multistream encoder.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransportSignals {
+    /// Five full-range fallback rows: `FL, FR, FC, SL, SR`.
+    pub base: [Vec<f32>; 5],
+    /// Auxiliary observations in group order; initially `H_L, H_R`.
+    pub aux: Vec<Vec<f32>>,
+    /// Separate LFE signal.
+    pub lfe: Vec<f32>,
+    pub frames: usize,
+}
+
+impl TransportSignals {
+    /// Seven full-range observations in reconstruction order:
+    /// `[b_FL, b_FR, b_FC, b_SL, b_SR, H_L, H_R]`.
+    pub fn observation_order(&self) -> [Vec<f32>; 7] {
+        std::array::from_fn(|channel| {
+            if channel < 5 {
+                self.base[channel].clone()
+            } else {
+                self.aux
+                    .get(channel - 5)
+                    .cloned()
+                    .unwrap_or_else(|| vec![0.0; self.frames])
+            }
+        })
+    }
+}
+
+/// Build the complete fallback mix and auxiliary observations.
+///
+/// The base rows are `g + A h`; the auxiliary rows are `h`. The single
+/// programme headroom gain is applied to every transported signal exactly once.
+pub fn build_transport(
+    source: &TileSource,
+    core_knots: &[Vec<TrajectoryKnot>],
+    headroom_gain: f64,
+    fold: BaseFold,
+    aux_count: usize,
+) -> TransportSignals {
+    let frames = source.frames;
+    let object_count = source.object_count;
+    let mut base: [Vec<f32>; 5] = std::array::from_fn(|_| vec![0.0f32; frames]);
+    let mut aux: Vec<Vec<f32>> = (0..aux_count).map(|_| vec![0.0f32; frames]).collect();
+    for object in 0..object_count {
+        let columns = interpolated_core_columns(&core_knots[object], source.start_sample, frames);
+        let pcm = &source.object_pcm[object];
+        for sample in 0..frames {
+            let value = pcm[sample];
+            if value == 0.0 {
+                continue;
+            }
+            let column = columns[sample];
+            let ground = [column[0], column[1], column[2], column[3], column[4]];
+            let height = [column[5], column[6]];
+            let folded = fold.apply(ground, height);
+            for channel in 0..5 {
+                base[channel][sample] += (folded[channel] * f64::from(value)) as f32;
+            }
+            for channel in 0..aux_count {
+                let gain = height.get(channel).copied().unwrap_or(0.0);
+                aux[channel][sample] += (gain * f64::from(value)) as f32;
+            }
+        }
+    }
+    let gain = headroom_gain as f32;
+    for channel in base.iter_mut() {
+        for value in channel.iter_mut() {
+            *value *= gain;
+        }
+    }
+    for channel in &mut aux {
+        for value in channel.iter_mut() {
+            *value *= gain;
+        }
+    }
+    let lfe = source.lfe_pcm.iter().map(|value| *value * gain).collect();
+    TransportSignals {
+        base,
+        aux,
+        lfe,
+        frames,
+    }
+}
 
 /// Build the seven full-range core channels and the separate LFE channel.
 ///
 /// Every object contributes through the shared interpolated panner columns.
 /// The common headroom gain is applied to all core channels once; it is never
 /// applied to source analysis or object PCM.
+#[allow(dead_code)]
 pub fn build_core(
     source: &TileSource,
     core_knots: &[Vec<TrajectoryKnot>],

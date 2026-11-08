@@ -11,9 +11,10 @@ contains the current measurements.
 |---|---|
 | Sample rate | 48 kHz |
 | Object limit | 128 non-LFE objects |
-| Core | Seven full-range channels and a separate LFE |
-| Transport | IAMF 1.1, one 5.1.2 layer |
-| Opus streams | Three stereo and two mono streams, mapping family 0 |
+| Core | Complete five-row fallback mix, two auxiliary height rows, separate LFE |
+| Transport | One Ogg Opus multistream track, mapping family 1 |
+| Declared layout | Standard 7.1; BL and BR share one encoded silence channel |
+| Opus streams | Three stereo and three mono streams; nine coded channels |
 | Opus packet | 20 ms |
 | STFT | 1,920 samples, 240-sample hop, square-root Hann window |
 | Parameter bands | 24 |
@@ -49,18 +50,26 @@ refinement pass.
 
 ## Core encoding
 
-The core uses libopus 1.6.1 through the Rust opus wrapper. Each stream uses
+The core uses libopus 1.6.1 through the Rust opus wrapper. Each substream uses
 restricted low delay, complexity 10, and 20 ms packets. DTX, FEC, and DRED are
-disabled. The four full-range streams use CBR; LFE uses unconstrained VBR.
+disabled. The front, surround, auxiliary, and center streams use CBR. LFE and
+the shared rear-silence stream use unconstrained VBR.
 
-| Stream | Channels | Default target |
-|---|---|---:|
-| Front | L, R | 160 kbps |
-| Surround | Ls, Rs | 128 kbps |
-| Height | H_L, H_R | 160 kbps |
-| Center | C | 112 kbps |
-| LFE | LFE | 24 kbps |
-| Total core target | Eight channels | 584 kbps |
+| Substream | Type | Logical channels | Default target |
+|---|---|---|---:|
+| 0 | Stereo | FL, FR | 160 kbps |
+| 1 | Stereo | SL, SR | 128 kbps |
+| 2 | Stereo | H_L, H_R | 160 kbps |
+| 3 | Mono | FC | 112 kbps |
+| 4 | Mono | LFE | 24 kbps |
+| 5 | Mono | Shared rear silence | 16 kbps target; ~1.6 kbps measured |
+
+The five active substreams target 584 kbps. The silence value is an encoder setting, not a budget: exact-zero VBR produces three-byte packets, about 1.2 kbps payload (1.6 kbps with framing).
+
+The public family-1 map is `[0, 6, 1, 2, 3, 8, 8, 7]`. The private
+`logical_to_coded` permutation is `[0, 1, 6, 7, 2, 3, 4, 5, 8]`. Coded channels
+4 and 5 carry the auxiliary height observations and never appear in the public
+speaker map.
 
 Metadata, framing, and setup add to the core rate. LFE's actual VBR payload
 also varies with the source. The encoder reports each byte category and
@@ -77,13 +86,21 @@ into fixed-position objects. Object order remains stable. Source gain and
 activity are applied once to PCM. Reconstructed objects carry unity gain.
 
 A prepass selects one headroom gain for the programme. The encoder applies
-it to every core channel, including LFE. The object decoder restores it
-after synthesis.
+it to every transported signal, including LFE and the auxiliary rows. The
+object decoder restores it after synthesis.
 
-IAMF carries the five ordinary Opus substreams. Its 5.1.2 layer maps the
-codec's height pair to the front-top pair. Enhancement data occupies padding
-extensions in the center stream. The parser extracts this data before
-Opus decoding.
+The encoder forms the complete fallback mix `b = g + A h` for the five ground
+rows and transports `h` as the auxiliary group. Version 1 fixes
+`A = [[0.5,0],[0,0.5],[0,0],[0.5,0],[0,0.5]]`, so heights remain audible in
+the stock-player fallback. The decoder reconstructs observations as
+`D_base = D_ground + A D_height` and `D_aux = D_height`; it never treats the
+folded base rows as the original ground rows.
+
+The standard Ogg Opus track carries one multistream packet per 20 ms. The
+mono center substream carries versioned Salsa records in an experimental Opus
+padding extension. Records carry the configuration snapshot, scene updates,
+parameter bytes, group activity, and fragment framing. The shared silence
+substream is zero input and uses unconstrained VBR.
 
 The parameter coder uses constriction with 24-bit rANS probability precision.
 It assigns integer frequencies by largest remainder, with ties resolved by
@@ -95,12 +112,12 @@ until a snapshot replaces them.
 
 | Crate | Responsibility |
 |---|---|
-| salsa-spatial | IAMF framing, syntax, parameter prediction, rANS, snapshots |
-| salsa-spatial-core-decoder | Five Opus states and aligned bed PCM |
-| salsa-spatial-dsp | Panner, STFT, covariance, reconstruction, synthesis |
-| salsa-spatial-encoder | Source preparation, core encoding, statistics, RD search |
+| salsa-spatial | Descriptors, multistream framing, Ogg Opus, records, syntax, parameters, snapshots |
+| salsa-spatial-core-decoder | Per-substream Opus states and coded-to-logical routing |
+| salsa-spatial-dsp | Panner, fold, STFT, covariance, model dispatch, synthesis |
+| salsa-spatial-encoder | Source preparation, complete fallback mix, multistream encoding, RD search |
 | salsa-spatial-encode | Encoding CLI |
-| gst-salsa-spatial | Parser and decoder adapters |
+| gst-salsa-spatial | Ogg tile framing and decoder adapters |
 
 Codec libraries are independent of GStreamer. The DSP library owns
 reconstruction state, reset, and drain behavior.
@@ -119,7 +136,7 @@ stdout. `--no-progress` disables the display.
 ~~~mermaid
 flowchart LR
     S["DAMF source"] --> E["salsa-spatial-encoder"]
-    E --> I["IAMF stream"]
+    E --> I["Ogg Opus multistream"]
     I --> P["salsaspatialparse"]
     P --> D["salsaspatialdec"]
     D --> F["SpatialFrame and ObjectAudioMeta"]
@@ -147,8 +164,7 @@ and binaural renderers consume that state.
 | Area | Current behavior |
 |---|---|
 | Programme calibration | Manifest warp mode is not imported or transported. |
-| Bed-only gain | IAMF mix gains remain unity; headroom restoration occurs in the object decoder. |
-| Final core samples | The local analysis flush packet is not transported; up to 120 tail samples can be unavailable. |
+| Final core samples | The extra tail packet is transported with Ogg end trimming; other containers are not yet sample-exact. |
 | Snapshot rate cost | Snapshot bytes count in the file rate but are added after the tile search. |
 | Endpoint RD cost | The decoder uses real DC/Nyquist matrices; the search still uses a complex-band proxy. |
-| Seeking | Decoder reset and snapshots exist; the host must provide core and filterbank preroll. |
+| Seeking | Decoder reset and snapshots exist; the host must provide Opus and filterbank preroll. |

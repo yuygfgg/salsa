@@ -5,7 +5,7 @@
 //!
 //! ```sh
 //! SALSA_TEST_EC3=stream.ec3 SALSA_TEST_DAMF=master.atmos \
-//!   SALSA_TEST_SPATIAL=stream.iamf \
+//!   SALSA_TEST_SPATIAL=stream.ogg \
 //!   SALSA_SINK_OVERRIDE=fakesink cargo test
 //! ```
 

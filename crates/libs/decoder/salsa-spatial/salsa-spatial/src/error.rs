@@ -18,8 +18,6 @@ pub enum SpatialError {
     RansTruncated,
     #[error("rANS probability model is invalid")]
     RansModel,
-    #[error("IAMF framing error: {0}")]
-    Iamf(&'static str),
     #[error("unsupported stream version {version}")]
     UnsupportedVersion { version: u16 },
     #[error("object count {0} exceeds the profile maximum")]

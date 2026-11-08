@@ -1,7 +1,7 @@
 //! End-to-end checks that need an encoded salsa-spatial stream and the DSP
 //! decoder.
 //!
-//! Set `SALSA_TEST_SPATIAL` to an IAMF file path to run the pipeline check.
+//! Set `SALSA_TEST_SPATIAL` to a Salsa Ogg file path to run the pipeline check.
 //! Without the variable the test returns immediately.
 
 use std::sync::Arc;
@@ -13,29 +13,47 @@ use gstreamer as gst;
 
 #[test]
 fn eos_delivers_the_complete_dsp_tail() {
+    use opus::{Application, Channels, Encoder};
     use salsa_spatial::{
-        CorePacket, EnhancementTile, IamfWriter, SalsaSpatialFrame, SalsaSpatialStreamConfig,
+        EnhancementTile, MultistreamPacket, OggSalsaWriter, SalsaSpatialFrame,
+        SalsaSpatialStreamConfig,
     };
     salsa_gst_registry::init().expect("register salsa elements");
     let config = SalsaSpatialStreamConfig {
         object_count: 1,
         ..Default::default()
     };
-    let mut writer = IamfWriter::new(&config).unwrap();
-    let packet = CorePacket {
-        front: vec![0xf8, 0xff, 0xfe],
-        surround: vec![0xf8, 0xff, 0xfe],
-        height: vec![0xf8, 0xff, 0xfe],
-        center: vec![0xf8, 0xff, 0xfe],
-        lfe: vec![0xf8, 0xff, 0xfe],
+    let mut encoders = vec![
+        Encoder::new(48_000, Channels::Stereo, Application::LowDelay).unwrap(),
+        Encoder::new(48_000, Channels::Stereo, Application::LowDelay).unwrap(),
+        Encoder::new(48_000, Channels::Stereo, Application::LowDelay).unwrap(),
+        Encoder::new(48_000, Channels::Mono, Application::LowDelay).unwrap(),
+        Encoder::new(48_000, Channels::Mono, Application::LowDelay).unwrap(),
+        Encoder::new(48_000, Channels::Mono, Application::LowDelay).unwrap(),
+    ];
+    let make_packet = |encoders: &mut Vec<Encoder>| {
+        let mut substreams = Vec::new();
+        for (index, encoder) in encoders.iter_mut().enumerate() {
+            let channels = if index < 3 { 2 } else { 1 };
+            substreams.push(
+                encoder
+                    .encode_vec_float(&vec![0.0f32; 960 * channels], 8192)
+                    .unwrap(),
+            );
+        }
+        MultistreamPacket::new(substreams)
     };
-    let mut bytes = Vec::new();
+    let (mut writer, mut bytes) = OggSalsaWriter::new(config.clone(), 1, 120).unwrap();
     for (start, frames) in [(0, 4800usize), (4800, 1600)] {
+        let packet_count = frames.div_ceil(960);
+        let packets = (0..packet_count)
+            .map(|_| make_packet(&mut encoders))
+            .collect();
         let frame = SalsaSpatialFrame {
             sample_rate: 48000,
             start_sample: start,
             frames,
-            packets: vec![packet.clone(); frames.div_ceil(960)],
+            packets,
             enhancement: EnhancementTile {
                 start_sample: start,
                 frames,
@@ -49,8 +67,8 @@ fn eos_delivers_the_complete_dsp_tail() {
         };
         bytes.extend(writer.write_frame(&frame).unwrap());
     }
-    bytes.extend(writer.finish().unwrap());
-    let path = std::env::temp_dir().join(format!("salsa-spatial-tail-{}.iamf", std::process::id()));
+    bytes.extend(writer.finish());
+    let path = std::env::temp_dir().join(format!("salsa-spatial-tail-{}.ogg", std::process::id()));
     std::fs::write(&path, bytes).unwrap();
     let pipeline = gst::parse::launch(&format!(
         "filesrc location=\"{}\" ! salsaspatialparse ! salsaspatialdec ! fakesink name=sink sync=false", path.display()

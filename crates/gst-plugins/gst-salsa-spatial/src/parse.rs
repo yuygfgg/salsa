@@ -96,7 +96,7 @@ impl ElementImpl for SalsaSpatialParse {
     salsa_gst::element_metadata!(
         "salsa-spatial Parser",
         "Codec/Parser/Audio",
-        "Frames complete salsa-spatial IAMF codec tiles carrying object audio"
+        "Frames complete salsa-spatial Opus multistream tiles carrying object audio"
     );
 
     salsa_gst::pad_templates!({
@@ -183,7 +183,7 @@ impl BaseParseImpl for SalsaSpatialParse {
         let borrowed = self.obj();
         let object: &super::SalsaSpatialParse = borrowed.as_ref();
         let draining = object.is_draining();
-        let (size, parsed, info, changed) = {
+        let (size, parsed, info, changed, has_audio) = {
             let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
             if map.is_empty() {
                 return Ok((gst::FlowSuccess::Ok, 0));
@@ -219,8 +219,14 @@ impl BaseParseImpl for SalsaSpatialParse {
             if changed {
                 state.caps = Some(info);
             }
-            (size, parsed, info, changed)
+            let has_audio = framing::has_audio_page(&map[..size]);
+            (size, parsed, info, changed, has_audio)
         };
+        if parsed.is_empty() && !has_audio {
+            // Header-only or end-of-stream Ogg pages carry no complete tile.
+            // Consume them without producing an empty output buffer.
+            return Ok((gst::FlowSuccess::Ok, size as u32));
+        }
         if changed && !self.push_src_caps(info) {
             return Err(gst::FlowError::NotNegotiated);
         }

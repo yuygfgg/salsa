@@ -40,15 +40,15 @@ use objectaudio_ir::{
 };
 use salsa_spatial::params::{ParameterAnchor, ParameterTile, SceneParameterDecoder};
 use salsa_spatial::{
-    CORE_CHANNEL_COUNT, FFT_BINS, HALF_DB_SCALE, HOP_SAMPLES, LFE_CHANNEL_INDEX, MAX_OBJECTS,
-    PARAM_BAND_COUNT, REGULARIZATION_LAMBDA, SAMPLE_RATE, SalsaSpatialFrame,
+    BaseFold, CORE_CHANNEL_COUNT, FFT_BINS, HALF_DB_SCALE, HOP_SAMPLES, LFE_CHANNEL_INDEX,
+    MAX_OBJECTS, PARAM_BAND_COUNT, REGULARIZATION_LAMBDA, SAMPLE_RATE, SalsaSpatialFrame,
     SalsaSpatialStreamConfig, TILE_SAMPLES, TrajectoryKnot,
 };
 use salsa_spatial_core_decoder::{CoreDecodeError, OpusBedDecoder};
 use thiserror::Error;
 
 use crate::covariance::{BandCovariance, covariance_from_band_powers};
-use crate::panner::{core_gain_column, interpolated_core_columns};
+use crate::panner::{core_gain_column, interpolated_observation_columns};
 use crate::reconstruct::{ReconstructionError, estimate_objects};
 use crate::stft::{Spectrum, Stft, Synthesis};
 
@@ -128,6 +128,8 @@ pub struct SalsaSpatialDecoder {
     headroom: f64,
 
     core: OpusBedDecoder,
+    fold: BaseFold,
+    enhanced_supported: bool,
     parameters: SceneParameterDecoder,
 
     core_stfts: [Stft; CORE_CHANNEL_COUNT],
@@ -172,8 +174,13 @@ impl SalsaSpatialDecoder {
             ));
         }
 
+        config.validate().map_err(|error| {
+            DecoderError::InvalidConfig(format!("descriptor validation failed: {error}"))
+        })?;
         let object_count = config.object_count;
-        let core = OpusBedDecoder::new(object_count)?;
+        let fold = config.fold();
+        let enhanced_supported = config.enhanced_supported();
+        let core = OpusBedDecoder::from_config(&config)?;
         let parameters = SceneParameterDecoder::new(object_count);
         let lookahead_remaining = core.lookahead_samples();
 
@@ -193,6 +200,8 @@ impl SalsaSpatialDecoder {
             headroom: 1.0 / config.headroom_gain,
             object_count,
             core,
+            fold,
+            enhanced_supported,
             parameters,
             core_stfts: std::array::from_fn(|_| Stft::new()),
             lfe_stft: Stft::new(),
@@ -334,7 +343,10 @@ impl SalsaSpatialDecoder {
         };
 
         let mut decoded_tile = None;
-        if enhancement.is_empty() {
+        if !self.enhanced_supported {
+            // Unknown or unsupported required models select ordinary base
+            // playback instead of substituting a different panner.
+        } else if enhancement.is_empty() {
             self.awaiting_snapshot = true;
         } else if self.awaiting_snapshot {
             let mut candidate = self.parameters.clone();
@@ -656,9 +668,12 @@ impl SalsaSpatialDecoder {
             .map(|object| {
                 let knots = self.knots_at(sample, object);
                 if knots.is_empty() {
-                    core_gain_column([0.0, 0.0, 0.0])
+                    crate::panner::fold_observation_column(
+                        core_gain_column([0.0, 0.0, 0.0]),
+                        self.fold,
+                    )
                 } else {
-                    interpolated_core_columns(knots, sample, 1)[0]
+                    interpolated_observation_columns(knots, sample, 1, self.fold)[0]
                 }
             })
             .collect()

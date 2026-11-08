@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 /// Extensions offered by the file picker and the empty-state source panel.
 pub const INPUT_EXTENSIONS: &[&str] = &[
-    "ec3", "eac3", "mlp", "thd", "truehd", "atmos", "damf", "iamf",
+    "ec3", "eac3", "mlp", "thd", "truehd", "ogg", "atmos", "damf",
 ];
 
 /// A file the GUI can open: a compressed stream known to `salsa-codec`, or a
@@ -155,7 +155,7 @@ pub fn detect_codec(path: &Path) -> Result<Codec, PipelineError> {
 
     // A container header takes precedence over sync-like bytes in compressed
     // payloads. Opus data can contain the short E-AC-3 sync word by chance.
-    if salsa_spatial::iamf::has_sequence_header(bytes) {
+    if salsa_spatial::ogg::has_salsa_stream(bytes) {
         return Ok(Codec::SALSA_SPATIAL);
     }
     if contains_truehd_sync(bytes) {
@@ -166,6 +166,7 @@ pub fn detect_codec(path: &Path) -> Result<Codec, PipelineError> {
     }
     match extension.as_deref() {
         Some("atmos" | "damf") => Ok(Codec::DAMF),
+        Some("ogg") => Ok(Codec::SALSA_SPATIAL),
         Some(extension) => StreamCodec::from_label(extension)
             .map(Codec::Stream)
             .ok_or_else(|| PipelineError::UnsupportedCodec(path.to_path_buf())),
@@ -593,16 +594,17 @@ mod tests {
     }
 
     #[test]
-    fn detects_iamf_before_sync_words_in_its_payload() {
-        let mut header =
-            salsa_spatial::IamfWriter::new(&salsa_spatial::SalsaSpatialStreamConfig::default())
-                .unwrap()
-                .finish()
-                .unwrap();
+    fn detects_salsa_before_sync_words_in_its_payload() {
+        let (_, mut header) = salsa_spatial::OggSalsaWriter::new(
+            salsa_spatial::SalsaSpatialStreamConfig::default(),
+            1,
+            120,
+        )
+        .unwrap();
         header.resize(header.len().next_multiple_of(2), 0);
         header.extend_from_slice(&[0x0b, 0x77, 0xf8, 0x72, 0x6f, 0xba]);
         let path =
-            std::env::temp_dir().join(format!("salsa-gui-iamf-detect-{}.ec3", std::process::id()));
+            std::env::temp_dir().join(format!("salsa-gui-salsa-detect-{}.ogg", std::process::id()));
         std::fs::write(&path, header).unwrap();
         let detected = detect_codec(&path).unwrap();
         std::fs::remove_file(path).unwrap();
@@ -615,14 +617,18 @@ mod tests {
         let ec3 = directory.join("salsa-gui-detect.ec3");
         let mlp = directory.join("salsa-gui-detect.mlp");
         let atmos = directory.join("salsa-gui-detect.atmos");
+        let ogg = directory.join("salsa-gui-detect.ogg");
         std::fs::write(&ec3, [0x0B, 0x77, 0, 0]).unwrap();
         std::fs::write(&mlp, [0, 0, 0xF8, 0x72, 0x6F, 0xBA]).unwrap();
         std::fs::write(&atmos, b"version: 0.5.1\npresentations: []\n").unwrap();
+        std::fs::write(&ogg, b"OggS not a salsa stream").unwrap();
         assert_eq!(detect_codec(&ec3).unwrap(), Codec::EAC3);
         assert_eq!(detect_codec(&mlp).unwrap(), Codec::TRUEHD);
         assert_eq!(detect_codec(&atmos).unwrap(), Codec::DAMF);
+        assert_eq!(detect_codec(&ogg).unwrap(), Codec::SALSA_SPATIAL);
         let _ = std::fs::remove_file(ec3);
         let _ = std::fs::remove_file(mlp);
         let _ = std::fs::remove_file(atmos);
+        let _ = std::fs::remove_file(ogg);
     }
 }

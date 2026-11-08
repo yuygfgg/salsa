@@ -1,13 +1,16 @@
 //! Re-encode only LFE and keep the existing full-range packets and metadata.
-//! Usage: lfe_sweep <master.atmos> <baseline.iamf> <start_sample> <output_dir>
+//! Usage: lfe_sweep <master.atmos> <baseline.ogg> <start_sample> <output_dir>
 
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
+use objectaudio_ir::SpatialParser;
 use opus::{Application, Bitrate, Channels, Decoder, Encoder};
-use salsa_spatial::{IamfReader, IamfWriter, OPUS_FRAME_SAMPLES, SAMPLE_RATE, TILE_SAMPLES};
+use salsa_spatial::{
+    OPUS_FRAME_SAMPLES, OggSalsaWriter, SAMPLE_RATE, SalsaSpatialParser, TILE_SAMPLES,
+};
 use salsa_spatial_encoder::SourceReader;
 use serde_json::json;
 
@@ -23,10 +26,10 @@ fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     ensure!(
         args.len() == 4,
-        "usage: lfe_sweep <master.atmos> <baseline.iamf> <start_sample> <output_dir>"
+        "usage: lfe_sweep <master.atmos> <baseline.ogg> <start_sample> <output_dir>"
     );
     let bytes = fs::read(&args[1])?;
-    let mut reader = IamfReader::new();
+    let mut reader = SalsaSpatialParser::new();
     let mut frames = reader.push_bytes(&bytes)?;
     frames.extend(reader.flush()?);
     let config = reader
@@ -82,11 +85,11 @@ fn main() -> Result<()> {
             let offset = index * OPUS_FRAME_SAMPLES;
             let encoded =
                 encoder.encode_vec_float(&scaled[offset..offset + OPUS_FRAME_SAMPLES], 8192)?;
-            identical_packets += usize::from(encoded == packet.lfe);
+            identical_packets += usize::from(encoded == packet.substreams[4]);
             payload_bytes += encoded.len();
             let count = decoder.decode_float(&encoded, &mut scratch, false)?;
             decoded.extend(scratch[..count].iter().map(|sample| sample / gain));
-            packet.lfe = encoded;
+            packet.substreams[4] = encoded;
         }
         if rate as u32 == config.core_bitrates[4] {
             ensure!(
@@ -102,13 +105,13 @@ fn main() -> Result<()> {
         )?;
         let mut updated_config = config.clone();
         updated_config.core_bitrates[4] = rate as u32;
-        let mut writer = IamfWriter::new(&updated_config)?;
-        let mut remuxed = Vec::new();
+        let (mut writer, mut remuxed) =
+            OggSalsaWriter::new(updated_config.clone(), 1, lookahead as u16)?;
         for frame in &updated {
             remuxed.extend(writer.write_frame(frame)?);
         }
-        remuxed.extend(writer.finish()?);
-        fs::write(output.join(format!("lfe-{rate}.iamf")), &remuxed)?;
+        remuxed.extend(writer.finish());
+        fs::write(output.join(format!("lfe-{rate}.ogg")), &remuxed)?;
         results.push(json!({
             "target_bps": rate,
             "payload_bytes": payload_bytes,

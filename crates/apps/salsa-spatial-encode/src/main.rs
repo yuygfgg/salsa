@@ -14,12 +14,12 @@ use crate::progress::Progress;
 #[command(
     name = "salsa-spatial-encode",
     version,
-    about = "Encode a Dolby Atmos Master (DAMF) to a salsa-spatial IAMF stream"
+    about = "Encode a Dolby Atmos Master (DAMF) to a Salsa Ogg Opus multistream"
 )]
 struct Cli {
     /// Path to the `.atmos` manifest.
     master: PathBuf,
-    /// Output IAMF stream.
+    /// Output Ogg Opus multistream.
     #[arg(short, long)]
     out: PathBuf,
     /// Metadata rate-distortion weight per encoded bit.
@@ -40,9 +40,9 @@ struct Cli {
     /// Surround Ls/Rs Opus bitrate in bits/s.
     #[arg(long, default_value_t = 128_000)]
     surround_bitrate: u32,
-    /// Height H_L/H_R Opus bitrate in bits/s.
-    #[arg(long, default_value_t = 160_000)]
-    height_bitrate: u32,
+    /// Auxiliary H_L/H_R Opus bitrate in bits/s.
+    #[arg(long = "aux-bitrate", default_value_t = 160_000)]
+    aux_bitrate: u32,
     /// Center Opus bitrate in bits/s.
     #[arg(long, default_value_t = 112_000)]
     center_bitrate: u32,
@@ -74,7 +74,7 @@ fn main() -> Result<()> {
         core_bitrates: [
             cli.front_bitrate,
             cli.surround_bitrate,
-            cli.height_bitrate,
+            cli.aux_bitrate,
             cli.center_bitrate,
             cli.lfe_bitrate,
         ],

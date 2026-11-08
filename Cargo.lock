@@ -1934,6 +1934,7 @@ dependencies = [
  "objectaudio-decode",
  "objectaudio-ir",
  "objectaudio-meta",
+ "opus",
  "salsa-codec",
  "salsa-gst",
  "salsa-gst-registry",

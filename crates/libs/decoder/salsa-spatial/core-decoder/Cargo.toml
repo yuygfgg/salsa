@@ -1,6 +1,6 @@
 [package]
 name = "salsa-spatial-core-decoder"
-description = "libopus-backed five-stream 5.1.2 core decoder"
+description = "libopus-backed salsa-spatial multistream core decoder"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

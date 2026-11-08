@@ -1,0 +1,551 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-11-08",
+  "status": "Exploratory measurements. The production profile is not implemented.",
+  "platform": "macOS",
+  "tools": {
+    "ffmpeg": "9.0.2",
+    "libopus": "1.6.1",
+    "mpv": "0.41.0",
+    "gpac": "26.07"
+  },
+  "scope": [
+    "Synthetic channel mapping and short silence capacity checks.",
+    "Shared encoded mono silence with two public rear outputs.",
+    "Container packet preservation and decoded sample counts.",
+    "Existing IAMF core packet repacking without new Salsa configuration carriage."
+  ],
+  "not_validated": [
+    "Complete fallback downmix for arbitrary object scenes.",
+    "New Salsa configuration and tile record format.",
+    "Object reconstruction or perceptual quality at equal total bitrate.",
+    "Seeking, loss recovery, physical speakers, or hardware decoders."
+  ],
+  "initial_six_output_transport": {
+    "test_scope": "Transport feasibility only. No complete Salsa configuration carriage, fallback downmix, or quality evaluation.",
+    "synthetic": {
+      "sample_rate": 48000,
+      "samples_per_channel": 48000,
+      "coded_channels": 8,
+      "output_channels": 6,
+      "streams": 5,
+      "coupled_streams": 3,
+      "mapping_family": 1,
+      "mapping": [
+        0,
+        6,
+        1,
+        2,
+        3,
+        7
+      ],
+      "native_decoder": "pass",
+      "libopus_decoder": "pass",
+      "mpv_null_output": "pass",
+      "output_tone_hz": [
+        200,
+        300,
+        400,
+        60,
+        500,
+        600
+      ],
+      "base_vs_full_max_sample_difference": 0.0,
+      "ogg_mka_mp4_packet_hashes_identical": true
+    },
+    "real_salsa_core": {
+      "input": "Sol_Levante.iamf",
+      "packet_groups": 50,
+      "decoded_as": "5.1",
+      "reencoded": false,
+      "center_padding_preserved": true,
+      "ogg_mp4_packet_hashes_identical": true,
+      "note": "Standalone Opus framing converted to self-delimiting multistream framing. IAMF configuration is not included in this prototype."
+    },
+    "iamf_group_copy": {
+      "mux_success": true,
+      "iacb_present": true,
+      "original_private_obu_type_24_count": 1,
+      "copied_private_obu_type_24_count": 0
+    }
+  },
+  "capacity_and_layout": {
+    "auxiliary_count_tests": [
+      {
+        "auxiliary_channels": 2,
+        "coded_channels": 8,
+        "substreams": 6,
+        "packet_bytes": 23,
+        "opus": {
+          "ok": true
+        },
+        "libopus": {
+          "ok": true
+        }
+      },
+      {
+        "auxiliary_channels": 8,
+        "coded_channels": 14,
+        "substreams": 12,
+        "packet_bytes": 47,
+        "opus": {
+          "ok": true
+        },
+        "libopus": {
+          "ok": true
+        }
+      },
+      {
+        "auxiliary_channels": 16,
+        "coded_channels": 22,
+        "substreams": 20,
+        "packet_bytes": 79,
+        "opus": {
+          "ok": true
+        },
+        "libopus": {
+          "ok": true
+        }
+      },
+      {
+        "auxiliary_channels": 32,
+        "coded_channels": 38,
+        "substreams": 36,
+        "packet_bytes": 143,
+        "opus": {
+          "ok": true
+        },
+        "libopus": {
+          "ok": true
+        }
+      },
+      {
+        "auxiliary_channels": 64,
+        "coded_channels": 70,
+        "substreams": 68,
+        "packet_bytes": 271,
+        "opus": {
+          "ok": true
+        },
+        "libopus": {
+          "ok": true
+        }
+      },
+      {
+        "auxiliary_channels": 249,
+        "coded_channels": 255,
+        "substreams": 253,
+        "packet_bytes": 1011,
+        "opus": {
+          "ok": true
+        },
+        "libopus": {
+          "ok": true
+        }
+      }
+    ],
+    "layout_tests": [
+      {
+        "name": "side-in-61",
+        "output_mapping": [
+          0,
+          6,
+          1,
+          2,
+          3,
+          255,
+          7
+        ],
+        "coded_channels": 8,
+        "output_channels": 7,
+        "base_max_sample_difference": 0.20155539363622665,
+        "silent_channels_max_abs": 0.0,
+        "containers": [
+          {
+            "container": "opus",
+            "stream": {
+              "channels": 7,
+              "channel_layout": "6.1"
+            },
+            "decode": {
+              "ok": true
+            }
+          },
+          {
+            "container": "mka",
+            "stream": {
+              "channels": 7,
+              "channel_layout": "6.1"
+            },
+            "decode": {
+              "ok": true
+            }
+          },
+          {
+            "container": "mp4",
+            "stream": {
+              "channels": 7,
+              "channel_layout": "6.1"
+            },
+            "decode": {
+              "ok": true
+            }
+          }
+        ],
+        "libopus": {
+          "ok": true
+        },
+        "libopus_base_max_sample_difference": 0.0,
+        "native_mapping_255_waveform_check": "failed: FL is overwritten; expected 200 Hz, observed 600 Hz"
+      },
+      {
+        "name": "side-in-71",
+        "output_mapping": [
+          0,
+          6,
+          1,
+          2,
+          3,
+          255,
+          255,
+          7
+        ],
+        "coded_channels": 8,
+        "output_channels": 8,
+        "base_max_sample_difference": 0.20155539363622665,
+        "silent_channels_max_abs": 0.0,
+        "containers": [
+          {
+            "container": "opus",
+            "stream": {
+              "channels": 8,
+              "channel_layout": "7.1"
+            },
+            "decode": {
+              "ok": true
+            }
+          },
+          {
+            "container": "mka",
+            "stream": {
+              "channels": 8,
+              "channel_layout": "7.1"
+            },
+            "decode": {
+              "ok": true
+            }
+          },
+          {
+            "container": "mp4",
+            "stream": {
+              "channels": 8,
+              "channel_layout": "7.1"
+            },
+            "decode": {
+              "ok": true
+            }
+          }
+        ],
+        "libopus": {
+          "ok": true
+        },
+        "libopus_base_max_sample_difference": 0.0,
+        "native_mapping_255_waveform_check": "failed: FL is overwritten; expected 200 Hz, observed 600 Hz"
+      }
+    ],
+    "decoder_creation_boundary": [
+      {
+        "coded_channels": 255,
+        "created": true,
+        "error_code": 0
+      },
+      {
+        "coded_channels": 256,
+        "created": false,
+        "error_code": -1
+      }
+    ],
+    "coded_silence_layout_test": {
+      "output_channels": 8,
+      "coded_channels": 10,
+      "mapping": [
+        0,
+        2,
+        1,
+        6,
+        7,
+        8,
+        9,
+        3
+      ],
+      "decoders": {
+        "opus": {
+          "max_sample_difference": 0.0,
+          "rear_peak": 0.0
+        },
+        "libopus": {
+          "max_sample_difference": 0.0,
+          "rear_peak": 0.0
+        }
+      },
+      "note": "A distinct coded mono silence channel supplies each rear output. Hidden coded channels carry 700 Hz and 800 Hz."
+    }
+  },
+  "silence_overhead": {
+    "libopus": "libopus 1.6.1",
+    "frame_samples": 960,
+    "sample_rate": 48000,
+    "dtx": false,
+    "silence_encodes": [
+      {
+        "channels": 1,
+        "vbr": false,
+        "target_bps": 16000,
+        "packet_length_counts": {
+          "40": 100
+        },
+        "actual_packet_bps": 16000.0,
+        "first_packet_hex": "f8fffe00000000000000000000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "channels": 1,
+        "vbr": true,
+        "target_bps": 16000,
+        "packet_length_counts": {
+          "3": 100
+        },
+        "actual_packet_bps": 1200.0,
+        "first_packet_hex": "f8fffe"
+      },
+      {
+        "channels": 2,
+        "vbr": false,
+        "target_bps": 16000,
+        "packet_length_counts": {
+          "40": 100
+        },
+        "actual_packet_bps": 16000.0,
+        "first_packet_hex": "f8fffe00000000000000000000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "channels": 2,
+        "vbr": true,
+        "target_bps": 16000,
+        "packet_length_counts": {
+          "3": 100
+        },
+        "actual_packet_bps": 1200.0,
+        "first_packet_hex": "f8fffe"
+      }
+    ],
+    "mapping_tests": [
+      {
+        "name": "shared-mono",
+        "coded_channels": 9,
+        "streams": 6,
+        "coupled": 3,
+        "mapping": [
+          0,
+          6,
+          1,
+          2,
+          3,
+          8,
+          8,
+          7
+        ],
+        "extra_packet_bytes": {
+          "4": 51
+        },
+        "steady_extra_bps": 1600,
+        "decoders": {
+          "opus": {
+            "base_max_sample_difference": 0.0,
+            "rear_peak": 0.0
+          },
+          "libopus": {
+            "base_max_sample_difference": 0.0,
+            "rear_peak": 0.0
+          }
+        }
+      },
+      {
+        "name": "stereo",
+        "coded_channels": 10,
+        "streams": 6,
+        "coupled": 4,
+        "mapping": [
+          0,
+          8,
+          1,
+          2,
+          3,
+          6,
+          7,
+          9
+        ],
+        "extra_packet_bytes": {
+          "4": 51
+        },
+        "steady_extra_bps": 1600,
+        "decoders": {
+          "opus": {
+            "base_max_sample_difference": 0.0,
+            "rear_peak": 0.0
+          },
+          "libopus": {
+            "base_max_sample_difference": 0.0,
+            "rear_peak": 0.0
+          }
+        }
+      },
+      {
+        "name": "two-mono",
+        "coded_channels": 10,
+        "streams": 7,
+        "coupled": 3,
+        "mapping": [
+          0,
+          6,
+          1,
+          2,
+          3,
+          8,
+          9,
+          7
+        ],
+        "extra_packet_bytes": {
+          "8": 51
+        },
+        "steady_extra_bps": 3200,
+        "decoders": {
+          "opus": {
+            "base_max_sample_difference": 0.0,
+            "rear_peak": 0.0
+          },
+          "libopus": {
+            "base_max_sample_difference": 0.0,
+            "rear_peak": 0.0
+          }
+        }
+      }
+    ]
+  },
+  "shared_silence_containers": {
+    "cases": [
+      {
+        "container": "opus",
+        "stream": {
+          "channels": 8,
+          "channel_layout": "7.1",
+          "extradata": "\n00000000: 4f70 7573 4865 6164 0108 7800 80bb 0000  OpusHead..x.....\n00000010: 0000 0106 0300 0601 0203 0808 07         .............\n"
+        },
+        "decoders": {
+          "opus": {
+            "samples_per_channel": 48000,
+            "pcm_identical_to_ogg": true,
+            "rear_peak": 0.0,
+            "prefix_identical_to_ogg": true,
+            "extra_samples_per_channel": 0
+          },
+          "libopus": {
+            "samples_per_channel": 48000,
+            "pcm_identical_to_ogg": true,
+            "rear_peak": 0.0,
+            "prefix_identical_to_ogg": true,
+            "extra_samples_per_channel": 0
+          }
+        }
+      },
+      {
+        "container": "mka",
+        "stream": {
+          "channels": 8,
+          "channel_layout": "7.1",
+          "extradata": "\n00000000: 4f70 7573 4865 6164 0108 7800 80bb 0000  OpusHead..x.....\n00000010: 0000 0106 0300 0601 0203 0808 07         .............\n"
+        },
+        "decoders": {
+          "opus": {
+            "samples_per_channel": 48000,
+            "pcm_identical_to_ogg": true,
+            "rear_peak": 0.0,
+            "prefix_identical_to_ogg": true,
+            "extra_samples_per_channel": 0
+          },
+          "libopus": {
+            "samples_per_channel": 48000,
+            "pcm_identical_to_ogg": true,
+            "rear_peak": 0.0,
+            "prefix_identical_to_ogg": true,
+            "extra_samples_per_channel": 0
+          }
+        }
+      },
+      {
+        "container": "mp4",
+        "stream": {
+          "channels": 8,
+          "channel_layout": "7.1",
+          "extradata": "\n00000000: 4f70 7573 4865 6164 0108 7800 80bb 0000  OpusHead..x.....\n00000010: 0000 0106 0300 0601 0203 0808 07         .............\n"
+        },
+        "decoders": {
+          "opus": {
+            "samples_per_channel": 48840,
+            "pcm_identical_to_ogg": false,
+            "rear_peak": 0.0,
+            "prefix_identical_to_ogg": true,
+            "extra_samples_per_channel": 840
+          },
+          "libopus": {
+            "samples_per_channel": 48840,
+            "pcm_identical_to_ogg": false,
+            "rear_peak": 0.0,
+            "prefix_identical_to_ogg": true,
+            "extra_samples_per_channel": 840
+          }
+        }
+      }
+    ],
+    "packet_hashes_identical": true
+  },
+  "mpv_shared_silence_mp4": {
+    "completed": true,
+    "output_device": "null",
+    "sample_rate": 48000,
+    "reported_layout": "7.1",
+    "output_channels": 8
+  },
+  "reproduction_parameters": {
+    "active_output_tones_hz": {
+      "FL": 200,
+      "FR": 300,
+      "FC": 400,
+      "LFE": 60,
+      "SL": 500,
+      "SR": 600
+    },
+    "auxiliary_tones_hz": [
+      700,
+      800
+    ],
+    "shared_silence_fixture": {
+      "programme_samples": 48000,
+      "packet_groups": 51,
+      "pre_skip_samples": 120,
+      "ogg_final_granule_position": 48120,
+      "output_mapping": [
+        0,
+        6,
+        1,
+        2,
+        3,
+        8,
+        8,
+        7
+      ]
+    },
+    "capacity_test": "Five 20 ms silence packets for each declared capacity.",
+    "silence_rate_test": "100 exact-zero packets per encoder setting.",
+    "waveform_comparison": "Decode to interleaved f32le. Compare corresponding active channels and measure both rear peaks."
+  }
+}

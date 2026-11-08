@@ -1,6 +1,6 @@
 [package]
 name = "salsa-spatial"
-description = "Salsa spatial audio codec syntax, parameter state and IAMF framing"
+description = "Salsa spatial descriptors, Opus multistream framing and parameter state"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

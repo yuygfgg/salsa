@@ -1,7 +1,8 @@
 //! Progress and deterministic output across encoder worker counts.
 
 use objectaudio_damf::{BedEntry, CafWriter, ManifestSpec, Metadata, write_manifest};
-use salsa_spatial::{IamfReader, SAMPLE_RATE, TILE_SAMPLES};
+use objectaudio_ir::SpatialParser;
+use salsa_spatial::{SAMPLE_RATE, SalsaSpatialParser, TILE_SAMPLES};
 use salsa_spatial_encoder::{EncodeOptions, EncodeProgress, EncodeStage, encode_with_progress};
 
 #[test]
@@ -63,7 +64,7 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
     let duration = TILE_SAMPLES + 137;
     let mut options = EncodeOptions {
         master,
-        output: path.join("single.iamf"),
+        output: path.join("single.ogg"),
         core_bitrates: [160_000, 128_000, 160_000, 112_000, 24_000],
         beta: 1e-6,
         max_frames: Some(duration),
@@ -92,7 +93,7 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
     let serial = std::fs::read(&options.output).unwrap();
     assert_eq!(report.total_bytes, serial.len() as u64);
 
-    options.output = path.join("parallel.iamf");
+    options.output = path.join("parallel.ogg");
     updates.clear();
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(4)
@@ -103,7 +104,7 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
     assert_eq!(updates, expected_updates);
     assert_eq!(serial, std::fs::read(&options.output).unwrap());
 
-    options.output = path.join("fixed-headroom.iamf");
+    options.output = path.join("fixed-headroom.ogg");
     options.headroom_db = Some(0.0);
     updates.clear();
     pool.install(|| encode_with_progress(&options, |value| updates.push(value)))
@@ -111,7 +112,7 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
     assert_eq!(updates, expected(EncodeStage::Encoding));
     assert_eq!(serial, std::fs::read(&options.output).unwrap());
 
-    let mut parser = IamfReader::new();
+    let mut parser = SalsaSpatialParser::new();
     let mut frames = parser.push_bytes(&serial).unwrap();
     frames.extend(parser.flush().unwrap());
     assert_eq!(frames.len(), 2);
@@ -120,5 +121,20 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
     assert_eq!(
         frames.iter().map(|frame| frame.frames).sum::<usize>(),
         duration
+    );
+
+    use objectaudio_ir::SpatialDecoder;
+    let config = parser.config().cloned().expect("stream configuration");
+    let mut decoder = salsa_spatial_dsp::SalsaSpatialDecoder::new(config).unwrap();
+    let mut decoded = 0usize;
+    for frame in &frames {
+        decoded += decoder.decode(frame).unwrap().frames;
+    }
+    if let Some(tail) = decoder.finish().unwrap() {
+        decoded += tail.frames;
+    }
+    assert!(
+        decoded + 120 >= duration as usize,
+        "decoded {decoded} samples of {duration}"
     );
 }

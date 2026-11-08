@@ -39,7 +39,7 @@ impl Codec {
         match value.to_ascii_lowercase().as_str() {
             "eac3" | "ec3" => Some(Self::Eac3),
             "truehd" | "thd" | "mlp" => Some(Self::TrueHd),
-            "salsa-spatial" | "salsaspatial" | "spatial" | "iamf" => Some(Self::SalsaSpatial),
+            "salsa-spatial" | "salsaspatial" | "spatial" => Some(Self::SalsaSpatial),
             _ => None,
         }
     }
@@ -139,7 +139,7 @@ mod tests {
     fn extensions_map_to_codecs() {
         assert_eq!(Codec::from_label("EC3"), Some(Codec::Eac3));
         assert_eq!(Codec::from_label("mlp"), Some(Codec::TrueHd));
-        assert_eq!(Codec::from_label("IAMF"), Some(Codec::SalsaSpatial));
+        assert_eq!(Codec::from_label("IAMF"), None);
         assert_eq!(
             Codec::from_label("salsa-spatial"),
             Some(Codec::SalsaSpatial)

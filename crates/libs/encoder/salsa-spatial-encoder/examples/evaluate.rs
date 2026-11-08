@@ -2,7 +2,7 @@
 //!
 //! Usage:
 //! `cargo run -p salsa-spatial-encoder --example evaluate -- \
-//!      <master.atmos> <stream.iamf> [--max-frames N] [--out-prefix PATH]`
+//!      <master.atmos> <stream.ogg> [--max-frames N] [--out-prefix PATH]`
 //!
 //! The tool reads the original DAMF essence with the encoder's `SourceReader`
 //! (authored gain/activity applied exactly once), decodes the IAMF stream with
@@ -22,11 +22,12 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use objectaudio_ir::SpatialParser;
 use objectaudio_ir::{SceneTimeline, SpatialDecoder, adm_to_q15_f64};
 use objectaudio_render::{
     BLOCK_SAMPLES, SpeakerControls, SpeakerMetadata, SpeakerRenderer, layout_by_name,
 };
-use salsa_spatial::{IamfReader, SAMPLE_RATE, TILE_SAMPLES};
+use salsa_spatial::{SAMPLE_RATE, SalsaSpatialParser, TILE_SAMPLES};
 use salsa_spatial_core_decoder::OpusBedDecoder;
 use salsa_spatial_dsp::{SalsaSpatialDecoder, core_gain_column};
 use salsa_spatial_encoder::source::SourceReader;
@@ -119,7 +120,7 @@ fn parse_arguments() -> Result<Arguments> {
     let stream = args
         .next()
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("missing <stream.iamf> path"))?;
+        .ok_or_else(|| anyhow::anyhow!("missing <stream.ogg> path"))?;
 
     let mut max_frames = None;
     let mut reference_start = 0u64;
@@ -170,10 +171,10 @@ fn evaluate(arguments: &Arguments) -> Result<Report> {
     // durations carried by the stream itself.
     let bytes = std::fs::read(&arguments.stream)
         .with_context(|| format!("reading {}", arguments.stream.display()))?;
-    let mut iamf = IamfReader::new();
-    let mut stream_frames = iamf.push_bytes(&bytes).context("parsing IAMF stream")?;
-    stream_frames.extend(iamf.flush().context("flushing IAMF parser")?);
-    let config = iamf
+    let mut parser = SalsaSpatialParser::new();
+    let mut stream_frames = parser.push_bytes(&bytes).context("parsing Salsa stream")?;
+    stream_frames.extend(parser.flush().context("flushing Salsa parser")?);
+    let config = parser
         .config()
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("stream has no salsa-spatial configuration"))?;

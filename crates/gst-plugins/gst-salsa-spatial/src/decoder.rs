@@ -196,7 +196,7 @@ impl ElementImpl for SalsaSpatialDec {
     salsa_gst::element_metadata!(
         "salsa-spatial Decoder",
         "Codec/Decoder/Audio",
-        "Decodes salsa-spatial IAMF into LFE plus source objects"
+        "Decodes salsa-spatial Opus multistream into LFE plus source objects"
     );
 
     salsa_gst::pad_templates!({

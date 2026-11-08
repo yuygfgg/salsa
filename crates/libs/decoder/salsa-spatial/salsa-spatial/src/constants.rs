@@ -31,14 +31,64 @@ pub const PARAM_BAND_BOUNDARIES: [u16; 25] = [
     0, 2, 4, 7, 11, 15, 20, 27, 34, 43, 55, 68, 85, 105, 130, 160, 196, 240, 293, 358, 436, 532,
     648, 789, 961,
 ];
-/// Full-range core channels, in internal order.
+/// Full-range observation channels, in reconstruction order:
+/// `FL, FR, FC, SL, SR, H_L, H_R`.
 pub const CORE_CHANNEL_COUNT: usize = 7;
-/// Five Opus substreams.
+/// Legacy five-substream core layout.
 pub const CORE_STREAM_COUNT: usize = 5;
-/// LFE index in the decoded eight-channel bed.
+/// LFE index in the decoded eight-channel observation bed.
 pub const LFE_CHANNEL_INDEX: usize = 7;
 /// Seven full-range observations plus LFE.
 pub const BED_CHANNEL_COUNT: usize = 8;
+
+// ---------------------------------------------------------------------------
+// Opus multistream profile
+// ---------------------------------------------------------------------------
+
+/// Number of standard 7.1 output channels declared to stock players.
+pub const PUBLIC_OUTPUT_CHANNELS: usize = 8;
+/// Opus mapping family used by the profile.
+pub const MAPPING_FAMILY: u8 = 1;
+/// Number of core-first logical channels before auxiliary groups and silence:
+/// `FL, FR, FC, LFE, SL, SR`.
+pub const CORE_LOGICAL_COUNT: usize = 6;
+/// Logical index of the separate LFE signal.
+pub const LOGICAL_LFE_INDEX: usize = 3;
+/// The initial auxiliary group has one coupled pair.
+pub const INITIAL_AUX_CHANNELS: usize = 2;
+/// Initial logical channel count: six core + two auxiliary + shared silence.
+pub const INITIAL_LOGICAL_COUNT: usize = CORE_LOGICAL_COUNT + INITIAL_AUX_CHANNELS + 1;
+/// Initial coded channel count: six fallback + two auxiliary + shared silence.
+pub const INITIAL_CODED_CHANNELS: usize = 9;
+/// Initial number of Opus substreams.
+pub const INITIAL_STREAM_COUNT: usize = 6;
+/// Initial number of coupled Opus substreams.
+pub const INITIAL_COUPLED_COUNT: usize = 3;
+/// Maximum coded channel count permitted by the Opus multistream API.
+pub const MAX_CODED_CHANNELS: usize = 255;
+/// Maximum auxiliary capacity with the shared-silence profile.
+pub const MAX_AUXILIARY_CHANNELS: usize = MAX_CODED_CHANNELS - CORE_LOGICAL_COUNT - 1;
+/// Hard bound on stream counts accepted by the parser.
+pub const MAX_STREAM_COUNT: usize = 255;
+/// Maximum number of fragments accepted for one record.
+pub const MAX_RECORD_FRAGMENTS: usize = 64;
+/// Maximum reassembled private record size.
+pub const MAX_RECORD_BYTES: usize = 1 << 20;
+/// Standard mapping-family-1 8-channel output order.
+pub const PUBLIC_CHANNEL_ORDER: [&str; PUBLIC_OUTPUT_CHANNELS] =
+    ["FL", "FC", "FR", "SL", "SR", "BL", "BR", "LFE"];
+/// Decoded PCM order used by FFmpeg for 8-channel family-1 output.
+pub const FFMPEG_CHANNEL_ORDER: [&str; PUBLIC_OUTPUT_CHANNELS] =
+    ["FL", "FR", "FC", "LFE", "BL", "BR", "SL", "SR"];
+/// Initial public Opus channel map.
+pub const INITIAL_CHANNEL_MAPPING: [u8; PUBLIC_OUTPUT_CHANNELS] = [0, 6, 1, 2, 3, 8, 8, 7];
+/// Initial private logical-to-coded permutation.
+pub const INITIAL_LOGICAL_TO_CODED: [u8; INITIAL_CODED_CHANNELS] = [0, 1, 6, 7, 2, 3, 4, 5, 8];
+/// Initial core bitrates indexed by substream role:
+/// front, surround, auxiliary, center, LFE.
+pub const INITIAL_CORE_BITRATES: [u32; 5] = [160_000, 128_000, 160_000, 112_000, 24_000];
+/// Encoder lookahead for the tested restricted-low-delay configuration.
+pub const TESTED_LOOKAHEAD_SAMPLES: usize = 120;
 /// Maximum number of source objects covered by the first version.
 pub const MAX_OBJECTS: usize = 128;
 /// Number of fast DCT coefficients in the power model.

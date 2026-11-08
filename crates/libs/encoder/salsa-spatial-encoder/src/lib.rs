@@ -4,7 +4,7 @@
 //! activity exactly once at audio rate, quantizes and simplifies object
 //! trajectories, forms the deterministic 5.1.2 core, encodes five Opus
 //! substreams, locally decodes them for measured error, and runs a fixed-weight
-//! `D + beta*R` parameter search.  Output is an IAMF 1.1 stream written through
+//! `D + beta*R` parameter search. Output is an Ogg Opus multistream track written through
 //! `salsa-spatial`'s shared writer.
 
 mod core_codec;
@@ -16,6 +16,8 @@ mod rd;
 pub mod source;
 mod trajectory;
 
+pub use core_codec::MultistreamCodec;
+pub use downmix::TransportSignals;
 pub use source::{SourceReader, TileSource};
 
 use std::fs::File;
@@ -26,13 +28,12 @@ use anyhow::{Context, Result, bail};
 use objectaudio_ir::{ObjectEvent, ObjectState};
 use salsa_spatial::params::{ParameterTile, SceneParameterEncoder};
 use salsa_spatial::{
-    CorePacket, EnhancementTile, IamfWriter, MAX_OBJECTS, PARAM_BAND_COUNT, SAMPLE_RATE,
+    EnhancementTile, MAX_OBJECTS, MultistreamPacket, PARAM_BAND_COUNT, SAMPLE_RATE,
     SNAPSHOT_SAMPLES, SalsaSpatialFrame, SalsaSpatialStreamConfig, TILE_SAMPLES, TrajectoryKnot,
 };
 use serde::Serialize;
 
-use crate::core_codec::CoreCodec;
-use crate::downmix::build_core;
+use crate::downmix::build_transport;
 use crate::measurement::MeasurementContext;
 use crate::rd::search_tile;
 use crate::trajectory::{fit_trajectory, position_at};
@@ -100,7 +101,7 @@ struct TileJob {
     core_knots: Vec<Vec<TrajectoryKnot>>,
     meta_knots: Vec<Vec<TrajectoryKnot>>,
     core: [Vec<f32>; 7],
-    packets: Vec<CorePacket>,
+    packets: Vec<MultistreamPacket>,
 }
 
 struct ProcessedTile {
@@ -251,6 +252,7 @@ fn make_config(
         initial_trajectories: meta_knots.to_vec(),
         core_bitrates: options.core_bitrates,
         beta: options.beta,
+        ..SalsaSpatialStreamConfig::default()
     }
 }
 
@@ -302,7 +304,7 @@ fn process_job(
     next: Option<&TileJob>,
     measurement: &mut MeasurementContext,
     program_start: u64,
-    codec: &mut CoreCodec,
+    codec: &mut MultistreamCodec,
     encoder: &mut SceneParameterEncoder,
     previous_base: &[[i32; PARAM_BAND_COUNT]],
     previous_ell: &[[i32; PARAM_BAND_COUNT]],
@@ -397,11 +399,11 @@ fn process_job(
         .packets
         .iter()
         .map(|packet| {
-            (packet.front.len()
-                + packet.surround.len()
-                + packet.height.len()
-                + packet.center.len()
-                + packet.lfe.len()) as u64
+            packet
+                .substreams
+                .iter()
+                .map(|stream| stream.len() as u64)
+                .sum::<u64>()
         })
         .sum();
 
@@ -414,7 +416,7 @@ fn process_job(
     })
 }
 
-/// Encode a DAMF master to an IAMF salsa-spatial stream.
+/// Encode a DAMF master to a Salsa Ogg Opus stream.
 pub fn encode(options: &EncodeOptions) -> Result<EncodeReport> {
     encode_with_progress(options, |_| {})
 }
@@ -463,10 +465,9 @@ pub fn encode_with_progress(
 
     let mut reader = SourceReader::open(&options.master)?;
     reader.seek(start)?;
-    let mut codec = CoreCodec::new(object_count, options.core_bitrates)?;
-    log::info!("Opus lookahead: {} samples", codec.lookahead_samples());
+    let mut codec: Option<MultistreamCodec> = None;
     let mut encoder = SceneParameterEncoder::new(object_count);
-    let mut writer: Option<IamfWriter> = None;
+    let mut writer: Option<salsa_spatial::OggSalsaWriter> = None;
     let mut pending: Option<TileJob> = None;
     let mut measurement = MeasurementContext::new(headroom_gain);
     let mut last_base = vec![[0i32; PARAM_BAND_COUNT]; object_count];
@@ -493,13 +494,28 @@ pub fn encode_with_progress(
         };
         let frames = source.frames;
         let (core_knots, meta_knots) = fit_tile_knots(&source, &mut last_positions, first_tile);
-        let (core, lfe) = build_core(&source, &core_knots, headroom_gain);
-        let packets = codec.encode_tile(&core, &lfe, frames)?;
-
-        if writer.is_none() {
+        if codec.is_none() {
             let config = make_config(&source, &core_knots, &meta_knots, headroom_gain, options);
-            writer = Some(IamfWriter::new(&config)?);
+            let new_codec = MultistreamCodec::new(config.clone())?;
+            log::info!("Opus lookahead: {} samples", new_codec.lookahead_samples());
+            let pre_skip = new_codec.lookahead_samples() as u16;
+            let (new_writer, header) =
+                salsa_spatial::OggSalsaWriter::new(config, 0x5341_4c53, pre_skip)?;
+            output.write_all(&header)?;
+            transport_bytes += header.len() as u64;
+            codec = Some(new_codec);
+            writer = Some(new_writer);
         }
+        let fold = writer
+            .as_ref()
+            .map(|writer| writer.config().fold())
+            .unwrap_or_else(salsa_spatial::BaseFold::v1);
+        let transport = build_transport(&source, &core_knots, headroom_gain, fold, 2);
+        let core = transport.observation_order();
+        let packets = codec
+            .as_mut()
+            .expect("multistream codec exists")
+            .encode_tile(&transport)?;
 
         let job = TileJob {
             source,
@@ -520,7 +536,7 @@ pub fn encode_with_progress(
                 Some(&job),
                 &mut measurement,
                 start,
-                &mut codec,
+                codec.as_mut().expect("multistream codec exists"),
                 &mut encoder,
                 &last_base,
                 &previous_ell,
@@ -561,7 +577,10 @@ pub fn encode_with_progress(
         pending = Some(job);
     }
 
-    codec.flush().context("flushing the local core decoder")?;
+    let mut tail_packet = None;
+    if let Some(codec) = codec.as_mut() {
+        tail_packet = codec.flush().context("flushing the local core decoder")?;
+    }
 
     if let Some(last) = pending.take() {
         let start_sample = last.source.start_sample;
@@ -572,7 +591,7 @@ pub fn encode_with_progress(
             None,
             &mut measurement,
             start,
-            &mut codec,
+            codec.as_mut().expect("multistream codec exists"),
             &mut encoder,
             &last_base,
             &previous_ell,
@@ -602,8 +621,13 @@ pub fn encode_with_progress(
         tile_reports.push(report);
     }
 
+    if let (Some(writer), Some(packet)) = (writer.as_mut(), tail_packet) {
+        let tail = writer.write_tail(&packet)?;
+        output.write_all(&tail)?;
+        transport_bytes += tail.len() as u64;
+    }
     if let Some(writer) = writer.as_mut() {
-        let tail = writer.finish()?;
+        let tail = writer.finish();
         output.write_all(&tail)?;
         transport_bytes += tail.len() as u64;
     }
@@ -645,11 +669,12 @@ mod tests {
 
     #[test]
     fn parsed_stream_roundtrips_if_available() {
-        let Ok(path) = std::env::var("SALSA_TEST_IAMF") else {
+        use objectaudio_ir::SpatialParser;
+        let Ok(path) = std::env::var("SALSA_TEST_OGG") else {
             return;
         };
         let bytes = std::fs::read(path).expect("test stream");
-        let mut reader = salsa_spatial::IamfReader::new();
+        let mut reader = salsa_spatial::SalsaSpatialParser::new();
         let mut frames = reader.push_bytes(&bytes).expect("parse stream");
         frames.extend(reader.flush().expect("flush stream"));
         assert_eq!(frames.len(), 10);
@@ -658,7 +683,7 @@ mod tests {
             48_000
         );
         assert!(reader.config().is_some());
-        assert!(frames.iter().all(|frame| frame.packets.len() == 5));
+        assert!(frames.iter().all(|frame| frame.packets.len() == 6));
         assert!(
             frames
                 .iter()
@@ -670,12 +695,12 @@ mod tests {
 
     #[test]
     fn decodes_written_stream_if_available() {
-        use objectaudio_ir::SpatialDecoder;
-        let Ok(path) = std::env::var("SALSA_TEST_IAMF") else {
+        use objectaudio_ir::{SpatialDecoder, SpatialParser};
+        let Ok(path) = std::env::var("SALSA_TEST_OGG") else {
             return;
         };
         let bytes = std::fs::read(path).expect("test stream");
-        let mut reader = salsa_spatial::IamfReader::new();
+        let mut reader = salsa_spatial::SalsaSpatialParser::new();
         let mut frames = reader.push_bytes(&bytes).expect("parse stream");
         frames.extend(reader.flush().expect("flush stream"));
         let config = reader.config().cloned().expect("stream config");

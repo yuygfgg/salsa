@@ -29,11 +29,124 @@
 //! [`OpusBedDecoder::pending_lookahead_samples`] while streaming).
 
 use opus::{Application, Channels, Decoder, Encoder};
-use salsa_spatial::{CorePacket, MAX_OBJECTS, OPUS_FRAME_SAMPLES, SAMPLE_RATE};
+use salsa_spatial::{
+    CorePacket, MAX_OBJECTS, OPUS_FRAME_SAMPLES, SAMPLE_RATE, SalsaSpatialStreamConfig,
+};
 use thiserror::Error;
 
-/// Number of Opus substreams in the 5.1.2 core bed.
+/// Number of Opus substreams in the legacy 5.1.2 core bed.
 pub const CORE_STREAMS: usize = 5;
+
+/// One elementary substream in the codec plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SubstreamPlan {
+    channels: usize,
+    coded_start: usize,
+}
+
+/// How coded channels map into the reconstruction observation order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DecodePlan {
+    substreams: Vec<SubstreamPlan>,
+    /// Coded channel for each of the seven full-range observations.
+    observation_coded: [usize; 7],
+    lfe_coded: usize,
+    center_substream: usize,
+    stream_count: usize,
+}
+
+impl DecodePlan {
+    fn from_config(config: &SalsaSpatialStreamConfig) -> Result<Self, CoreDecodeError> {
+        let binding = &config.codec;
+        if binding.is_legacy() {
+            return Ok(Self {
+                substreams: vec![
+                    SubstreamPlan {
+                        channels: 2,
+                        coded_start: 0,
+                    },
+                    SubstreamPlan {
+                        channels: 2,
+                        coded_start: 2,
+                    },
+                    SubstreamPlan {
+                        channels: 2,
+                        coded_start: 4,
+                    },
+                    SubstreamPlan {
+                        channels: 1,
+                        coded_start: 6,
+                    },
+                    SubstreamPlan {
+                        channels: 1,
+                        coded_start: 7,
+                    },
+                ],
+                observation_coded: [0, 1, 6, 2, 3, 4, 5],
+                lfe_coded: 7,
+                center_substream: 3,
+                stream_count: 5,
+            });
+        }
+        let coded = binding.coded_channel_count();
+        let mut substreams = Vec::with_capacity(binding.stream_count);
+        for stream in 0..binding.stream_count {
+            let channels = if stream < binding.coupled_count { 2 } else { 1 };
+            let coded_start = if stream < binding.coupled_count {
+                stream * 2
+            } else {
+                2 * binding.coupled_count + (stream - binding.coupled_count)
+            };
+            if coded_start + channels > coded {
+                return Err(CoreDecodeError::InvalidConfig(
+                    "substream plan exceeds coded channel count".to_owned(),
+                ));
+            }
+            substreams.push(SubstreamPlan {
+                channels,
+                coded_start,
+            });
+        }
+        let logical = config.observation_logical();
+        if logical.len() != 7 {
+            return Err(CoreDecodeError::InvalidConfig(
+                "observation order must have seven full-range rows".to_owned(),
+            ));
+        }
+        let mut observation_coded = [0usize; 7];
+        for (index, logical_index) in logical.iter().enumerate() {
+            let coded_index = *binding
+                .logical_to_coded
+                .get(*logical_index)
+                .ok_or_else(|| {
+                    CoreDecodeError::InvalidConfig(
+                        "observation logical index has no coded binding".to_owned(),
+                    )
+                })? as usize;
+            if coded_index >= coded {
+                return Err(CoreDecodeError::InvalidConfig(
+                    "observation coded channel is out of range".to_owned(),
+                ));
+            }
+            observation_coded[index] = coded_index;
+        }
+        let lfe_coded = *binding
+            .logical_to_coded
+            .get(salsa_spatial::LOGICAL_LFE_INDEX)
+            .ok_or_else(|| {
+                CoreDecodeError::InvalidConfig("missing LFE logical binding".to_owned())
+            })? as usize;
+        Ok(Self {
+            substreams,
+            observation_coded,
+            lfe_coded,
+            center_substream: binding.center_substream_index().map_err(|error| {
+                CoreDecodeError::InvalidConfig(format!("invalid center substream: {error}"))
+            })?,
+            stream_count: binding.stream_count,
+        })
+    }
+}
 
 /// Version information of the Rust wrapper and the linked native libopus.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +187,10 @@ pub enum CoreDecodeError {
     /// The center-substream extension could not be handled.
     #[error("center extension handling failed: {0}")]
     Extension(String),
+
+    /// The stream configuration cannot be decoded by this build.
+    #[error("invalid core decoder configuration: {0}")]
+    InvalidConfig(String),
 }
 
 /// Five libopus decoder states plus the program delay bookkeeping.
@@ -82,7 +199,8 @@ pub enum CoreDecodeError {
 /// invoke libopus packet-loss concealment (`fec = false`).
 #[derive(Debug)]
 pub struct OpusBedDecoder {
-    decoders: [Decoder; CORE_STREAMS],
+    decoders: Vec<Decoder>,
+    plan: DecodePlan,
     object_count: usize,
     lookahead: usize,
     samples_decoded: u64,
@@ -91,25 +209,33 @@ pub struct OpusBedDecoder {
 }
 
 impl OpusBedDecoder {
-    /// Create five decoder states for the 5.1.2 core profile.
-    ///
-    /// `object_count` is validated against the v1 limit and retained for
-    /// reporting; the core bed itself always has five substreams.
+    /// Create five decoder states for the legacy 5.1.2 core profile.
     pub fn new(object_count: usize) -> Result<Self, CoreDecodeError> {
-        if object_count > MAX_OBJECTS {
-            return Err(CoreDecodeError::TooManyObjects(object_count));
+        let mut config = SalsaSpatialStreamConfig::legacy();
+        config.object_count = object_count;
+        Self::from_config(&config)
+    }
+
+    /// Create decoder states from the declared stream configuration.
+    pub fn from_config(config: &SalsaSpatialStreamConfig) -> Result<Self, CoreDecodeError> {
+        if config.object_count > MAX_OBJECTS {
+            return Err(CoreDecodeError::TooManyObjects(config.object_count));
         }
+        let plan = DecodePlan::from_config(config)?;
         let lookahead = query_encoder_lookahead()?;
-        let decoders = [
-            Decoder::new(SAMPLE_RATE, Channels::Stereo)?,
-            Decoder::new(SAMPLE_RATE, Channels::Stereo)?,
-            Decoder::new(SAMPLE_RATE, Channels::Stereo)?,
-            Decoder::new(SAMPLE_RATE, Channels::Mono)?,
-            Decoder::new(SAMPLE_RATE, Channels::Mono)?,
-        ];
+        let mut decoders = Vec::with_capacity(plan.substreams.len());
+        for substream in &plan.substreams {
+            let channels = if substream.channels == 2 {
+                Channels::Stereo
+            } else {
+                Channels::Mono
+            };
+            decoders.push(Decoder::new(SAMPLE_RATE, channels)?);
+        }
         Ok(Self {
             decoders,
-            object_count,
+            plan,
+            object_count: config.object_count,
             lookahead,
             samples_decoded: 0,
             lookahead_remaining: lookahead,
@@ -119,59 +245,68 @@ impl OpusBedDecoder {
 
     /// Decode one 20 ms packet group.
     ///
-    /// Returns eight planar channels in `L, R, C, Ls, Rs, H_L, H_R, LFE`
-    /// order.  Each channel has [`salsa_spatial::OPUS_FRAME_SAMPLES`] samples
-    /// for a full packet, or the shorter natural duration of the final partial
-    /// packet.  An empty substream packet requests libopus packet-loss
-    /// concealment.
+    /// Returns eight planar channels in `FL, FR, FC, SL, SR, H_L, H_R, LFE`
+    /// observation order. Hidden auxiliary channels are routed into the
+    /// observation buffer; the shared rear-silence channel is not returned.
     pub fn decode(&mut self, packet: &CorePacket) -> Result<[Vec<f32>; 8], CoreDecodeError> {
-        let (center, extension) = split_center_extension(&packet.center);
+        if packet.len() != 0 && packet.len() != self.plan.stream_count {
+            return Err(CoreDecodeError::InvalidConfig(format!(
+                "packet has {} substreams, expected {}",
+                packet.len(),
+                self.plan.stream_count
+            )));
+        }
+        let center_bytes = packet
+            .stream(self.plan.center_substream)
+            .unwrap_or_default()
+            .to_vec();
+        let (center, extension) = split_center_extension(&center_bytes);
         self.pending_extension = extension;
 
-        let mut front_buf = vec![0.0f32; OPUS_FRAME_SAMPLES * 2];
-        let mut surround_buf = vec![0.0f32; OPUS_FRAME_SAMPLES * 2];
-        let mut height_buf = vec![0.0f32; OPUS_FRAME_SAMPLES * 2];
-        let mut center_buf = vec![0.0f32; OPUS_FRAME_SAMPLES];
-        let mut lfe_buf = vec![0.0f32; OPUS_FRAME_SAMPLES];
-
-        let front_frames = self.decoders[0].decode_float(&packet.front, &mut front_buf, false)?;
-        let surround_frames =
-            self.decoders[1].decode_float(&packet.surround, &mut surround_buf, false)?;
-        let height_frames =
-            self.decoders[2].decode_float(&packet.height, &mut height_buf, false)?;
-        let center_frames = self.decoders[3].decode_float(&center, &mut center_buf, false)?;
-        let lfe_frames = self.decoders[4].decode_float(&packet.lfe, &mut lfe_buf, false)?;
-
-        let stream_frames = [
-            front_frames,
-            surround_frames,
-            height_frames,
-            center_frames,
-            lfe_frames,
-        ];
-        let frames = stream_frames.iter().copied().min().unwrap_or(0);
-        for (stream, &actual) in stream_frames.iter().enumerate() {
-            if actual != frames {
-                // A lost packet in a shorter-than-20 ms final group can make
-                // libopus conceal a different duration.  Keep the group on a
-                // single boundary by trimming to the shortest stream.
-                log::warn!("core stream {stream} decoded {actual} samples, truncating to {frames}");
+        let coded_count = self
+            .plan
+            .substreams
+            .last()
+            .map_or(0, |plan| plan.coded_start + plan.channels);
+        let mut buffers: Vec<Vec<f32>> = Vec::with_capacity(self.plan.substreams.len());
+        let mut frames = usize::MAX;
+        for (index, substream) in self.plan.substreams.iter().enumerate() {
+            let data = if index == self.plan.center_substream {
+                center.as_slice()
+            } else {
+                packet.stream(index).unwrap_or_default()
+            };
+            let mut buffer = vec![0.0f32; OPUS_FRAME_SAMPLES * substream.channels];
+            let actual = self.decoders[index].decode_float(data, &mut buffer, false)?;
+            frames = frames.min(actual);
+            buffers.push(buffer);
+        }
+        if frames == usize::MAX {
+            frames = 0;
+        }
+        let mut coded: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); coded_count];
+        for (index, substream) in self.plan.substreams.iter().enumerate() {
+            let buffer = &buffers[index];
+            if substream.channels == 2 {
+                let (left, right) = stereo_planes(buffer, frames);
+                if substream.coded_start + 1 < coded_count {
+                    coded[substream.coded_start] = left;
+                    coded[substream.coded_start + 1] = right;
+                }
+            } else if substream.coded_start < coded_count {
+                coded[substream.coded_start] = buffer[..frames.min(buffer.len())].to_vec();
             }
         }
 
         let mut out: [Vec<f32>; 8] = std::array::from_fn(|_| Vec::with_capacity(frames));
-        let (left, right) = stereo_planes(&front_buf, frames);
-        let (surround_left, surround_right) = stereo_planes(&surround_buf, frames);
-        let (height_left, height_right) = stereo_planes(&height_buf, frames);
-
-        out[0] = left;
-        out[1] = right;
-        out[2] = center_buf[..frames].to_vec();
-        out[3] = surround_left;
-        out[4] = surround_right;
-        out[5] = height_left;
-        out[6] = height_right;
-        out[7] = lfe_buf[..frames].to_vec();
+        for (observation, coded_index) in self.plan.observation_coded.iter().enumerate() {
+            if let Some(plane) = coded.get(*coded_index) {
+                out[observation] = plane.clone();
+            }
+        }
+        if let Some(plane) = coded.get(self.plan.lfe_coded) {
+            out[7] = plane.clone();
+        }
 
         self.samples_decoded = self.samples_decoded.saturating_add(frames as u64);
         self.lookahead_remaining = (self.lookahead as u64)
@@ -358,12 +493,8 @@ mod tests {
             .zip(height_packets)
             .zip(center_packets)
             .zip(lfe_packets)
-            .map(|((((front, surround), height), center), lfe)| CorePacket {
-                front,
-                surround,
-                height,
-                center,
-                lfe,
+            .map(|((((front, surround), height), center), lfe)| {
+                CorePacket::from_legacy(front, surround, height, center, lfe)
             })
             .collect();
 
@@ -463,14 +594,14 @@ mod tests {
     #[test]
     fn padded_center_packet_still_decodes() {
         let encoded = encode_bed(OPUS_FRAME_SAMPLES);
-        let mut padded = encoded.packets[0].center.clone();
+        let mut padded = encoded.packets[0].stream(3).unwrap().to_vec();
         let original_len = padded.len();
         padded.resize(original_len + 32, 0);
         let padded_len = opus::packet::pad(&mut padded, original_len).unwrap();
         padded.truncate(padded_len);
 
         let mut packet = encoded.packets[0].clone();
-        packet.center = padded;
+        packet.substreams[3] = padded;
 
         let mut decoder = OpusBedDecoder::new(0).unwrap();
         let bed = decoder.decode(&packet).unwrap();
@@ -482,7 +613,7 @@ mod tests {
     fn center_extension_round_trips_when_supported() {
         let encoded = encode_bed(OPUS_FRAME_SAMPLES);
         let payload = b"salsa-enhancement-fragment".to_vec();
-        let packet = encoded.packets[0].center.clone();
+        let packet = encoded.packets[0].stream(3).unwrap().to_vec();
 
         let appended = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             salsa_spatial::opus_ext::append_extension(&packet, &payload)
@@ -497,7 +628,7 @@ mod tests {
         };
 
         let mut packet_with_extension = encoded.packets[0].clone();
-        packet_with_extension.center = extended;
+        packet_with_extension.substreams[3] = extended;
         let mut decoder = OpusBedDecoder::new(0).unwrap();
         let bed = decoder.decode(&packet_with_extension).unwrap();
         assert_eq!(bed[2].len(), OPUS_FRAME_SAMPLES);
