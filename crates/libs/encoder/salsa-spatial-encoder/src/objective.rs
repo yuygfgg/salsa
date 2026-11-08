@@ -786,7 +786,6 @@ mod tests {
             anchors,
             pairs: Vec::new(),
             trajectories,
-            snapshot: None,
         };
         (tile, RenderContext::new(&measured))
     }

@@ -58,11 +58,8 @@ fn eos_delivers_the_complete_dsp_tail() {
                 start_sample: start,
                 frames,
                 bytes: Vec::new(),
-                snapshot: false,
             },
-            objects: Vec::new(),
-            events: Vec::new(),
-            snapshot: false,
+            checkpoint: None,
             parameters: None,
         };
         bytes.extend(writer.write_frame(&frame).unwrap());

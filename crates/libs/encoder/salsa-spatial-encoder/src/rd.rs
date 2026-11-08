@@ -388,7 +388,6 @@ fn make_tile(
         anchors: anchors.to_vec(),
         pairs: pairs.to_vec(),
         trajectories: trajectories.to_vec(),
-        snapshot: None,
     }
 }
 

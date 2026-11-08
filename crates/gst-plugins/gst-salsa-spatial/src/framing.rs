@@ -118,11 +118,8 @@ mod tests {
                 start_sample: start,
                 frames: count * 960,
                 bytes: Vec::new(),
-                snapshot: false,
             },
-            objects: Vec::new(),
-            events: Vec::new(),
-            snapshot: false,
+            checkpoint: None,
             parameters: None,
         }
     }

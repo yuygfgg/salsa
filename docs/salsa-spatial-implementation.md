@@ -35,7 +35,7 @@ contains the current measurements.
 | Position precision | 12 bits per coordinate |
 | Moving-trajectory knot spacing | At most 100 ms |
 | Trajectory gain-error bound | 0.005 in L2 norm |
-| Predictor snapshot | Once per second |
+| Independent checkpoint | Once per second |
 | Metadata RD weight | Fixed per encode; default beta = 0.000001 |
 
 The 24 bands use these half-open positive-frequency bin boundaries:
@@ -128,21 +128,26 @@ signal errors, and perceptual-proxy results. The default remains zero.
 
 The standard Ogg Opus track carries one multistream packet per 20 ms. The
 mono center substream carries versioned Salsa records in an experimental Opus
-padding extension. Records carry the configuration snapshot, scene updates,
-parameter bytes, group activity, and fragment framing. The shared silence
-substream is zero input and uses unconstrained VBR.
+padding extension. Records carry the configuration, independent checkpoints,
+parameter tiles, and fragment framing. A tile carries no second object or event
+list: downstream `ObjectState` values are generated from the decoded parameter
+and trajectory state. The shared silence substream is zero input and uses
+unconstrained VBR.
 
 The parameter coder uses constriction with 24-bit rANS probability precision.
 It assigns integer frequencies by largest remainder, with ties resolved by
 symbol index. Counts rescale by ceiling halving when their total reaches
 4,096. Entropy contexts reset for each tile; parameter predictors persist
-until a snapshot replaces them.
+until a checkpoint replaces them. A checkpoint is a separate length-delimited
+record with its own reset entropy contexts, so it can be parsed without any
+earlier tile or the current tile's parameter payload. It describes the state
+immediately before its tile.
 
 ## Rust components
 
 | Crate | Responsibility |
 |---|---|
-| salsa-spatial | Descriptors, multistream framing, Ogg Opus, records, syntax, parameters, snapshots |
+| salsa-spatial | Descriptors, multistream framing, Ogg Opus, records, syntax, parameters, checkpoints |
 | salsa-spatial-core-decoder | Per-substream Opus states and coded-to-logical routing |
 | salsa-spatial-dsp | Panner, fold, STFT, covariance, model dispatch, synthesis |
 | salsa-spatial-encoder | Source preparation, complete fallback mix, multistream encoding, RD search |
@@ -177,8 +182,10 @@ flowchart LR
 ## Timing and pipeline behavior
 
 The parser reassembles a complete tile before committing parameter state.
-Missing or invalid enhancement selects the decoded bed. A valid snapshot
-restores object reconstruction, with a 20 ms crossfade between modes.
+Missing or invalid enhancement selects the decoded bed. A complete checkpoint
+restores the predictor chain, and the following valid tile restores object
+reconstruction with a 20 ms crossfade between modes. A checkpoint never resets
+the continuous Opus or STFT history on its own.
 
 All timing uses the 48 kHz source sample clock. Core lookahead is removed
 once at programme start. Analysis keeps its window context across tiles.
@@ -195,6 +202,6 @@ and binaural renderers consume that state.
 |---|---|
 | Programme calibration | Manifest warp mode is not imported or transported. |
 | Final core samples | The extra tail packet is transported with Ogg end trimming; other containers are not yet sample-exact. |
-| Snapshot rate cost | Snapshot bytes count in the file rate but are added after the tile search. |
+| Checkpoint rate cost | Checkpoint bytes count in the file rate but are added after the tile search. |
 | Endpoint RD cost | The decoder uses real DC/Nyquist matrices; the search still uses a complex-band proxy. |
-| Seeking | Decoder reset and snapshots exist; the host must provide Opus and filterbank preroll. |
+| Seeking | `salsaspatialparse` indexes checkpoint byte offsets, snaps flushing time seeks to the preceding checkpoint, restores the segment target, and lets `salsaspatialdec` preroll the Opus/filterbank path before clipped output starts. |

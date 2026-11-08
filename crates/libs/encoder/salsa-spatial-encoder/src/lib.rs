@@ -28,11 +28,11 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
-use objectaudio_ir::{ObjectEvent, ObjectState};
+use objectaudio_ir::ObjectState;
 use salsa_spatial::params::{ParameterTile, SceneParameterEncoder};
 use salsa_spatial::{
-    EnhancementTile, MAX_OBJECTS, MultistreamPacket, PARAM_BAND_COUNT, SAMPLE_RATE,
-    SNAPSHOT_SAMPLES, SalsaSpatialFrame, SalsaSpatialStreamConfig, TILE_SAMPLES, TrajectoryKnot,
+    CHECKPOINT_SAMPLES, EnhancementTile, MAX_OBJECTS, MultistreamPacket, PARAM_BAND_COUNT,
+    SAMPLE_RATE, SalsaSpatialFrame, SalsaSpatialStreamConfig, TILE_SAMPLES, TrajectoryKnot,
 };
 use serde::Serialize;
 
@@ -75,7 +75,12 @@ pub struct EncodeProgress {
 pub struct TileReport {
     pub start_sample: u64,
     pub core_bytes: u64,
+    pub parameter_bytes: u64,
+    pub checkpoint_bytes: u64,
+    pub configuration_bytes: u64,
+    pub other_scene_bytes: u64,
     pub metadata_bytes: u64,
+    pub framing_bytes: u64,
     pub transport_bytes: u64,
     pub object_count: usize,
     pub active_objects: usize,
@@ -87,7 +92,12 @@ pub struct EncodeReport {
     pub ceiling_horizontal_gain: f64,
     pub headroom_gain: f64,
     pub core_bytes: u64,
+    pub parameter_bytes: u64,
+    pub checkpoint_bytes: u64,
+    pub configuration_bytes: u64,
+    pub other_scene_bytes: u64,
     pub metadata_bytes: u64,
+    pub framing_bytes: u64,
     pub transport_bytes: u64,
     pub total_bytes: u64,
     pub duration_samples: u64,
@@ -114,9 +124,13 @@ struct TileJob {
 struct ProcessedTile {
     frame: SalsaSpatialFrame,
     core_bytes: u64,
-    metadata_bytes: u64,
     active_objects: usize,
     frames: usize,
+}
+
+fn checkpoint_due(start_sample: u64, program_start: u64) -> bool {
+    start_sample == program_start
+        || start_sample.saturating_sub(program_start) % CHECKPOINT_SAMPLES == 0
 }
 
 fn bitrate(bytes: u64, samples: u64) -> f64 {
@@ -283,48 +297,6 @@ fn make_config(
     config
 }
 
-fn tile_objects(source: &TileSource, knots: &[Vec<TrajectoryKnot>]) -> Vec<ObjectState> {
-    (0..source.object_count)
-        .map(|object| {
-            let position = position_at(&knots[object], source.start_sample as i64);
-            ObjectState {
-                id: object as u32 + 1,
-                position: position.map(|value| value as f32),
-                gain: 1.0,
-                enabled: source.is_active(0, object),
-                size: None,
-                spread: None,
-            }
-        })
-        .collect()
-}
-
-fn tile_events(source: &TileSource, knots: &[Vec<TrajectoryKnot>]) -> Vec<ObjectEvent> {
-    let mut events = Vec::new();
-    for event in &source.events {
-        if event.object >= knots.len() {
-            continue;
-        }
-        let sample = source.start_sample + event.offset.max(0) as u64;
-        let target_sample = sample + u64::from(event.transition.samples());
-        let position = position_at(&knots[event.object], target_sample as i64);
-        events.push(ObjectEvent {
-            offset: event.offset,
-            transition: event.transition,
-            state: ObjectState {
-                id: event.object as u32 + 1,
-                position: position.map(|value| value as f32),
-                gain: 1.0,
-                enabled: event.enabled,
-                size: None,
-                spread: None,
-            },
-        });
-    }
-    events.sort_by_key(|event| event.offset);
-    events
-}
-
 #[allow(clippy::too_many_arguments)]
 fn process_job(
     job: &TileJob,
@@ -336,7 +308,7 @@ fn process_job(
     previous_base: &[[i32; PARAM_BAND_COUNT]],
     previous_ell: &[[i32; PARAM_BAND_COUNT]],
     beta: f64,
-    snapshot_due: bool,
+    checkpoint_due: bool,
 ) -> Result<ProcessedTile> {
     let local_start = job.source.start_sample - program_start;
     let prefix = measurement.prefix_frames();
@@ -356,6 +328,8 @@ fn process_job(
         next.map(|job| (&job.source, &job.core)),
     );
     let measure_ms = measure_start.elapsed().as_secs_f64() * 1000.0;
+    // The checkpoint describes the state immediately before this tile.
+    let checkpoint = checkpoint_due.then(|| encoder.checkpoint(job.source.start_sample));
     let search_start = std::time::Instant::now();
     let search = search_tile(
         encoder,
@@ -368,26 +342,7 @@ fn process_job(
         beta,
     )?;
     let search_ms = search_start.elapsed().as_secs_f64() * 1000.0;
-    let mut tile: ParameterTile = search.tile;
-
-    if snapshot_due {
-        // TODO: include the snapshot bytes in the RD cost for this tile.  The
-        // periodic snapshot is currently added after the `D + beta*R` search so
-        // that the chosen tile's final predictor state can be serialized.
-        let mut clone = encoder.clone();
-        clone
-            .encode_tile(&tile)
-            .context("preparing the periodic snapshot")?;
-        let end = job.source.start_sample + job.source.frames as u64;
-        let mut snapshot = clone.snapshot(end);
-        snapshot.start_sample = end;
-        snapshot.positions = job
-            .core_knots
-            .iter()
-            .map(|knots| position_at(knots, end as i64))
-            .collect();
-        tile.snapshot = Some(snapshot);
-    }
+    let tile: ParameterTile = search.tile;
 
     let encode_start = std::time::Instant::now();
     let enhancement_bytes = encoder
@@ -398,7 +353,6 @@ fn process_job(
         "tile {}: measure {measure_ms:.1} ms, search {search_ms:.1} ms, encode {encode_ms:.1} ms",
         job.source.start_sample
     );
-    let snapshot = tile.snapshot.is_some();
     let active_objects = tile
         .anchors
         .first()
@@ -414,11 +368,8 @@ fn process_job(
             start_sample: job.source.start_sample,
             frames: job.source.frames,
             bytes: enhancement_bytes.clone(),
-            snapshot,
         },
-        objects: tile_objects(&job.source, &job.core_knots),
-        events: tile_events(&job.source, &job.core_knots),
-        snapshot,
+        checkpoint,
         parameters: None,
     };
 
@@ -437,10 +388,35 @@ fn process_job(
     Ok(ProcessedTile {
         frame,
         core_bytes,
-        metadata_bytes: enhancement_bytes.len() as u64,
         active_objects,
         frames: job.source.frames,
     })
+}
+
+fn tile_report(
+    start_sample: u64,
+    processed: &ProcessedTile,
+    sizes: &salsa_spatial::RecordSizes,
+    transport_bytes: u64,
+    object_count: usize,
+) -> TileReport {
+    let metadata_bytes = sizes.metadata_bytes();
+    let framing_bytes = transport_bytes
+        .saturating_sub(processed.core_bytes)
+        .saturating_sub(metadata_bytes);
+    TileReport {
+        start_sample,
+        core_bytes: processed.core_bytes,
+        parameter_bytes: sizes.parameter_bytes,
+        checkpoint_bytes: sizes.checkpoint_bytes,
+        configuration_bytes: sizes.configuration_bytes,
+        other_scene_bytes: sizes.other_scene_bytes,
+        metadata_bytes,
+        framing_bytes,
+        transport_bytes,
+        object_count,
+        active_objects: processed.active_objects,
+    }
 }
 
 /// Encode a DAMF master to a Salsa Ogg Opus stream.
@@ -511,7 +487,12 @@ pub fn encode_with_progress(
     let mut remaining = duration;
     let mut processed_samples = 0u64;
     let mut core_bytes = 0u64;
+    let mut parameter_bytes = 0u64;
+    let mut checkpoint_bytes = 0u64;
+    let mut configuration_bytes = 0u64;
+    let mut other_scene_bytes = 0u64;
     let mut metadata_bytes = 0u64;
+    let mut framing_bytes = 0u64;
     let mut transport_bytes = 0u64;
     let mut tile_reports = Vec::new();
     let mut peak_metadata_bitrate = 0.0f64;
@@ -540,6 +521,7 @@ pub fn encode_with_progress(
                 salsa_spatial::OggSalsaWriter::new(config, 0x5341_4c53, pre_skip)?;
             output.write_all(&header)?;
             transport_bytes += header.len() as u64;
+            framing_bytes += header.len() as u64;
             codec = Some(new_codec);
             writer = Some(new_writer);
         }
@@ -567,7 +549,7 @@ pub fn encode_with_progress(
         if let Some(previous) = pending.take() {
             let start_sample = previous.source.start_sample;
             let end_sample = start_sample + previous.source.frames as u64;
-            let due = end_sample % SNAPSHOT_SAMPLES == 0;
+            let due = checkpoint_due(start_sample, start);
             let processed = process_job(
                 &previous,
                 Some(&job),
@@ -580,22 +562,27 @@ pub fn encode_with_progress(
                 options.beta,
                 due,
             )?;
+            let mut sizes = salsa_spatial::RecordSizes::default();
             let transport = writer
                 .as_mut()
                 .expect("writer exists")
-                .write_frame(&processed.frame)?;
+                .write_frame_with_sizes(&processed.frame, &mut sizes)?;
             output.write_all(&transport)?;
 
-            let report = TileReport {
+            let report = tile_report(
                 start_sample,
-                core_bytes: processed.core_bytes,
-                metadata_bytes: processed.metadata_bytes,
-                transport_bytes: transport.len() as u64,
+                &processed,
+                &sizes,
+                transport.len() as u64,
                 object_count,
-                active_objects: processed.active_objects,
-            };
+            );
             core_bytes += report.core_bytes;
+            parameter_bytes += report.parameter_bytes;
+            checkpoint_bytes += report.checkpoint_bytes;
+            configuration_bytes += report.configuration_bytes;
+            other_scene_bytes += report.other_scene_bytes;
             metadata_bytes += report.metadata_bytes;
+            framing_bytes += report.framing_bytes;
             transport_bytes += report.transport_bytes;
             let tile_rate = bitrate(report.metadata_bytes, processed.frames as u64);
             peak_metadata_bitrate = peak_metadata_bitrate.max(tile_rate);
@@ -621,8 +608,7 @@ pub fn encode_with_progress(
 
     if let Some(last) = pending.take() {
         let start_sample = last.source.start_sample;
-        let end_sample = start_sample + last.source.frames as u64;
-        let due = end_sample % SNAPSHOT_SAMPLES == 0;
+        let due = checkpoint_due(start_sample, start);
         let processed = process_job(
             &last,
             None,
@@ -635,22 +621,27 @@ pub fn encode_with_progress(
             options.beta,
             due,
         )?;
+        let mut sizes = salsa_spatial::RecordSizes::default();
         let transport = writer
             .as_mut()
             .expect("writer exists")
-            .write_frame(&processed.frame)?;
+            .write_frame_with_sizes(&processed.frame, &mut sizes)?;
         output.write_all(&transport)?;
 
-        let report = TileReport {
+        let report = tile_report(
             start_sample,
-            core_bytes: processed.core_bytes,
-            metadata_bytes: processed.metadata_bytes,
-            transport_bytes: transport.len() as u64,
+            &processed,
+            &sizes,
+            transport.len() as u64,
             object_count,
-            active_objects: processed.active_objects,
-        };
+        );
         core_bytes += report.core_bytes;
+        parameter_bytes += report.parameter_bytes;
+        checkpoint_bytes += report.checkpoint_bytes;
+        configuration_bytes += report.configuration_bytes;
+        other_scene_bytes += report.other_scene_bytes;
         metadata_bytes += report.metadata_bytes;
+        framing_bytes += report.framing_bytes;
         transport_bytes += report.transport_bytes;
         let tile_rate = bitrate(report.metadata_bytes, processed.frames as u64);
         peak_metadata_bitrate = peak_metadata_bitrate.max(tile_rate);
@@ -662,11 +653,13 @@ pub fn encode_with_progress(
         let tail = writer.write_tail(&packet)?;
         output.write_all(&tail)?;
         transport_bytes += tail.len() as u64;
+        framing_bytes += tail.len() as u64;
     }
     if let Some(writer) = writer.as_mut() {
         let tail = writer.finish();
         output.write_all(&tail)?;
         transport_bytes += tail.len() as u64;
+        framing_bytes += tail.len() as u64;
     }
     output.flush()?;
     progress(EncodeProgress {
@@ -679,7 +672,12 @@ pub fn encode_with_progress(
         ceiling_horizontal_gain: options.ceiling_horizontal_gain,
         headroom_gain,
         core_bytes,
+        parameter_bytes,
+        checkpoint_bytes,
+        configuration_bytes,
+        other_scene_bytes,
         metadata_bytes,
+        framing_bytes,
         transport_bytes,
         total_bytes: transport_bytes,
         duration_samples: processed_samples,
@@ -698,6 +696,19 @@ pub fn encode_with_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checkpoint_schedule_follows_the_program_start() {
+        let start = 91;
+        assert!(checkpoint_due(start, start));
+        assert!(!checkpoint_due(start + 4_800, start));
+        assert!(checkpoint_due(start + CHECKPOINT_SAMPLES, start));
+        assert!(checkpoint_due(start + 2 * CHECKPOINT_SAMPLES, start));
+        assert!(!checkpoint_due(
+            start + 2 * CHECKPOINT_SAMPLES + 4_800,
+            start
+        ));
+    }
 
     #[test]
     fn bitrate_accounting_uses_every_byte_and_source_duration() {
@@ -729,7 +740,7 @@ mod tests {
                 .all(|frame| !frame.enhancement.bytes.is_empty())
         );
         assert_eq!(frames.last().unwrap().frames, 4_800);
-        assert!(frames.last().unwrap().snapshot);
+        assert!(frames.last().unwrap().checkpoint.is_some());
     }
 
     #[test]

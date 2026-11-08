@@ -33,11 +33,13 @@ pub use params::{
     ObjectPowerState, PowerModel, SceneParameters, TrajectoryAnchor, TrajectoryKnot,
 };
 pub use record::{
-    Fragment, GroupActivity, Reassembler, Record, TileRecord, decode_configuration,
-    encode_configuration, parse_records, write_record,
+    Fragment, Reassembler, Record, TileRecord, decode_configuration, encode_configuration,
+    parse_records, write_record,
 };
 pub use snapshot::SceneSnapshot;
-pub use stream::{MultistreamReader, MultistreamWriter, OggSalsaWriter, SalsaSpatialParser};
+pub use stream::{
+    MultistreamReader, MultistreamWriter, OggSalsaWriter, RecordSizes, SalsaSpatialParser,
+};
 
 /// Codec name used by reports and configuration.
 pub const CODEC_NAME: &str = "salsa-spatial";

@@ -66,11 +66,8 @@ fn main() -> Result<()> {
                 start_sample: start,
                 frames,
                 bytes: Vec::new(),
-                snapshot: start == 0,
             },
-            objects: Vec::new(),
-            events: Vec::new(),
-            snapshot: start == 0,
+            checkpoint: None,
             parameters: None,
         };
         bytes.extend(writer.write_frame(&frame)?);

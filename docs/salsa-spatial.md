@@ -604,7 +604,7 @@ closed prediction loop prevents quantization error from causing state drift.
 | Correlation pairs | Object indices, per-band magnitude, and wrapped phase innovations |
 | Core error | Predicted logarithmic error-power envelopes and unobservable flags |
 | Trajectories | Quantized piecewise-linear positions and sample-time updates |
-| Recovery state | Periodic complete predictor snapshots |
+| Recovery state | Periodic independent predictor and trajectory checkpoints |
 
 The activity state can suppress a negligible object contribution when the
 RD reduction justifies it. Suppression changes the estimated signal, not
@@ -637,7 +637,9 @@ them in reverse order. The decoder consumes symbols in forward order
 and performs the same probability updates.
 
 Entropy contexts reset at tile boundaries. Parameter predictors continue
-across tiles until replaced by a snapshot. The rate proxy uses the same
+across tiles until replaced by a checkpoint. A checkpoint has its own entropy
+stream and records the state immediately before its tile, so recovery does not
+depend on earlier tiles. The rate proxy uses the same
 integer frequencies as the coder:
 
 $$

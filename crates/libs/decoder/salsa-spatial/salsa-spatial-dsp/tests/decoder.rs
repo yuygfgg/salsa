@@ -1,10 +1,10 @@
-use objectaudio_ir::{ObjectEvent, ObjectState, Snapshot, SpatialDecoder, Transition};
+use objectaudio_ir::{ObjectState, Snapshot, SpatialDecoder};
 use opus::{Application, Bitrate, Channels, Encoder};
 use salsa_spatial::params::{ParameterAnchor, ParameterTile, SceneParameterEncoder};
 use salsa_spatial::{
     CoreErrorEnvelope, CorePacket, EnhancementTile, OPUS_FRAME_SAMPLES, PARAM_BAND_COUNT,
-    PowerModel, SAMPLE_RATE, SalsaSpatialFrame, SalsaSpatialStreamConfig, TILE_SAMPLES,
-    TrajectoryKnot,
+    PowerModel, SAMPLE_RATE, SalsaSpatialFrame, SalsaSpatialStreamConfig, SceneSnapshot,
+    TILE_SAMPLES, TrajectoryKnot,
 };
 use salsa_spatial_core_decoder::OpusBedDecoder;
 use salsa_spatial_dsp::SalsaSpatialDecoder;
@@ -127,7 +127,6 @@ fn parameter_tile(
     start: u64,
     frames: usize,
     scale_half_db: i32,
-    snapshot_at: Option<u64>,
 ) -> Vec<u8> {
     let base: Vec<[i32; PARAM_BAND_COUNT]> = (0..object_count)
         .map(|object| std::array::from_fn(|band| object as i32 * (band as i32 % 3)))
@@ -176,7 +175,7 @@ fn parameter_tile(
         })
         .collect();
 
-    let mut tile = ParameterTile {
+    let tile = ParameterTile {
         start_sample: start,
         frames,
         base: PowerModel {
@@ -186,11 +185,7 @@ fn parameter_tile(
         anchors,
         pairs: Vec::new(),
         trajectories,
-        snapshot: None,
     };
-    if let Some(snapshot_at) = snapshot_at {
-        tile.snapshot = Some(encoder.snapshot(snapshot_at));
-    }
     encoder.encode_tile(&tile).unwrap()
 }
 
@@ -198,8 +193,7 @@ fn frame(
     start_sample: u64,
     packets: Vec<CorePacket>,
     enhancement_bytes: Vec<u8>,
-    snapshot: bool,
-    events: Vec<ObjectEvent>,
+    checkpoint: Option<SceneSnapshot>,
 ) -> SalsaSpatialFrame {
     let frames = packets.len() * OPUS_FRAME_SAMPLES;
     SalsaSpatialFrame {
@@ -211,11 +205,8 @@ fn frame(
             start_sample,
             frames,
             bytes: enhancement_bytes,
-            snapshot,
         },
-        objects: Vec::new(),
-        events,
-        snapshot,
+        checkpoint,
         parameters: None,
     }
 }
@@ -261,13 +252,8 @@ fn decoder_produces_lfe_plus_objects_with_finite_audio() {
     let samples = test_bed(TILE_SAMPLES);
     let packets = core_packets(&samples);
     let mut encoder = SceneParameterEncoder::new(object_count);
-    let enhancement = parameter_tile(&mut encoder, object_count, 0, TILE_SAMPLES, 0, None);
-    let event = ObjectEvent {
-        offset: 240,
-        transition: Transition::Position(480),
-        state: ObjectState::new(10, [0.0, 0.0, 0.5]),
-    };
-    let input = frame(0, packets, enhancement, false, vec![event]);
+    let enhancement = parameter_tile(&mut encoder, object_count, 0, TILE_SAMPLES, 0);
+    let input = frame(0, packets, enhancement, None);
 
     let mut decoder = SalsaSpatialDecoder::new(config(object_count)).unwrap();
     assert_eq!(decoder.object_count(), object_count);
@@ -292,13 +278,7 @@ fn decoder_produces_lfe_plus_objects_with_finite_audio() {
     );
 
     // The compressed trajectory is authoritative for reconstruction and rendering.
-    let event = first
-        .events
-        .iter()
-        .find(|event| event.offset == 0)
-        .expect("trajectory ramp");
-    assert_eq!(event.transition, Transition::Position(TILE_SAMPLES as u32));
-    assert_eq!(event.state.id, 1);
+    assert_eq!(first.events.len(), object_count);
 
     // The LFE stream carries the 80 Hz test tone, so channel 0 is not silent.
     let lfe_energy: f64 = first
@@ -325,9 +305,9 @@ fn invalid_enhancement_falls_back_to_the_decoded_bed() {
     let reference = reference_bed(&packets, object_count);
 
     let mut encoder = SceneParameterEncoder::new(object_count);
-    let valid = parameter_tile(&mut encoder, object_count, 0, TILE_SAMPLES, 0, None);
+    let valid = parameter_tile(&mut encoder, object_count, 0, TILE_SAMPLES, 0);
     let truncated = valid[..valid.len() - 4].to_vec();
-    let input = frame(0, packets, truncated, false, Vec::new());
+    let input = frame(0, packets, truncated, None);
 
     let mut decoder = SalsaSpatialDecoder::new(config(object_count)).unwrap();
     let first = decoder.decode(&input).unwrap();
@@ -354,27 +334,21 @@ fn invalid_enhancement_falls_back_to_the_decoded_bed() {
 }
 
 #[test]
-fn missing_enhancement_stays_on_the_bed_until_a_snapshot() {
+fn missing_enhancement_stays_on_the_bed_until_a_checkpoint() {
     let object_count = 2;
     let samples = test_bed(TILE_SAMPLES);
     let packets = core_packets(&samples);
     let mut encoder = SceneParameterEncoder::new(object_count);
-    let valid = parameter_tile(&mut encoder, object_count, 0, TILE_SAMPLES, 0, None);
+    let valid = parameter_tile(&mut encoder, object_count, 0, TILE_SAMPLES, 0);
 
     let mut decoder = SalsaSpatialDecoder::new(config(object_count)).unwrap();
 
     // Initial valid tile.
-    let input = frame(0, packets.clone(), valid.clone(), false, Vec::new());
+    let input = frame(0, packets.clone(), valid.clone(), None);
     decoder.decode(&input).unwrap();
 
     // A missing enhancement packet switches to the decoded bed.
-    let missing = frame(
-        TILE_SAMPLES as u64,
-        packets.clone(),
-        Vec::new(),
-        false,
-        Vec::new(),
-    );
+    let missing = frame(TILE_SAMPLES as u64, packets.clone(), Vec::new(), None);
     let fallback = decoder.decode(&missing).unwrap();
     assert_eq!(fallback.snapshot, Snapshot::State);
     assert!(
@@ -390,22 +364,25 @@ fn missing_enhancement_stays_on_the_bed_until_a_snapshot() {
         2 * TILE_SAMPLES as u64,
         packets.clone(),
         valid.clone(),
-        false,
-        Vec::new(),
+        None,
     );
     decoder.decode(&stale).unwrap();
 
-    // A snapshot packet restores the object path.
+    // Advance the encoder through the tiles the decoder missed. The checkpoint
+    // describes the state immediately before the recovery tile.
+    for step in 1..3 {
+        parameter_tile(
+            &mut encoder,
+            object_count,
+            step * TILE_SAMPLES as u64,
+            TILE_SAMPLES,
+            0,
+        );
+    }
     let snapshot_at = 3 * TILE_SAMPLES as u64;
-    let snapshot_bytes = parameter_tile(
-        &mut encoder,
-        object_count,
-        snapshot_at,
-        TILE_SAMPLES,
-        0,
-        Some(snapshot_at),
-    );
-    let recovery = frame(snapshot_at, packets, snapshot_bytes, true, Vec::new());
+    let checkpoint = encoder.checkpoint(snapshot_at);
+    let snapshot_bytes = parameter_tile(&mut encoder, object_count, snapshot_at, TILE_SAMPLES, 0);
+    let recovery = frame(snapshot_at, packets, snapshot_bytes, Some(checkpoint));
     let recovered = decoder.decode(&recovery).unwrap();
     assert!(
         recovered
@@ -424,13 +401,13 @@ fn common_power_scale_leaves_the_object_output_unchanged() {
     let packets = core_packets(&samples);
 
     let mut encoder_a = SceneParameterEncoder::new(object_count);
-    let bytes_a = parameter_tile(&mut encoder_a, object_count, 0, TILE_SAMPLES, 0, None);
+    let bytes_a = parameter_tile(&mut encoder_a, object_count, 0, TILE_SAMPLES, 0);
     let mut encoder_b = SceneParameterEncoder::new(object_count);
     // +10 dB on every object and band is a common factor, so q is unchanged.
-    let bytes_b = parameter_tile(&mut encoder_b, object_count, 0, TILE_SAMPLES, 20, None);
+    let bytes_b = parameter_tile(&mut encoder_b, object_count, 0, TILE_SAMPLES, 20);
 
-    let frame_a = frame(0, packets.clone(), bytes_a, false, Vec::new());
-    let frame_b = frame(0, packets, bytes_b, false, Vec::new());
+    let frame_a = frame(0, packets.clone(), bytes_a, None);
+    let frame_b = frame(0, packets, bytes_b, None);
 
     let mut decoder_a = SalsaSpatialDecoder::new(config(object_count)).unwrap();
     let mut decoder_b = SalsaSpatialDecoder::new(config(object_count)).unwrap();
@@ -480,9 +457,9 @@ fn rendered_timeline_follows_compressed_trajectories_across_buffers() {
     let mut emitted = 0usize;
     for index in 0..6 {
         let start = (index * TILE_SAMPLES) as u64;
-        let bytes = parameter_tile(&mut parameters, object_count, start, TILE_SAMPLES, 0, None);
+        let bytes = parameter_tile(&mut parameters, object_count, start, TILE_SAMPLES, 0);
         let output = decoder
-            .decode(&frame(start, packets.clone(), bytes, false, Vec::new()))
+            .decode(&frame(start, packets.clone(), bytes, None))
             .unwrap();
         let payload = output.to_payload();
         if let Some(scene) = scene.as_mut() {
@@ -513,10 +490,10 @@ fn source_time_origin_does_not_change_reconstruction() {
     let mut outputs = Vec::new();
     for origin in [0, 480_000] {
         let mut encoder = SceneParameterEncoder::new(1);
-        let bytes = parameter_tile(&mut encoder, 1, origin, TILE_SAMPLES, 0, None);
+        let bytes = parameter_tile(&mut encoder, 1, origin, TILE_SAMPLES, 0);
         let mut decoder = SalsaSpatialDecoder::new(config(1)).unwrap();
         let first = decoder
-            .decode(&frame(origin, packets.clone(), bytes, false, Vec::new()))
+            .decode(&frame(origin, packets.clone(), bytes, None))
             .unwrap();
         let mut output = collect(vec![Vec::new(); 2], &first);
         if let Some(tail) = decoder.finish().unwrap() {

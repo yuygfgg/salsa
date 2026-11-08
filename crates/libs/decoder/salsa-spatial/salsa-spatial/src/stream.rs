@@ -16,9 +16,28 @@ use crate::frame::{
 use crate::multistream;
 use crate::ogg::OggOpusReader;
 use crate::opus_ext;
-use crate::record::{
-    Fragment, GroupActivity, Reassembler, Record, TileRecord, parse_records, write_record,
-};
+use crate::record::{Fragment, Reassembler, Record, TileRecord, parse_records, write_record};
+use crate::snapshot::SceneSnapshot;
+
+/// Serialized record bytes written with one tile, by owner.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RecordSizes {
+    pub parameter_bytes: u64,
+    pub checkpoint_bytes: u64,
+    pub configuration_bytes: u64,
+    pub other_scene_bytes: u64,
+    pub fragment_wrapper_bytes: u64,
+}
+
+impl RecordSizes {
+    /// Serialized record bytes, excluding core payloads and fragment wrappers.
+    pub fn metadata_bytes(&self) -> u64 {
+        self.parameter_bytes
+            + self.checkpoint_bytes
+            + self.configuration_bytes
+            + self.other_scene_bytes
+    }
+}
 
 /// Attaches versioned Salsa records to the center substream of assembled
 /// multistream packets.
@@ -47,6 +66,16 @@ impl MultistreamWriter {
     /// substream. The returned packets have the metadata extension appended to
     /// the center substream and are ready for container framing.
     pub fn write_frame(&mut self, frame: &SalsaSpatialFrame) -> Result<Vec<MultistreamPacket>> {
+        let mut sizes = RecordSizes::default();
+        self.write_frame_with_sizes(frame, &mut sizes)
+    }
+
+    /// Attach records and report the exact serialized byte ownership.
+    pub fn write_frame_with_sizes(
+        &mut self,
+        frame: &SalsaSpatialFrame,
+        sizes: &mut RecordSizes,
+    ) -> Result<Vec<MultistreamPacket>> {
         if frame.packets.is_empty() {
             return Ok(Vec::new());
         }
@@ -62,40 +91,29 @@ impl MultistreamWriter {
         let resend = match self.last_config_sample {
             None => true,
             Some(sample) => {
-                frame.snapshot
+                frame.checkpoint.is_some()
                     && frame.start_sample.saturating_sub(sample) >= u64::from(SAMPLE_RATE)
             }
         };
         let mut bundle = Vec::new();
         if resend {
+            let start = bundle.len();
             bundle.extend(write_record(&Record::Configuration(self.config.clone()))?);
+            sizes.configuration_bytes += (bundle.len() - start) as u64;
             self.last_config_sample = Some(frame.start_sample);
         }
+        if let Some(checkpoint) = &frame.checkpoint {
+            let start = bundle.len();
+            bundle.extend(write_record(&Record::Checkpoint(checkpoint.clone()))?);
+            sizes.checkpoint_bytes += (bundle.len() - start) as u64;
+        }
+        let start = bundle.len();
         bundle.extend(write_record(&Record::Tile(TileRecord {
             start_sample: frame.start_sample,
             frames: frame.frames as u32,
-            snapshot: frame.snapshot,
             enhancement: frame.enhancement.clone(),
-            objects: frame.objects.clone(),
-            events: frame.events.clone(),
         }))?);
-        if !frame.objects.is_empty() {
-            let active_groups: Vec<u32> = self
-                .config
-                .observation_groups
-                .iter()
-                .map(|group| group.group_id)
-                .collect();
-            bundle.extend(write_record(&Record::GroupActivity(GroupActivity {
-                start_sample: frame.start_sample,
-                active_groups,
-                active_rank: frame
-                    .enhancement
-                    .bytes
-                    .first()
-                    .map_or(0, |value| u32::from(*value)),
-            }))?);
-        }
+        sizes.parameter_bytes += (bundle.len() - start) as u64;
 
         let center = self.config.codec.center_substream_index()?;
         let fragments = Fragment::split(
@@ -104,6 +122,8 @@ impl MultistreamWriter {
             &bundle,
             frame.packets.len(),
         )?;
+        let fragment_len: usize = fragments.iter().map(Vec::len).sum();
+        sizes.fragment_wrapper_bytes += fragment_len.saturating_sub(bundle.len()) as u64;
         let mut out = Vec::with_capacity(frame.packets.len());
         for (packet, fragment) in frame.packets.iter().zip(fragments) {
             let mut packet = packet.clone();
@@ -136,6 +156,7 @@ pub struct MultistreamReader {
     reassembler: Reassembler,
     packets: Vec<MultistreamPacket>,
     tile: Option<TileRecord>,
+    checkpoint: Option<SceneSnapshot>,
     next_sample: u64,
 }
 
@@ -222,6 +243,7 @@ impl MultistreamReader {
         self.reassembler.reset();
         self.packets.clear();
         self.tile = None;
+        self.checkpoint = None;
         self.next_sample = 0;
     }
 
@@ -246,7 +268,7 @@ impl MultistreamReader {
                     self.config = Some(config);
                 }
                 Record::Tile(tile) => self.tile = Some(tile),
-                Record::GroupActivity(_) => {}
+                Record::Checkpoint(checkpoint) => self.checkpoint = Some(checkpoint),
             }
         }
         Ok(())
@@ -260,21 +282,14 @@ impl MultistreamReader {
             .map_or(0, |binding| binding.stream_count);
         let fallback_frames = packets.len() * OPUS_FRAME_SAMPLES;
         let tile = self.tile.take();
-        let (start_sample, frame_count, enhancement, objects, events, snapshot) = match tile {
+        let (start_sample, frame_count, enhancement) = match tile {
             Some(tile) => {
                 let frames = if tile.frames > 0 {
                     tile.frames as usize
                 } else {
                     fallback_frames
                 };
-                (
-                    tile.start_sample,
-                    frames,
-                    tile.enhancement,
-                    tile.objects,
-                    tile.events,
-                    tile.snapshot,
-                )
+                (tile.start_sample, frames, tile.enhancement)
             }
             None => (
                 self.next_sample,
@@ -283,12 +298,24 @@ impl MultistreamReader {
                     start_sample: self.next_sample,
                     frames: fallback_frames,
                     bytes: Vec::new(),
-                    snapshot: false,
                 },
-                Vec::new(),
-                Vec::new(),
-                false,
             ),
+        };
+        if self
+            .checkpoint
+            .as_ref()
+            .is_some_and(|checkpoint| checkpoint.start_sample < start_sample)
+        {
+            self.checkpoint = None;
+        }
+        let checkpoint = if self
+            .checkpoint
+            .as_ref()
+            .is_some_and(|checkpoint| checkpoint.start_sample == start_sample)
+        {
+            self.checkpoint.take()
+        } else {
+            None
         };
         let _ = streams;
         self.next_sample = start_sample.saturating_add(frame_count as u64);
@@ -298,9 +325,7 @@ impl MultistreamReader {
             frames: frame_count,
             packets,
             enhancement,
-            objects,
-            events,
-            snapshot,
+            checkpoint,
             parameters: None,
         });
         Ok(())
@@ -396,7 +421,17 @@ impl OggSalsaWriter {
 
     /// Encode one tile and return the container bytes.
     pub fn write_frame(&mut self, frame: &SalsaSpatialFrame) -> Result<Vec<u8>> {
-        let packets = self.writer.write_frame(frame)?;
+        let mut sizes = RecordSizes::default();
+        self.write_frame_with_sizes(frame, &mut sizes)
+    }
+
+    /// Encode one tile and report serialized record byte ownership.
+    pub fn write_frame_with_sizes(
+        &mut self,
+        frame: &SalsaSpatialFrame,
+        sizes: &mut RecordSizes,
+    ) -> Result<Vec<u8>> {
+        let packets = self.writer.write_frame_with_sizes(frame, sizes)?;
         let mut out = Vec::new();
         for packet in packets {
             let packed = multistream::pack_owned(&packet.substreams)?;
@@ -444,7 +479,7 @@ mod tests {
         )
     }
 
-    fn frame(start_sample: u64, snapshot: bool) -> SalsaSpatialFrame {
+    fn frame(start_sample: u64, checkpoint: bool) -> SalsaSpatialFrame {
         SalsaSpatialFrame {
             sample_rate: SAMPLE_RATE,
             start_sample,
@@ -454,11 +489,11 @@ mod tests {
                 start_sample,
                 frames: TILE_PACKETS * OPUS_FRAME_SAMPLES,
                 bytes: vec![1, 2, 3],
-                snapshot,
             },
-            objects: Vec::new(),
-            events: Vec::new(),
-            snapshot,
+            checkpoint: checkpoint.then(|| SceneSnapshot {
+                start_sample,
+                ..SceneSnapshot::default()
+            }),
             parameters: None,
         }
     }
@@ -482,6 +517,8 @@ mod tests {
             assert_eq!(frame.start_sample, index as u64 * 4800);
             assert_eq!(frame.enhancement.bytes, vec![1, 2, 3]);
         }
+        assert!(parsed[0].checkpoint.is_some());
+        assert!(parsed[1].checkpoint.is_none());
     }
 
     #[test]

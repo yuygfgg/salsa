@@ -9,7 +9,7 @@
 //! * disjoint bounded correlation pairs,
 //! * seven scene-level core-error envelopes with an unobservable-band mask,
 //! * piecewise-linear object trajectories, and
-//! * one-second snapshots of the complete predictor state.
+//! * independent one-second checkpoints of the complete predictor state.
 //!
 //! All predictor state is integer-valued. The half-dB state grid is used for
 //! log powers; error envelopes use a 2 dB grid. Floating-point DCT analysis,
@@ -24,12 +24,12 @@
 //!    envelope,
 //! 3. the disjoint correlation pair list and per-band coefficient
 //!    innovations,
-//! 4. per-object trajectory updates,
-//! 5. an optional complete snapshot.
+//! 4. per-object trajectory updates.
 //!
 //! Every symbol is coded with the adaptive contexts in [`EntropyContexts`],
 //! which are reset at the start of each 100 ms tile. Predictors persist across
-//! tiles and are replaced by a snapshot when one is present.
+//! tiles. A checkpoint is serialized independently with its own reset entropy
+//! contexts and describes the state immediately *before* its tile.
 
 use crate::constants::{
     CORE_CHANNEL_COUNT, DCT_COEFF_COUNT, HALF_DB_SCALE, MAX_OBJECTS, PARAM_BAND_COUNT,
@@ -46,6 +46,8 @@ const MIN_ERROR_LOG: i32 = -160;
 const MAX_ERROR_LOG: i32 = 160;
 const POSITION_STEPS: f64 = 4095.0;
 const MAX_TRAJECTORY_KNOTS: usize = 100_000;
+/// Payload magic for an independently coded checkpoint.
+pub const CHECKPOINT_MAGIC: u32 = 0x5343_4B50; // "SCKP"
 
 /// One piecewise-linear trajectory knot.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -299,7 +301,6 @@ pub struct ParameterTile {
     /// Per-object piecewise-linear trajectory knots in absolute sample
     /// positions.
     pub trajectories: Vec<Vec<TrajectoryKnot>>,
-    pub snapshot: Option<SceneSnapshot>,
 }
 
 #[derive(Debug, Clone)]
@@ -332,12 +333,11 @@ impl ScenePredictor {
         }
     }
 
-    fn snapshot_state(&self, start_sample: u64, positions: Vec<[f64; 3]>) -> SceneSnapshot {
+    fn snapshot_state(&self, start_sample: u64) -> SceneSnapshot {
         SceneSnapshot {
             start_sample,
             object_count: self.object_count,
             active: self.active.clone(),
-            positions,
             trajectories: self.trajectories.clone(),
             power: ObjectPowerState {
                 active: self.active.clone(),
@@ -357,7 +357,10 @@ impl ScenePredictor {
 
     fn apply_snapshot(&mut self, snapshot: &SceneSnapshot) -> Result<()> {
         if snapshot.object_count != self.object_count {
-            return Err(SpatialError::Parameter("snapshot object count mismatch"));
+            return Err(SpatialError::Parameter("checkpoint object count mismatch"));
+        }
+        if snapshot.object_count > MAX_OBJECTS || snapshot.active != snapshot.power.active {
+            return Err(SpatialError::Parameter("invalid checkpoint activity state"));
         }
         if snapshot.active.len() != self.object_count
             || snapshot.power.active.len() != self.object_count
@@ -367,7 +370,7 @@ impl ScenePredictor {
             || snapshot.correction_half_db.len() != self.object_count
             || snapshot.trajectories.len() != self.object_count
         {
-            return Err(SpatialError::Parameter("snapshot state length mismatch"));
+            return Err(SpatialError::Parameter("checkpoint state length mismatch"));
         }
         self.active = snapshot.active.clone();
         self.ell_half_db = snapshot.power.ell_half_db.clone();
@@ -409,15 +412,14 @@ impl SceneParameterEncoder {
         self.contexts = EntropyContexts::new(self.object_count);
     }
 
-    /// Current reusable predictor snapshot (for diagnostics and snapshots).
+    /// State immediately before the tile that starts at `start_sample`.
+    pub fn checkpoint(&self, start_sample: u64) -> SceneSnapshot {
+        self.snapshot(start_sample)
+    }
+
+    /// Current reusable predictor snapshot (for diagnostics and checkpoints).
     pub fn snapshot(&self, start_sample: u64) -> SceneSnapshot {
-        let positions = self
-            .predictor
-            .trajectories
-            .iter()
-            .map(|knots| knots.last().map_or([0.0; 3], |knot| knot.position))
-            .collect();
-        self.predictor.snapshot_state(start_sample, positions)
+        self.predictor.snapshot_state(start_sample)
     }
 
     /// Encode one tile to rANS bytes.
@@ -452,14 +454,6 @@ impl SceneParameterEncoder {
         encode_power(&mut encoder, &mut contexts, &mut state, &dct, tile)?;
         encode_correlations(&mut encoder, &mut contexts, &mut state, tile)?;
         encode_trajectories(&mut encoder, &mut contexts, &mut state, tile)?;
-
-        match &tile.snapshot {
-            Some(snapshot) => {
-                encoder.encode(&mut contexts.snapshot_flag, 1)?;
-                encode_snapshot(&mut encoder, &mut contexts, snapshot)?;
-            }
-            None => encoder.encode(&mut contexts.snapshot_flag, 0)?,
-        }
 
         let bits = encoder.estimated_total_bits();
         let bytes = if build_bytes {
@@ -498,14 +492,26 @@ impl SceneParameterDecoder {
         self.contexts = EntropyContexts::new(self.object_count);
     }
 
+    /// State immediately before the tile that starts at `start_sample`.
+    pub fn checkpoint(&self, start_sample: u64) -> SceneSnapshot {
+        self.snapshot(start_sample)
+    }
+
     pub fn snapshot(&self, start_sample: u64) -> SceneSnapshot {
-        let positions = self
-            .predictor
-            .trajectories
-            .iter()
-            .map(|knots| knots.last().map_or([0.0; 3], |knot| knot.position))
-            .collect();
-        self.predictor.snapshot_state(start_sample, positions)
+        self.predictor.snapshot_state(start_sample)
+    }
+
+    /// Validate and install a checkpoint as the committed predictor state.
+    ///
+    /// The checkpoint replaces the integer predictors and trajectory state but
+    /// leaves the per-tile entropy contexts untouched; tile contexts always
+    /// reset at the start of a tile anyway. A checkpoint that fails validation
+    /// leaves the previous state untouched.
+    pub fn install_checkpoint(&mut self, checkpoint: &SceneSnapshot) -> Result<()> {
+        let mut predictor = self.predictor.clone();
+        predictor.apply_snapshot(checkpoint)?;
+        self.predictor = predictor;
+        Ok(())
     }
 
     /// Decode one tile.
@@ -530,7 +536,6 @@ impl SceneParameterDecoder {
         frames: usize,
         bytes: &[u8],
     ) -> Result<(ParameterTile, ScenePredictor, EntropyContexts)> {
-        let object_count = self.object_count;
         let mut state = self.predictor.clone();
         let mut contexts = self.contexts.clone();
         contexts.reset_tile();
@@ -542,21 +547,7 @@ impl SceneParameterDecoder {
         let trajectories =
             decode_trajectories(&mut decoder, &mut contexts, &mut state, start_sample)?;
 
-        let snapshot = if decoder.decode(&mut contexts.snapshot_flag)? == 1 {
-            let snapshot = decode_snapshot(&mut decoder, &mut contexts, object_count)?;
-            Some(snapshot)
-        } else {
-            None
-        };
-
         decoder.finish()?;
-
-        if let Some(snapshot) = &snapshot {
-            if snapshot.object_count != object_count {
-                return Err(SpatialError::Parameter("snapshot object count mismatch"));
-            }
-            state.apply_snapshot(snapshot)?;
-        }
 
         let tile = ParameterTile {
             start_sample,
@@ -568,7 +559,6 @@ impl SceneParameterDecoder {
             anchors,
             pairs,
             trajectories,
-            snapshot,
         };
         Ok((tile, state, contexts))
     }
@@ -1330,7 +1320,7 @@ fn read_raw_signed(
     Ok(zigzag_decode(value))
 }
 
-fn encode_snapshot(
+fn encode_checkpoint_state(
     encoder: &mut EntropyEncoder,
     contexts: &mut EntropyContexts,
     snapshot: &SceneSnapshot,
@@ -1345,14 +1335,6 @@ fn encode_snapshot(
     for &active in &snapshot.active {
         encoder.encode(&mut contexts.snapshot_flag, usize::from(active))?;
     }
-    raw_unsigned(encoder, contexts, snapshot.positions.len() as u64)?;
-    for position in &snapshot.positions {
-        for axis in 0..3 {
-            let code = quantize_position(axis, position[axis]);
-            encode_bits(encoder, &mut contexts.snapshot_bits, u32::from(code), 12)?;
-        }
-    }
-
     raw_unsigned(encoder, contexts, snapshot.trajectories.len() as u64)?;
     for knots in &snapshot.trajectories {
         raw_unsigned(encoder, contexts, knots.len() as u64)?;
@@ -1435,10 +1417,9 @@ fn encode_snapshot(
     Ok(())
 }
 
-fn decode_snapshot(
+fn decode_checkpoint_state(
     decoder: &mut EntropyDecoder<'_>,
     contexts: &mut EntropyContexts,
-    object_count: usize,
 ) -> Result<SceneSnapshot> {
     let reset_predictors = decoder.decode(&mut contexts.snapshot_flag)? == 1;
     let start_sample = read_raw_unsigned(decoder, contexts)?;
@@ -1454,20 +1435,6 @@ fn decode_snapshot(
             return Err(SpatialError::Parameter("invalid snapshot activity flag"));
         }
         active.push(value == 1);
-    }
-
-    let position_count = read_raw_unsigned(decoder, contexts)? as usize;
-    if position_count > MAX_OBJECTS {
-        return Err(SpatialError::Parameter("snapshot position count too large"));
-    }
-    let mut positions = Vec::with_capacity(position_count);
-    for _ in 0..position_count {
-        let mut position = [0.0f64; 3];
-        for axis in 0..3 {
-            let code = decode_bits(decoder, &mut contexts.snapshot_bits, 12)? as u16;
-            position[axis] = dequantize_position(axis, code);
-        }
-        positions.push(position);
     }
 
     let trajectory_count = read_raw_unsigned(decoder, contexts)? as usize;
@@ -1604,15 +1571,10 @@ fn decode_snapshot(
         correlation_pairs.push(CorrelationPair { a, b, rho });
     }
 
-    if snapshot_objects != object_count {
-        return Err(SpatialError::Parameter("snapshot object count mismatch"));
-    }
-
     Ok(SceneSnapshot {
         start_sample,
         object_count: snapshot_objects,
         active: active.clone(),
-        positions,
         trajectories,
         power: ObjectPowerState {
             active,
@@ -1628,6 +1590,34 @@ fn decode_snapshot(
         correlation_pairs,
         reset_predictors,
     })
+}
+
+/// Serialize a checkpoint with independent, freshly reset entropy contexts.
+pub fn encode_checkpoint(checkpoint: &SceneSnapshot) -> Result<Vec<u8>> {
+    if checkpoint.object_count > MAX_OBJECTS {
+        return Err(SpatialError::Parameter("checkpoint object count too large"));
+    }
+    let mut contexts = EntropyContexts::new(checkpoint.object_count);
+    contexts.reset_tile();
+    let mut encoder = EntropyEncoder::new();
+    encoder.encode_unsigned(u64::from(CHECKPOINT_MAGIC), &mut contexts.snapshot_bits)?;
+    encode_checkpoint_state(&mut encoder, &mut contexts, checkpoint)?;
+    Ok(encoder.finish())
+}
+
+/// Parse a complete checkpoint. The record is rejected unless its rANS stream
+/// ends exactly at the payload boundary.
+pub fn decode_checkpoint(bytes: &[u8]) -> Result<SceneSnapshot> {
+    let mut contexts = EntropyContexts::new(1);
+    contexts.reset_tile();
+    let mut decoder = EntropyDecoder::new(bytes)?;
+    let magic = decoder.decode_unsigned(&mut contexts.snapshot_bits)?;
+    if magic != u64::from(CHECKPOINT_MAGIC) {
+        return Err(SpatialError::Syntax("bad checkpoint magic"));
+    }
+    let checkpoint = decode_checkpoint_state(&mut decoder, &mut contexts)?;
+    decoder.finish()?;
+    Ok(checkpoint)
 }
 
 #[cfg(test)]
@@ -1649,7 +1639,7 @@ mod tests {
         CoreErrorEnvelope::default()
     }
 
-    fn make_tile(object_count: usize, start_sample: u64, with_snapshot: bool) -> ParameterTile {
+    fn make_tile(object_count: usize, start_sample: u64) -> ParameterTile {
         let mut base = [[0i32; PARAM_BAND_COUNT]; 4];
         for object in 0..4 {
             for band in 0..PARAM_BAND_COUNT {
@@ -1731,27 +1721,6 @@ mod tests {
             })
             .collect();
 
-        let snapshot = with_snapshot.then(|| SceneSnapshot {
-            start_sample: start_sample + 4800,
-            object_count,
-            active: vec![true; object_count],
-            positions: vec![[on_grid(0.0), on_grid(0.0), on_z_grid(0.5)]; object_count],
-            trajectories: trajectories.clone(),
-            power: ObjectPowerState {
-                active: vec![true; object_count],
-                ell_half_db: vec![[10; PARAM_BAND_COUNT]; object_count],
-            },
-            power_model: PowerModel {
-                base_half_db: vec![[5; PARAM_BAND_COUNT]; object_count],
-                fast_half_db: vec![[1; DCT_COEFF_COUNT]; object_count],
-            },
-            correction_half_db: vec![[2; PARAM_BAND_COUNT]; object_count],
-            error_log: [[3; PARAM_BAND_COUNT]; CORE_CHANNEL_COUNT],
-            error_unobservable: [[false; PARAM_BAND_COUNT]; CORE_CHANNEL_COUNT],
-            correlation_pairs: pairs.clone(),
-            reset_predictors: false,
-        });
-
         ParameterTile {
             start_sample,
             frames: 4800,
@@ -1762,7 +1731,6 @@ mod tests {
             anchors,
             pairs,
             trajectories,
-            snapshot,
         }
     }
 
@@ -1782,7 +1750,7 @@ mod tests {
 
     #[test]
     fn tile_roundtrips_through_encoder_and_decoder() {
-        let tile = make_tile(4, 0, false);
+        let tile = make_tile(4, 0);
         let mut encoder = SceneParameterEncoder::new(4);
         let bytes = encoder.encode_tile(&tile).unwrap();
         let mut decoder = SceneParameterDecoder::new(4);
@@ -1819,35 +1787,62 @@ mod tests {
         for (original, reconstructed) in tile.trajectories.iter().zip(&decoded.trajectories) {
             assert_eq!(original, reconstructed);
         }
-        assert!(decoded.snapshot.is_none());
     }
 
     #[test]
-    fn snapshot_roundtrips_and_replaces_state() {
-        let tile = make_tile(4, 0, true);
+    fn checkpoint_roundtrips_and_restores_predictor_state() {
+        let first = make_tile(4, 0);
+        let second = make_tile(4, 4800);
+        let mut encoder = SceneParameterEncoder::new(4);
+        let first_bytes = encoder.encode_tile(&first).unwrap();
+        let checkpoint = encoder.checkpoint(second.start_sample);
+        let second_bytes = encoder.encode_tile(&second).unwrap();
+
+        let encoded = encode_checkpoint(&checkpoint).unwrap();
+        let decoded_checkpoint = decode_checkpoint(&encoded).unwrap();
+        assert_eq!(decoded_checkpoint, checkpoint);
+
+        // Continuous decoding establishes the reference state.
+        let mut continuous = SceneParameterDecoder::new(4);
+        continuous
+            .decode_tile(first.start_sample, first.frames, &first_bytes)
+            .unwrap();
+        let expected = continuous
+            .decode_tile(second.start_sample, second.frames, &second_bytes)
+            .unwrap();
+
+        // A fresh decoder installs only the independent checkpoint and still
+        // decodes the following tile identically.
+        let mut fresh = SceneParameterDecoder::new(4);
+        fresh.install_checkpoint(&decoded_checkpoint).unwrap();
+        let actual = fresh
+            .decode_tile(second.start_sample, second.frames, &second_bytes)
+            .unwrap();
+        assert_eq!(actual.anchors, expected.anchors);
+        assert_eq!(actual.pairs, expected.pairs);
+        assert_eq!(actual.trajectories, expected.trajectories);
+    }
+
+    #[test]
+    fn invalid_checkpoint_leaves_predictor_state_untouched() {
+        let tile = make_tile(4, 0);
         let mut encoder = SceneParameterEncoder::new(4);
         let bytes = encoder.encode_tile(&tile).unwrap();
         let mut decoder = SceneParameterDecoder::new(4);
-        let decoded = decoder
+        let checkpoint = decoder.checkpoint(4800);
+        let mut invalid = checkpoint.clone();
+        invalid.trajectories.pop();
+        assert!(decoder.install_checkpoint(&invalid).is_err());
+        assert_eq!(decoder.checkpoint(4800), checkpoint);
+        // The committed decoder still accepts the real tile.
+        decoder
             .decode_tile(tile.start_sample, tile.frames, &bytes)
             .unwrap();
-        let snapshot = decoded.snapshot.expect("snapshot present");
-        let original = tile.snapshot.unwrap();
-        assert_eq!(snapshot.start_sample, original.start_sample);
-        assert_eq!(snapshot.object_count, original.object_count);
-        assert_eq!(snapshot.active, original.active);
-        assert_eq!(snapshot.power, original.power);
-        assert_eq!(snapshot.power_model, original.power_model);
-        assert_eq!(snapshot.correction_half_db, original.correction_half_db);
-        assert_eq!(snapshot.error_log, original.error_log);
-        assert_eq!(snapshot.correlation_pairs, original.correlation_pairs);
-        assert_eq!(snapshot.trajectories, original.trajectories);
-        assert_eq!(snapshot.positions, original.positions);
     }
 
     #[test]
     fn estimate_does_not_mutate_committed_state() {
-        let tile = make_tile(4, 0, false);
+        let tile = make_tile(4, 0);
         let mut encoder = SceneParameterEncoder::new(4);
         let first = encoder.estimate_tile_bits(&tile).unwrap();
         let second = encoder.estimate_tile_bits(&tile).unwrap();
@@ -1861,8 +1856,8 @@ mod tests {
 
     #[test]
     fn state_predicts_across_tiles() {
-        let first = make_tile(4, 0, false);
-        let second = make_tile(4, 4800, false);
+        let first = make_tile(4, 0);
+        let second = make_tile(4, 4800);
         let mut encoder = SceneParameterEncoder::new(4);
         let mut decoder = SceneParameterDecoder::new(4);
 
@@ -1888,7 +1883,7 @@ mod tests {
 
     #[test]
     fn truncated_tile_is_rejected_without_state_change() {
-        let tile = make_tile(4, 0, false);
+        let tile = make_tile(4, 0);
         let mut encoder = SceneParameterEncoder::new(4);
         let bytes = encoder.encode_tile(&tile).unwrap();
 

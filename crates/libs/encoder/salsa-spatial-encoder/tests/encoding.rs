@@ -93,6 +93,20 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
     assert_eq!(report.duration_samples, duration as u64);
     let serial = std::fs::read(&options.output).unwrap();
     assert_eq!(report.total_bytes, serial.len() as u64);
+    assert_eq!(
+        report.core_bytes + report.metadata_bytes + report.framing_bytes,
+        report.transport_bytes
+    );
+    assert_eq!(
+        report.parameter_bytes
+            + report.checkpoint_bytes
+            + report.configuration_bytes
+            + report.other_scene_bytes,
+        report.metadata_bytes
+    );
+    assert!(report.parameter_bytes > 0);
+    assert!(report.checkpoint_bytes > 0);
+    assert!(report.configuration_bytes > 0);
 
     options.output = path.join("parallel.ogg");
     updates.clear();
@@ -118,6 +132,7 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
     frames.extend(parser.flush().unwrap());
     assert_eq!(frames.len(), 2);
     assert_eq!(frames[0].start_sample, options.reference_start);
+    assert!(frames[0].checkpoint.is_some());
     assert_eq!(frames[1].frames, 137);
     assert_eq!(
         frames.iter().map(|frame| frame.frames).sum::<usize>(),

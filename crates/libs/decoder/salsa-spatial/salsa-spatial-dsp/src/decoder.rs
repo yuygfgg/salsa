@@ -28,10 +28,11 @@
 //!
 //! A missing or invalid enhancement packet never changes committed predictor
 //! state. The decoder keeps playing the decoded bed mapped onto the object
-//! channels, and only returns to the object path on a valid snapshot. The
-//! transition is crossfaded over one 20 ms packet. Seeking is supported in
-//! principle by [`SalsaSpatialDecoder::reset`] followed by core/filterbank
-//! preroll from a snapshot; this decoder does not itself implement a seek.
+//! channels, and only returns to the object path after a valid checkpoint
+//! restores the predictor chain. The transition is crossfaded over one 20 ms
+//! packet. Seeking is supported in principle by [`SalsaSpatialDecoder::reset`]
+//! followed by a checkpoint install and core/filterbank preroll; this decoder
+//! does not itself implement a seek.
 
 use num_complex::Complex;
 use objectaudio_ir::{
@@ -42,7 +43,7 @@ use salsa_spatial::params::{ParameterAnchor, ParameterTile, SceneParameterDecode
 use salsa_spatial::{
     BaseFold, CORE_CHANNEL_COUNT, FFT_BINS, HALF_DB_SCALE, HOP_SAMPLES, LFE_CHANNEL_INDEX,
     MAX_OBJECTS, PARAM_BAND_COUNT, REGULARIZATION_LAMBDA, SAMPLE_RATE, SalsaSpatialFrame,
-    SalsaSpatialStreamConfig, TILE_SAMPLES, TrajectoryKnot,
+    SalsaSpatialStreamConfig, SceneSnapshot, TILE_SAMPLES, TrajectoryKnot,
 };
 use salsa_spatial_core_decoder::{CoreDecodeError, OpusBedDecoder};
 use thiserror::Error;
@@ -153,7 +154,7 @@ pub struct SalsaSpatialDecoder {
 
     mode: Option<OutputMode>,
     transition: Option<ModeTransition>,
-    awaiting_snapshot: bool,
+    awaiting_checkpoint: bool,
 
     pending: Vec<Vec<f32>>,
     output_emitted: u64,
@@ -222,7 +223,7 @@ impl SalsaSpatialDecoder {
             scene,
             mode: None,
             transition: None,
-            awaiting_snapshot: false,
+            awaiting_checkpoint: false,
             pending,
             output_emitted: 0,
             finished: false,
@@ -232,9 +233,9 @@ impl SalsaSpatialDecoder {
     /// Drop all transport and DSP state.
     ///
     /// This restores the decoder to its initial state but keeps the stream
-    /// configuration. Seeking must start from a parameter snapshot and then
-    /// preroll the Opus streams and filterbank; this method only provides the
-    /// clean state boundary.
+    /// configuration. Seeking must start from a checkpoint and then preroll the
+    /// Opus streams and filterbank; this method only provides the clean state
+    /// boundary.
     pub fn reset(&mut self) {
         self.core.reset();
         self.parameters.reset();
@@ -251,7 +252,7 @@ impl SalsaSpatialDecoder {
         self.trajectory_history.clear();
         self.mode = None;
         self.transition = None;
-        self.awaiting_snapshot = false;
+        self.awaiting_checkpoint = true;
         self.scene = self.initial_scene.clone();
         self.pending = (0..=self.object_count).map(|_| Vec::new()).collect();
         self.output_emitted = 0;
@@ -330,15 +331,47 @@ impl SalsaSpatialDecoder {
         }
         self.discard_lookahead(&mut decoded);
 
+        // Install an independent checkpoint before decoding its tile. The
+        // checkpoint has its own entropy stream, so it never depends on the
+        // tile payload or on earlier tiles. Installation is atomic: a partially
+        // validated checkpoint leaves the committed predictor untouched.
+        let checkpoint_installed = match frame.checkpoint.as_ref() {
+            Some(checkpoint) if checkpoint.start_sample == frame.start_sample => {
+                match self.parameters.install_checkpoint(checkpoint) {
+                    Ok(()) => {
+                        self.install_checkpoint_trajectories(checkpoint);
+                        self.awaiting_checkpoint = false;
+                        true
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "salsa-spatial: rejecting checkpoint at {}: {error}",
+                            frame.start_sample
+                        );
+                        self.awaiting_checkpoint = true;
+                        false
+                    }
+                }
+            }
+            Some(checkpoint) => {
+                log::warn!(
+                    "salsa-spatial: checkpoint at {} does not match tile {}",
+                    checkpoint.start_sample,
+                    frame.start_sample
+                );
+                false
+            }
+            None => false,
+        };
+
         // Decode the enhancement before touching the timeline. `decode_tile`
         // validates the complete tile and commits predictor state only on
-        // success, so a bad packet cannot corrupt later prediction. After a
-        // missing packet, work on a clone and only commit a tile that actually
-        // carries a snapshot; this keeps the stale predictors untouched.
-        // `frame.parameters` exposes only band-averaged `SceneParameters`,
-        // which cannot drive the per-band covariance. Prefer the raw
-        // enhancement bytes, then any center-padding fragments, and otherwise
-        // fall back to the decoded bed.
+        // success, so a bad packet cannot corrupt later prediction. A stale
+        // decoder stays on the bed until a complete checkpoint restores the
+        // predictor chain. `frame.parameters` exposes only band-averaged
+        // `SceneParameters`, which cannot drive the per-band covariance.
+        // Prefer the raw enhancement bytes, then any center-padding fragments,
+        // and otherwise fall back to the decoded bed.
         let mut enhancement = if frame.enhancement.bytes.is_empty() {
             extension_bytes
         } else {
@@ -350,26 +383,10 @@ impl SalsaSpatialDecoder {
             // Unknown or unsupported required models select ordinary base
             // playback instead of substituting a different panner.
         } else if enhancement.is_empty() {
-            self.awaiting_snapshot = true;
-        } else if self.awaiting_snapshot {
-            let mut candidate = self.parameters.clone();
-            match candidate.decode_tile(frame.start_sample, frame.frames, &enhancement) {
-                Ok(tile) if tile.snapshot.is_some() => {
-                    self.parameters = candidate;
-                    self.awaiting_snapshot = false;
-                    decoded_tile = Some(tile);
-                }
-                Ok(_) => {
-                    // Valid normal tile, but the predictor state is still the
-                    // one from before the gap. Keep playing the bed.
-                }
-                Err(error) => {
-                    log::warn!(
-                        "salsa-spatial: rejecting snapshot recovery for tile {}: {error}",
-                        frame.start_sample
-                    );
-                }
-            }
+            self.awaiting_checkpoint = true;
+        } else if self.awaiting_checkpoint && !checkpoint_installed {
+            // A delta tile cannot be trusted against predictor state from
+            // before the gap. Keep playing the bed until a checkpoint arrives.
         } else {
             match self
                 .parameters
@@ -381,7 +398,7 @@ impl SalsaSpatialDecoder {
                         "salsa-spatial: rejecting enhancement for tile {}: {error}",
                         frame.start_sample
                     );
-                    self.awaiting_snapshot = true;
+                    self.awaiting_checkpoint = true;
                 }
             }
         }
@@ -444,6 +461,14 @@ impl SalsaSpatialDecoder {
             channel.drain(0..drop);
         }
         self.lookahead_remaining -= drop;
+    }
+
+    fn install_checkpoint_trajectories(&mut self, checkpoint: &SceneSnapshot) {
+        for (index, knots) in checkpoint.trajectories.iter().enumerate() {
+            if index < self.current_trajectories.len() && !knots.is_empty() {
+                self.current_trajectories[index] = knots.clone();
+            }
+        }
     }
 
     fn set_mode(&mut self, start_sample: u64, target: OutputMode) {

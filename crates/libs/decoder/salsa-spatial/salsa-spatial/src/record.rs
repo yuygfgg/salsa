@@ -5,7 +5,7 @@
 //! type, tile start sample, fragment index/count and total length before any
 //! byte is accepted. Unknown optional records can be skipped by length.
 
-use objectaudio_ir::{ObjectEvent, ObjectState, Transition};
+use objectaudio_ir::ObjectState;
 
 use crate::constants::{MAX_OBJECTS, MAX_RECORD_BYTES, MAX_RECORD_FRAGMENTS};
 use crate::descriptor::{
@@ -15,6 +15,8 @@ use crate::descriptor::{
 use crate::error::{Result, SpatialError};
 use crate::frame::{EnhancementTile, SalsaSpatialStreamConfig};
 use crate::params::TrajectoryKnot;
+use crate::params::{decode_checkpoint, encode_checkpoint};
+use crate::snapshot::SceneSnapshot;
 
 /// Magic for the outer fragment wrapper.
 pub const RECORD_MAGIC: u32 = 0x534C_5352; // "SLSR"
@@ -29,33 +31,24 @@ pub const TILE_MAGIC: u32 = 0x5354_494C; // "STIL"
 
 pub const RECORD_CONFIG: u8 = 1;
 pub const RECORD_TILE: u8 = 2;
-pub const RECORD_GROUP_ACTIVITY: u8 = 3;
+pub const RECORD_CHECKPOINT: u8 = 3;
 
 /// One typed record inside a reassembled bundle.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Record {
     Configuration(SalsaSpatialStreamConfig),
     Tile(TileRecord),
-    GroupActivity(GroupActivity),
+    Checkpoint(SceneSnapshot),
 }
 
-/// One 100 ms tile record.
+/// One 100 ms tile record. Scene and activity state live in the parameter
+/// stream and checkpoint records; the tile carries only the current parameter
+/// payload.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TileRecord {
     pub start_sample: u64,
     pub frames: u32,
-    pub snapshot: bool,
     pub enhancement: EnhancementTile,
-    pub objects: Vec<ObjectState>,
-    pub events: Vec<ObjectEvent>,
-}
-
-/// Per-tile activity within fixed group capacity.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct GroupActivity {
-    pub start_sample: u64,
-    pub active_groups: Vec<u32>,
-    pub active_rank: u32,
 }
 
 /// Serialize one typed record.
@@ -65,21 +58,8 @@ pub fn write_record(record: &Record) -> Result<Vec<u8>> {
             config.validate()?;
             (RECORD_CONFIG, 0u8, encode_configuration(config)?)
         }
-        Record::Tile(tile) => (
-            RECORD_TILE,
-            if tile.snapshot { 1 } else { 0 },
-            encode_tile(tile)?,
-        ),
-        Record::GroupActivity(activity) => {
-            let mut writer = Writer::new();
-            writer.u64(activity.start_sample);
-            writer.ulen(activity.active_groups.len() as u32)?;
-            for group in &activity.active_groups {
-                writer.u32(*group);
-            }
-            writer.u32(activity.active_rank);
-            (RECORD_GROUP_ACTIVITY, 0, writer.out)
-        }
+        Record::Tile(tile) => (RECORD_TILE, 0u8, encode_tile(tile)?),
+        Record::Checkpoint(checkpoint) => (RECORD_CHECKPOINT, 0u8, encode_checkpoint(checkpoint)?),
     };
     let mut writer = Writer::new();
     writer.u32(RECORD_ENTRY_MAGIC);
@@ -107,7 +87,7 @@ pub fn parse_records(bytes: &[u8]) -> Result<Vec<Record>> {
             return Err(SpatialError::UnsupportedVersion { version });
         }
         let tag = reader.u8()?;
-        let flags = reader.u8()?;
+        let _flags = reader.u8()?;
         let length = reader.u32()? as usize;
         if length > MAX_RECORD_BYTES {
             return Err(SpatialError::InvalidValue("record payload is too large"));
@@ -115,25 +95,8 @@ pub fn parse_records(bytes: &[u8]) -> Result<Vec<Record>> {
         let payload = reader.bytes(length)?;
         let record = match tag {
             RECORD_CONFIG => Record::Configuration(decode_configuration(payload)?),
-            RECORD_TILE => Record::Tile(decode_tile(payload, flags & 1 != 0)?),
-            RECORD_GROUP_ACTIVITY => {
-                let mut reader = Reader::new(payload);
-                let start_sample = reader.u64()?;
-                let count = reader.len()?;
-                if count > 256 {
-                    return Err(SpatialError::InvalidValue("too many active groups"));
-                }
-                let mut active_groups = Vec::with_capacity(count);
-                for _ in 0..count {
-                    active_groups.push(reader.u32()?);
-                }
-                let active_rank = reader.u32()?;
-                Record::GroupActivity(GroupActivity {
-                    start_sample,
-                    active_groups,
-                    active_rank,
-                })
-            }
+            RECORD_TILE => Record::Tile(decode_tile(payload)?),
+            RECORD_CHECKPOINT => Record::Checkpoint(decode_checkpoint(payload)?),
             // Unknown optional record types are skipped by length.
             _ => continue,
         };
@@ -412,31 +375,11 @@ pub fn encode_tile(tile: &TileRecord) -> Result<Vec<u8>> {
     writer.u32(tile.enhancement.frames as u32);
     writer.u32(tile.enhancement.bytes.len() as u32);
     writer.bytes(&tile.enhancement.bytes);
-    writer.u32(tile.objects.len() as u32);
-    for object in &tile.objects {
-        encode_object(&mut writer, object);
-    }
-    writer.u32(tile.events.len() as u32);
-    for event in &tile.events {
-        writer.i64(event.offset);
-        match event.transition {
-            Transition::Step => writer.u8(0),
-            Transition::Position(samples) => {
-                writer.u8(1);
-                writer.u32(samples);
-            }
-            Transition::All(samples) => {
-                writer.u8(2);
-                writer.u32(samples);
-            }
-        }
-        encode_object(&mut writer, &event.state);
-    }
     Ok(writer.out)
 }
 
 /// Decode one tile record payload.
-pub fn decode_tile(bytes: &[u8], snapshot: bool) -> Result<TileRecord> {
+pub fn decode_tile(bytes: &[u8]) -> Result<TileRecord> {
     let mut reader = Reader::new(bytes);
     if reader.u32()? != TILE_MAGIC {
         return Err(SpatialError::Syntax("bad tile magic"));
@@ -452,40 +395,17 @@ pub fn decode_tile(bytes: &[u8], snapshot: bool) -> Result<TileRecord> {
         ));
     }
     let enhancement_bytes = reader.bytes(byte_count)?.to_vec();
-    let object_count = reader.bounded_count(1)?;
-    let mut objects = Vec::with_capacity(object_count);
-    for _ in 0..object_count {
-        objects.push(decode_object(&mut reader)?);
-    }
-    let event_count = reader.bounded_count(1)?;
-    let mut events = Vec::with_capacity(event_count);
-    for _ in 0..event_count {
-        let offset = reader.i64()?;
-        let transition = match reader.u8()? {
-            0 => Transition::Step,
-            1 => Transition::Position(reader.u32()?),
-            2 => Transition::All(reader.u32()?),
-            _ => return Err(SpatialError::InvalidValue("invalid scene transition")),
-        };
-        let state = decode_object(&mut reader)?;
-        events.push(ObjectEvent {
-            offset,
-            transition,
-            state,
-        });
+    if reader.remaining() != 0 {
+        return Err(SpatialError::Syntax("trailing tile payload bytes"));
     }
     Ok(TileRecord {
         start_sample,
         frames,
-        snapshot,
         enhancement: EnhancementTile {
             start_sample: enhancement_start_sample,
             frames: enhancement_frames as usize,
             bytes: enhancement_bytes,
-            snapshot,
         },
-        objects,
-        events,
     })
 }
 
@@ -732,24 +652,12 @@ impl Writer {
         self.out.extend_from_slice(&value.to_be_bytes());
     }
 
-    fn i64(&mut self, value: i64) {
-        self.out.extend_from_slice(&value.to_be_bytes());
-    }
-
     fn f32(&mut self, value: f32) {
         self.u32(value.to_bits());
     }
 
     fn f64(&mut self, value: f64) {
         self.u64(value.to_bits());
-    }
-
-    fn ulen(&mut self, value: u32) -> Result<()> {
-        if value as usize > MAX_OBJECTS * 1024 {
-            return Err(SpatialError::InvalidValue("length prefix is too large"));
-        }
-        self.u32(value);
-        Ok(())
     }
 
     fn bytes(&mut self, value: &[u8]) {
@@ -779,10 +687,6 @@ impl<'a> Reader<'a> {
         Ok(count)
     }
 
-    fn len(&mut self) -> Result<usize> {
-        self.bounded_count(1)
-    }
-
     fn u8(&mut self) -> Result<u8> {
         let value = *self
             .data
@@ -807,10 +711,6 @@ impl<'a> Reader<'a> {
         Ok(u64::from_be_bytes([
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
-    }
-
-    fn i64(&mut self) -> Result<i64> {
-        Ok(self.u64()? as i64)
     }
 
     fn f32(&mut self) -> Result<f32> {
@@ -906,28 +806,52 @@ mod tests {
         assert_eq!(bytes, old);
     }
 
+    fn sample_checkpoint() -> SceneSnapshot {
+        let config = sample_config();
+        let object_count = config.object_count;
+        SceneSnapshot {
+            start_sample: 0,
+            object_count,
+            active: vec![true; object_count],
+            trajectories: vec![
+                vec![TrajectoryKnot {
+                    sample: 0,
+                    position: [1.0, -1.0, 1.0],
+                }];
+                object_count
+            ],
+            power: crate::params::ObjectPowerState {
+                active: vec![true; object_count],
+                ell_half_db: vec![[3; crate::constants::PARAM_BAND_COUNT]; object_count],
+            },
+            power_model: crate::params::PowerModel {
+                base_half_db: vec![[2; crate::constants::PARAM_BAND_COUNT]; object_count],
+                fast_half_db: vec![[1; crate::constants::DCT_COEFF_COUNT]; object_count],
+            },
+            correction_half_db: vec![[0; crate::constants::PARAM_BAND_COUNT]; object_count],
+            error_log: [[0; crate::constants::PARAM_BAND_COUNT];
+                crate::constants::CORE_CHANNEL_COUNT],
+            error_unobservable: [[false; crate::constants::PARAM_BAND_COUNT];
+                crate::constants::CORE_CHANNEL_COUNT],
+            correlation_pairs: Vec::new(),
+            reset_predictors: false,
+        }
+    }
+
     #[test]
     fn record_round_trips() {
         let config = sample_config();
         let records = vec![
-            Record::Configuration(config.clone()),
+            Record::Configuration(config),
+            Record::Checkpoint(sample_checkpoint()),
             Record::Tile(TileRecord {
                 start_sample: 0,
                 frames: 4800,
-                snapshot: true,
                 enhancement: EnhancementTile {
                     start_sample: 0,
                     frames: 4800,
                     bytes: vec![1, 2, 3],
-                    snapshot: true,
                 },
-                objects: config.initial_objects.clone(),
-                events: vec![],
-            }),
-            Record::GroupActivity(GroupActivity {
-                start_sample: 0,
-                active_groups: vec![1],
-                active_rank: 2,
             }),
         ];
         let mut bundle = Vec::new();
@@ -935,6 +859,14 @@ mod tests {
             bundle.extend(write_record(record).unwrap());
         }
         assert_eq!(parse_records(&bundle).unwrap(), records);
+    }
+
+    #[test]
+    fn checkpoint_payload_is_independent_of_tile_state() {
+        let checkpoint = sample_checkpoint();
+        let bytes = encode_checkpoint(&checkpoint).unwrap();
+        assert_eq!(decode_checkpoint(&bytes).unwrap(), checkpoint);
+        assert!(decode_checkpoint(&bytes[..bytes.len() - 1]).is_err());
     }
 
     #[test]

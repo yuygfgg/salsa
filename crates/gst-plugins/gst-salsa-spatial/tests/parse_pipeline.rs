@@ -37,11 +37,8 @@ fn stream_bytes() -> Vec<u8> {
             start_sample: 0,
             frames: 4_800,
             bytes: Vec::new(),
-            snapshot: false,
         },
-        objects: config.initial_objects.clone(),
-        events: Vec::new(),
-        snapshot: false,
+        checkpoint: None,
         parameters: None,
     };
     let (mut writer, mut bytes) = OggSalsaWriter::new(config.clone(), 1, 120).expect("writer");

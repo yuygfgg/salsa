@@ -1,21 +1,21 @@
-//! One-second independent parameter and scene snapshot.
+//! Independent state checkpoint for one tile boundary.
 //!
-//! A snapshot is self-contained: it carries the complete scene description
-//! (positions, trajectories and activity) together with every predictor that
-//! the next tile needs (power base, fast coefficients, sparse corrections,
-//! core-error envelope state, and correlation pairs). Decoding may resume from
-//! a snapshot without any earlier parameter packets.
+//! A checkpoint is self-contained: it carries the committed integer predictors
+//! (activity, power base, fast coefficients, sparse corrections, core-error
+//! envelope state, and correlation pairs) together with the trajectory state
+//! needed by the next tile. It is coded in its own record with fresh entropy
+//! contexts, so parsing it never depends on an earlier tile or on the current
+//! tile's parameter payload.
 
 use crate::constants::{CORE_CHANNEL_COUNT, PARAM_BAND_COUNT};
 use crate::params::{CorrelationPair, ObjectPowerState, PowerModel, TrajectoryKnot};
 
-/// Complete state needed to start decoding after a snapshot.
+/// Complete state needed to start decoding at a tile boundary.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SceneSnapshot {
     pub start_sample: u64,
     pub object_count: usize,
     pub active: Vec<bool>,
-    pub positions: Vec<[f64; 3]>,
     pub trajectories: Vec<Vec<TrajectoryKnot>>,
     pub power: ObjectPowerState,
     pub power_model: PowerModel,
@@ -32,14 +32,11 @@ pub struct SceneSnapshot {
 }
 
 impl SceneSnapshot {
-    /// The decoded position for `object`, falling back to the last trajectory
-    /// knot when an explicit position list entry is unavailable.
+    /// Position at the end of the retained trajectory for `object`.
     pub fn position(&self, object: usize) -> Option<[f64; 3]> {
-        self.positions.get(object).copied().or_else(|| {
-            self.trajectories
-                .get(object)
-                .and_then(|knots| knots.last())
-                .map(|knot| knot.position)
-        })
+        self.trajectories
+            .get(object)
+            .and_then(|knots| knots.last())
+            .map(|knot| knot.position)
     }
 }

@@ -1,6 +1,6 @@
 //! Parsed frame types for one codec tile and one Opus multistream packet.
 
-use objectaudio_ir::{ObjectEvent, ObjectState};
+use objectaudio_ir::ObjectState;
 
 use crate::descriptor::{
     BaseFold, CodecBinding, CorePannerConfig, ModelAlgorithm, ObservationGroup,
@@ -8,6 +8,7 @@ use crate::descriptor::{
 };
 use crate::error::{Result, SpatialError};
 use crate::params::{SceneParameters, TrajectoryKnot};
+use crate::snapshot::SceneSnapshot;
 
 /// One Opus multistream packet plus the elementary substream packets it was
 /// assembled from.
@@ -81,7 +82,6 @@ pub struct EnhancementTile {
     pub start_sample: u64,
     pub frames: usize,
     pub bytes: Vec<u8>,
-    pub snapshot: bool,
 }
 
 /// Complete stream configuration carried by the private records.
@@ -234,9 +234,8 @@ pub struct SalsaSpatialFrame {
     /// One multistream packet per 20 ms interval.
     pub packets: Vec<MultistreamPacket>,
     pub enhancement: EnhancementTile,
-    pub objects: Vec<ObjectState>,
-    pub events: Vec<ObjectEvent>,
-    pub snapshot: bool,
+    /// Complete predictor and trajectory state immediately before this tile.
+    pub checkpoint: Option<SceneSnapshot>,
     /// Decoded parameter anchors in this tile, when the frame was produced by
     /// the shared parameter decoder rather than the raw parser.
     pub parameters: Option<Vec<SceneParameters>>,

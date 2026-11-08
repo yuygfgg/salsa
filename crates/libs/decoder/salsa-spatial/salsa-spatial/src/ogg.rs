@@ -312,11 +312,13 @@ impl OggOpusReader {
 
             let eos = page.header_type & EOS != 0;
             for data in emitted {
-                if self.head.is_none() {
+                if data.starts_with(OPUS_HEAD) {
                     self.head = Some(OpusHead::decode(&data)?);
                 } else if !self.saw_tags && data.starts_with(OPUS_TAGS) {
                     self.saw_tags = true;
                 } else if !data.is_empty() {
+                    // A midstream join or seek starts on an audio page without
+                    // OpusHead/OpusTags. The caller supplies the binding.
                     packets.push(OggPacket {
                         data,
                         granule_position: page.granule,

@@ -43,7 +43,16 @@ impl Default for State {
 
 impl State {
     fn reset_stream(&mut self) {
+        let binding = self
+            .parser
+            .reader()
+            .binding()
+            .cloned()
+            .or_else(|| self.config.as_ref().map(|config| config.codec.clone()));
         self.parser = SalsaSpatialParser::new();
+        if let Some(binding) = binding {
+            self.parser.set_binding(binding);
+        }
         if let Some(decoder) = self.decoder.as_mut() {
             decoder.reset();
         }
@@ -138,7 +147,11 @@ impl SalsaSpatialDec {
         };
         if let Some(tail) = tail {
             self.ensure_output_caps(tail.sample_rate as i32, tail.pcm.channel_count())?;
-            self.push_spatial(tail, -1)?;
+            if let Err(error) = self.push_spatial(tail, -1)
+                && !matches!(error, gst::FlowError::Eos | gst::FlowError::Flushing)
+            {
+                return Err(error);
+            }
         }
         Ok(())
     }

@@ -1,7 +1,9 @@
 //! `salsaspatialparse`: GstBaseParse framing for complete salsa-spatial tiles.
 
-use std::sync::Mutex;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
+use gst::format::{ClockTime, GenericFormattedValue};
 use gst::glib;
 use gst::prelude::*;
 use gst_base::prelude::*;
@@ -16,6 +18,60 @@ use salsa_spatial::{
 };
 
 use crate::framing;
+
+/// Decoder preroll inserted before the requested seek target. It covers the
+/// Opus 80 ms recommendation plus the local analysis window.
+const SEEK_PREROLL_SAMPLES: u64 = 9_600;
+
+/// One byte-addressed tile in the parse index.
+#[derive(Debug, Clone, Copy)]
+struct IndexEntry {
+    offset: u64,
+    checkpoint: bool,
+}
+
+/// Seek index and the pending request that produced the current segment.
+#[derive(Default)]
+struct SeekState {
+    /// Tile start sample -> first complete packet offset. Checkpoint tiles are
+    /// the only valid recovery points after a seek.
+    index: BTreeMap<u64, IndexEntry>,
+    /// Absolute source sample presented as stream time zero.
+    origin: Option<u64>,
+    /// Original target time when a seek was snapped back to a checkpoint.
+    pending_segment_start: Option<ClockTime>,
+    seek_probe: Option<gst::PadProbeId>,
+    segment_probe: Option<gst::PadProbeId>,
+}
+
+impl SeekState {
+    fn reset(&mut self, clear_index: bool) {
+        if clear_index {
+            self.index.clear();
+            self.origin = None;
+        }
+        self.pending_segment_start = None;
+    }
+
+    fn record_tile(&mut self, frame: &SalsaSpatialFrame, offset: u64) {
+        self.origin.get_or_insert(frame.start_sample);
+        let entry = self.index.entry(frame.start_sample).or_insert(IndexEntry {
+            offset,
+            checkpoint: frame.checkpoint.is_some(),
+        });
+        if frame.checkpoint.is_some() {
+            entry.checkpoint = true;
+        }
+    }
+
+    /// Latest checkpoint at or before `sample`, with its byte offset.
+    fn checkpoint_at(&self, sample: u64) -> Option<(u64, u64)> {
+        self.index
+            .range(..=sample)
+            .rev()
+            .find_map(|(sample, entry)| entry.checkpoint.then_some((*sample, entry.offset)))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CapsInfo {
@@ -45,14 +101,21 @@ impl State {
         self.caps = None;
     }
 
+    /// Drop transport state after a flushing seek but keep the recovery index
+    /// and the codec binding recovered before the seek.
     fn reset_parser(&mut self) {
+        let binding = self.parser.reader().binding().cloned();
         self.parser = SalsaSpatialParser::new();
+        if let Some(binding) = binding {
+            self.parser.set_binding(binding);
+        }
     }
 }
 
 #[derive(Default)]
 pub struct SalsaSpatialParse {
     state: Mutex<Box<State>>,
+    seek: Arc<Mutex<SeekState>>,
 }
 
 impl SalsaSpatialParse {
@@ -72,13 +135,131 @@ impl SalsaSpatialParse {
             .map(|frame| frame.sample_rate)
             .filter(|rate| *rate > 0)
             .unwrap_or(SAMPLE_RATE);
-        let object_count = if default_objects > 0 {
-            default_objects
-        } else {
-            frames.map(|frame| frame.objects.len()).unwrap_or_default()
-        };
-        CapsInfo { rate, object_count }
+        CapsInfo {
+            rate,
+            object_count: default_objects,
+        }
     }
+
+    fn install_seek_probes(&self, pad: &gst::Pad) {
+        let seek = self.seek.clone();
+        let seek_probe = pad.add_probe(gst::PadProbeType::EVENT_UPSTREAM, move |_, info| {
+            let Some(event) = info.event_mut() else {
+                return gst::PadProbeReturn::Ok;
+            };
+            if event.type_() != gst::EventType::Seek {
+                return gst::PadProbeReturn::Ok;
+            }
+
+            let replacement = {
+                let gst::EventView::Seek(seek_event) = event.view() else {
+                    return gst::PadProbeReturn::Ok;
+                };
+                let (rate, flags, start_type, start, stop_type, stop) = seek_event.get();
+                if (rate - 1.0).abs() > f64::EPSILON || start_type != gst::SeekType::Set {
+                    return gst::PadProbeReturn::Ok;
+                }
+                let GenericFormattedValue::Time(Some(start_time)) = start else {
+                    return gst::PadProbeReturn::Ok;
+                };
+                let GenericFormattedValue::Time(stop_time) = stop else {
+                    return gst::PadProbeReturn::Ok;
+                };
+
+                let mut state = salsa_gst::lock(&seek);
+                let origin = state.origin.unwrap_or(0);
+                let target = origin.saturating_add(samples_from_time(start_time, SAMPLE_RATE));
+                let preroll_target = target.saturating_sub(SEEK_PREROLL_SAMPLES).max(origin);
+                let Some((checkpoint, _)) = state
+                    .checkpoint_at(preroll_target)
+                    .or_else(|| state.checkpoint_at(target))
+                else {
+                    state.pending_segment_start = None;
+                    return gst::PadProbeReturn::Ok;
+                };
+                if checkpoint >= target {
+                    state.pending_segment_start = None;
+                    return gst::PadProbeReturn::Ok;
+                }
+
+                state.pending_segment_start = Some(start_time);
+                Some(
+                    gst::event::Seek::builder(
+                        rate,
+                        flags,
+                        gst::SeekType::Set,
+                        time_from_samples(checkpoint - origin, SAMPLE_RATE),
+                        stop_type,
+                        stop_time,
+                    )
+                    .seqnum(event.seqnum())
+                    .build(),
+                )
+            };
+
+            if let Some(new_event) = replacement {
+                *event = new_event;
+            }
+            gst::PadProbeReturn::Ok
+        });
+
+        let seek = self.seek.clone();
+        let segment_probe = pad.add_probe(gst::PadProbeType::EVENT_DOWNSTREAM, move |_, info| {
+            let Some(event) = info.event_mut() else {
+                return gst::PadProbeReturn::Ok;
+            };
+            if event.type_() != gst::EventType::Segment {
+                return gst::PadProbeReturn::Ok;
+            }
+
+            let replacement = {
+                let target = salsa_gst::lock(&seek).pending_segment_start.take();
+                let Some(target) = target else {
+                    return gst::PadProbeReturn::Ok;
+                };
+                let gst::EventView::Segment(segment) = event.view() else {
+                    return gst::PadProbeReturn::Ok;
+                };
+                let mut segment = segment.segment().clone();
+                let start = match segment.start() {
+                    GenericFormattedValue::Time(Some(start)) => start,
+                    _ => return gst::PadProbeReturn::Ok,
+                };
+                let stop = match segment.stop() {
+                    GenericFormattedValue::Time(stop) => stop,
+                    _ => None,
+                };
+                if target < start || stop.is_some_and(|stop| target > stop) {
+                    return gst::PadProbeReturn::Ok;
+                }
+                segment.set_start(target);
+                segment.set_time(target);
+                segment.set_position(target);
+                Some(
+                    gst::event::Segment::builder(&segment)
+                        .seqnum(event.seqnum())
+                        .build(),
+                )
+            };
+
+            if let Some(new_event) = replacement {
+                *event = new_event;
+            }
+            gst::PadProbeReturn::Ok
+        });
+
+        let mut seek = salsa_gst::lock(&self.seek);
+        seek.seek_probe = seek_probe;
+        seek.segment_probe = segment_probe;
+    }
+}
+
+fn samples_from_time(time: ClockTime, rate: u32) -> u64 {
+    (u128::from(time.nseconds()) * u128::from(rate) / 1_000_000_000) as u64
+}
+
+fn time_from_samples(sample: u64, rate: u32) -> ClockTime {
+    ClockTime::from_nseconds((u128::from(sample) * 1_000_000_000 / u128::from(rate)) as u64)
 }
 
 #[glib::object_subclass]
@@ -139,10 +320,31 @@ impl BaseParseImpl for SalsaSpatialParse {
         object.set_min_frame_size(1);
         object.set_has_timing_info(true);
         salsa_gst::lock(&self.state).reset();
+        {
+            let mut seek = salsa_gst::lock(&self.seek);
+            seek.reset(true);
+            seek.seek_probe = None;
+            seek.segment_probe = None;
+        }
+        let pad = object.src_pad();
+        self.install_seek_probes(pad);
         Ok(())
     }
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
+        let borrowed = self.obj();
+        let object: &super::SalsaSpatialParse = borrowed.as_ref();
+        let pad = object.src_pad();
+        {
+            let mut seek = salsa_gst::lock(&self.seek);
+            if let Some(probe) = seek.seek_probe.take() {
+                pad.remove_probe(probe);
+            }
+            if let Some(probe) = seek.segment_probe.take() {
+                pad.remove_probe(probe);
+            }
+            seek.reset(true);
+        }
         salsa_gst::lock(&self.state).reset();
         Ok(())
     }
@@ -165,25 +367,27 @@ impl BaseParseImpl for SalsaSpatialParse {
         let mut state = salsa_gst::lock(&self.state);
         state.reset();
         state.sink_object_count = object_count;
+        drop(state);
+        salsa_gst::lock(&self.seek).reset(true);
         Ok(())
     }
 
     fn handle_frame(
         &self,
-        frame: gst_base::BaseParseFrame,
+        mut frame: gst_base::BaseParseFrame,
     ) -> Result<(gst::FlowSuccess, u32), gst::FlowError> {
         let Some(buffer) = frame.buffer() else {
             return Ok((gst::FlowSuccess::Ok, 0));
         };
         if buffer.flags().contains(gst::BufferFlags::DISCONT) {
-            // Keep the already negotiated stream caps across a seek; only the
-            // transport parser state is dropped.
+            // Keep the already negotiated stream caps and recovery index across
+            // a seek; only the transport parser state is dropped.
             salsa_gst::lock(&self.state).reset_parser();
         }
         let borrowed = self.obj();
         let object: &super::SalsaSpatialParse = borrowed.as_ref();
         let draining = object.is_draining();
-        let (size, parsed, info, changed, has_audio) = {
+        let (size, parsed, info, changed, has_audio, output) = {
             let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
             if map.is_empty() {
                 return Ok((gst::FlowSuccess::Ok, 0));
@@ -208,19 +412,47 @@ impl BaseParseImpl for SalsaSpatialParse {
                 );
                 gst::FlowError::Error
             })?;
-            let default_objects = state
-                .parser
-                .config()
-                .map(|config| config.object_count)
-                .filter(|count| *count > 0)
-                .unwrap_or(state.sink_object_count);
-            let info = self.frame_info(parsed.first(), default_objects);
-            let changed = state.caps != Some(info);
-            if changed {
-                state.caps = Some(info);
+            // Never renegotiate caps from a partial buffer that did not
+            // produce a tile: the private configuration may not be parsed yet
+            // and the sink caps object count can still be its placeholder zero.
+            let (info, changed) = if let Some(tile) = parsed.first() {
+                let default_objects = state
+                    .parser
+                    .config()
+                    .map(|config| config.object_count)
+                    .filter(|count| *count > 0)
+                    .or_else(|| state.caps.map(|caps| caps.object_count))
+                    .filter(|count| *count > 0)
+                    .unwrap_or(state.sink_object_count);
+                let info = self.frame_info(Some(tile), default_objects);
+                let changed = state.caps != Some(info);
+                if changed {
+                    state.caps = Some(info);
+                }
+                (info, changed)
+            } else {
+                (
+                    state.caps.unwrap_or(CapsInfo {
+                        rate: SAMPLE_RATE,
+                        object_count: state.sink_object_count,
+                    }),
+                    false,
+                )
+            };
+            drop(state);
+
+            let mut seek = salsa_gst::lock(&self.seek);
+            for tile in &parsed {
+                seek.record_tile(tile, frame.offset());
             }
+            let origin = seek.origin.unwrap_or(0);
+            let output = parsed.first().map(|tile| {
+                let pts = time_from_samples(tile.start_sample.saturating_sub(origin), SAMPLE_RATE);
+                let duration = time_from_samples(tile.frames as u64, SAMPLE_RATE);
+                (map[..size].to_vec(), pts, duration)
+            });
             let has_audio = framing::has_audio_page(&map[..size]);
-            (size, parsed, info, changed, has_audio)
+            (size, parsed, info, changed, has_audio, output)
         };
         if parsed.is_empty() && !has_audio {
             // Header-only or end-of-stream Ogg pages carry no complete tile.
@@ -238,6 +470,17 @@ impl BaseParseImpl for SalsaSpatialParse {
                 .filter(|frames| *frames > 0)
                 .unwrap_or(TILE_SAMPLES);
             object.set_frame_rate(gst::Fraction::new(info.rate as i32, samples as i32), 0, 0);
+        }
+
+        if let Some((data, pts, duration)) = output {
+            let mut buffer = gst::Buffer::from_mut_slice(data);
+            {
+                let buffer = buffer.get_mut().expect("writable parse output");
+                buffer.set_pts(pts);
+                buffer.set_dts(pts);
+                buffer.set_duration(duration);
+            }
+            frame.set_output_buffer(buffer);
         }
 
         object.finish_frame(frame, size as u32)?;

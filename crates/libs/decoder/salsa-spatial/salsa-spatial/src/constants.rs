@@ -22,8 +22,8 @@ pub const TILE_SAMPLES: usize = 4800;
 pub const TILE_HOPS: usize = 20;
 /// Tile length in Opus packets.
 pub const TILE_PACKETS: usize = 5;
-/// Independent parameter snapshot interval: one second.
-pub const SNAPSHOT_SAMPLES: u64 = 48_000;
+/// Independent checkpoint interval: one second.
+pub const CHECKPOINT_SAMPLES: u64 = 48_000;
 /// Fixed parameter band count.
 pub const PARAM_BAND_COUNT: usize = 24;
 /// Half-open nonnegative-bin boundaries of the 24 parameter bands.
