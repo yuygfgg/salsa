@@ -33,6 +33,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use objectaudio_ir::ObjectState;
+use salsa_spatial::correction::{
+    CORRECTION_MAX_KEYFRAMES, CORRECTION_MAX_RANK, CORRECTION_MAX_SUPPORT,
+};
 use salsa_spatial::params::{ParameterTile, SceneParameterEncoder};
 use salsa_spatial::{
     CHECKPOINT_SAMPLES, EnhancementTile, MAX_OBJECTS, MultistreamPacket, PARAM_BAND_COUNT,
@@ -320,7 +323,7 @@ fn make_config(
         core_panner,
         ..SalsaSpatialStreamConfig::default()
     };
-    config.format_version = 3;
+    config.format_version = 4;
     if core_panner.algorithm_version() == 2 {
         config.signal_models[0].algorithm_version = 2;
     }
@@ -335,7 +338,6 @@ fn process_job(
     program_start: u64,
     codec: &mut MultistreamCodec,
     encoder: &mut SceneParameterEncoder,
-    previous_base: &[[i32; PARAM_BAND_COUNT]],
     previous_ell: &[[i32; PARAM_BAND_COUNT]],
     beta: f64,
     checkpoint_due: bool,
@@ -359,8 +361,12 @@ fn process_job(
         next.map(|job| (&job.source, &job.core)),
     );
     let measure_ms = measure_start.elapsed().as_secs_f64() * 1000.0;
-    // The checkpoint describes the state immediately before this tile.
+    // The checkpoint describes the state immediately before this tile. Its
+    // entropy coding is independent, so the tile's contexts start fresh.
     let checkpoint = checkpoint_due.then(|| encoder.checkpoint(job.source.start_sample));
+    if checkpoint_due {
+        encoder.reset_entropy();
+    }
     let search_start = std::time::Instant::now();
     let search = search_tile(
         encoder,
@@ -368,7 +374,6 @@ fn process_job(
         job.source.start_sample,
         job.source.frames,
         &job.meta_knots,
-        previous_base,
         previous_ell,
         beta,
     )?;
@@ -525,6 +530,15 @@ pub fn encode_with_progress(
     if options.core_bitrates.iter().any(|bitrate| *bitrate == 0) {
         bail!("core bitrates must be positive");
     }
+    if options.correction_rank as usize > CORRECTION_MAX_RANK {
+        bail!("correction rank exceeds the syntax limit");
+    }
+    if options.correction_support as usize > CORRECTION_MAX_SUPPORT {
+        bail!("correction support exceeds the syntax limit");
+    }
+    if options.correction_keyframes as usize > CORRECTION_MAX_KEYFRAMES {
+        bail!("correction keyframe count exceeds the syntax limit");
+    }
 
     let core_panner = CorePannerConfig::new(options.ceiling_horizontal_gain)?;
     let panner = CorePanner::from_config(core_panner);
@@ -561,7 +575,6 @@ pub fn encode_with_progress(
     let mut writer: Option<salsa_spatial::OggSalsaWriter> = None;
     let mut pending: Option<TileJob> = None;
     let mut measurement = MeasurementContext::new(headroom_gain, panner, BaseFold::v1());
-    let mut last_base = vec![[0i32; PARAM_BAND_COUNT]; object_count];
     let mut previous_ell = vec![[0i32; PARAM_BAND_COUNT]; object_count];
     let mut last_positions = vec![[0.0f64; 3]; object_count];
     let mut first_tile = true;
@@ -654,7 +667,6 @@ pub fn encode_with_progress(
                 start,
                 codec.as_mut().expect("multistream codec exists"),
                 &mut encoder,
-                &last_base,
                 &previous_ell,
                 options.beta,
                 due,
@@ -700,7 +712,6 @@ pub fn encode_with_progress(
             });
 
             let state = encoder.snapshot(end_sample);
-            last_base = state.power_model.base_half_db;
             previous_ell = state.power.ell_half_db;
         }
         pending = Some(job);
@@ -721,7 +732,6 @@ pub fn encode_with_progress(
             start,
             codec.as_mut().expect("multistream codec exists"),
             &mut encoder,
-            &last_base,
             &previous_ell,
             options.beta,
             due,

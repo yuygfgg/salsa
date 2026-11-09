@@ -377,7 +377,9 @@ fn fit_window(
                 &r_sy[band],
                 &r_yy[band],
             );
-            let component_bytes = 11.0 + 2.0 * candidate.support.len() as f64;
+            // Approximate entropy-coded cost: fixed right/scale/header bytes
+            // plus support-id and left-nibble symbols per supported object.
+            let component_bytes = 16.0 + 1.5 * candidate.support.len() as f64;
             let reduction = before - after;
             if !(reduction > 1e-12 * before.abs().max(1.0))
                 || reduction <= options.rate_weight * component_bytes

@@ -554,7 +554,7 @@ the metadata rate-distortion tradeoff; it does not specify a total bitrate.
 | `--correction-support N` | `16` | Sparse object support per correction component. |
 | `--correction-keyframes N` | `3` | Correction updates per 100 ms tile. |
 | `--correction-rate-weight F` | `0.6` | Minimum distortion reduction per correction byte. |
-| `--beta F` | `1e-6` | Metadata RD weight per bit; larger values penalize metadata rate more. |
+| `--beta F` | `7.5e-7` | Metadata RD weight per bit; larger values penalize metadata rate more. |
 | `--reference-start N` | `0` | First source sample frame to encode. |
 | `--max-frames N` | remaining source | Maximum source sample frames to encode; 48,000 frames equal one second. |
 | `--headroom-db DB` | automatic | Override the programme headroom gain in dB. |

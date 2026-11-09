@@ -689,10 +689,7 @@ mod tests {
     use super::*;
     use crate::{TileSource, downmix::build_core, measurement::MeasurementContext};
     use salsa_spatial::params::{CorrelationCoefficient, ParameterTile};
-    use salsa_spatial::{
-        CoreErrorEnvelope, CorrelationPair, DCT_COEFF_COUNT, PowerModel, TILE_SAMPLES,
-        TrajectoryKnot,
-    };
+    use salsa_spatial::{CoreErrorEnvelope, CorrelationPair, TILE_SAMPLES, TrajectoryKnot};
 
     #[test]
     fn point_columns_match_the_multi_object_renderer() {
@@ -793,10 +790,6 @@ mod tests {
         let tile = ParameterTile {
             start_sample: 0,
             frames,
-            base: PowerModel {
-                base_half_db: vec![[0; PARAM_BAND_COUNT]; count],
-                fast_half_db: vec![[0; DCT_COEFF_COUNT]; count],
-            },
             anchors,
             pairs: Vec::new(),
             trajectories,

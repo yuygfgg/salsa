@@ -33,8 +33,8 @@ pub use frame::{
 pub use multistream::{pack_owned as pack_multistream, split as split_multistream};
 pub use ogg::{OggOpusReader, OggOpusWriter, OpusHead};
 pub use params::{
-    BandCorrection, CoreErrorEnvelope, CorrelationPair, CovarianceAnchor, DctBasis,
-    ObjectPowerState, PowerModel, SceneParameters, TrajectoryAnchor, TrajectoryKnot,
+    CoreErrorEnvelope, CorrelationPair, CovarianceAnchor, DctBasis, ObjectPowerState,
+    SceneParameters, TrajectoryAnchor, TrajectoryKnot,
 };
 pub use record::{
     Fragment, Reassembler, Record, TileRecord, decode_configuration, encode_configuration,

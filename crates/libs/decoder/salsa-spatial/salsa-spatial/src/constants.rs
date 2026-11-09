@@ -100,7 +100,7 @@ pub const CORRELATION_PHASE_STEPS: u16 = 32;
 /// Candidate quantizer scales in dB.
 pub const CORRECTION_SCALES_DB: [f64; 4] = [0.5, 1.0, 2.0, 4.0];
 /// Initial run-level RD weight per encoded bit.
-pub const DEFAULT_BETA: f64 = 1.0e-6;
+pub const DEFAULT_BETA: f64 = 7.5e-7;
 /// Dimensionless floor applied to the diagonally normalized reconstruction
 /// system. This is a numerical-stabilization term, not an audio-quality knob:
 /// it is about four orders of magnitude above f64 roundoff for a seven-channel

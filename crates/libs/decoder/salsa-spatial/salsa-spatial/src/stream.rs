@@ -88,8 +88,9 @@ impl MultistreamWriter {
             }
         }
 
-        // A checkpoint is independently decodable, so it carries the
-        // configuration record needed by a parser that starts at its offset.
+        // A checkpoint is independently decodable. The first record carries
+        // the full initial scene; later resends carry only the descriptor
+        // tables because the checkpoint supplies the current scene state.
         let resend = match self.last_config_sample {
             None => true,
             Some(sample) => {
@@ -100,7 +101,23 @@ impl MultistreamWriter {
         let mut bundle = Vec::new();
         if resend {
             let start = bundle.len();
-            bundle.extend(write_record(&Record::Configuration(self.config.clone()))?);
+            let mut config = self.config.clone();
+            let checkpoint_has_positions = frame.checkpoint.as_ref().is_some_and(|checkpoint| {
+                checkpoint
+                    .trajectories
+                    .iter()
+                    .all(|trajectory| !trajectory.is_empty())
+            });
+            if self.last_config_sample.is_some() && checkpoint_has_positions {
+                // Later checkpoints carry the complete trajectory and power
+                // state, so the configuration record only needs the descriptor
+                // tables. The first record keeps the initial scene for playback
+                // before the first checkpoint is installed; a checkpoint with
+                // an empty trajectory keeps the full initial scene as fallback.
+                config.initial_objects.clear();
+                config.initial_trajectories.clear();
+            }
+            bundle.extend(write_record(&Record::Configuration(config))?);
             sizes.configuration_bytes += (bundle.len() - start) as u64;
             self.last_config_sample = Some(frame.start_sample);
         }
@@ -118,34 +135,26 @@ impl MultistreamWriter {
         sizes.parameter_bytes += (bundle.len() - start) as u64;
 
         let center = self.config.codec.center_substream_index()?;
-        let fragments = Fragment::split(
-            self.config.config_id,
-            frame.start_sample,
-            &bundle,
-            frame.packets.len(),
-        )?;
+        let fragments = Fragment::split(self.config.config_id, frame.start_sample, &bundle, 1)?;
         let fragment_len: usize = fragments.iter().map(Vec::len).sum();
         sizes.fragment_wrapper_bytes += fragment_len.saturating_sub(bundle.len()) as u64;
-        let mut out = Vec::with_capacity(frame.packets.len());
-        for (packet, fragment) in frame.packets.iter().zip(fragments) {
-            let mut packet = packet.clone();
-            let ordinary = packet
-                .substreams
-                .get(center)
-                .ok_or(SpatialError::InvalidValue("missing center substream"))?;
-            let extended = opus_ext::append_extension(ordinary, &fragment)?;
-            // The extension lives in Opus padding, so it does not count toward
-            // the 1275-byte per-frame limit.  Only the total Opus packet size is
-            // bounded.  The center substream is not the last substream, so it
-            // is carried in self-delimited framing and may use all of it.
-            if extended.len() > multistream::MAX_SUBSTREAM_BYTES {
-                return Err(SpatialError::InvalidValue(
-                    "center packet plus metadata exceeds the Opus packet limit",
-                ));
-            }
-            packet.substreams[center] = extended;
-            out.push(packet);
+        let mut out: Vec<MultistreamPacket> = frame.packets.clone();
+        let packet = out
+            .first_mut()
+            .ok_or(SpatialError::InvalidValue("empty packet list"))?;
+        let ordinary = packet
+            .substreams
+            .get(center)
+            .ok_or(SpatialError::InvalidValue("missing center substream"))?;
+        let extended = opus_ext::append_extension(ordinary, &fragments[0])?;
+        // The extension lives in Opus padding, so it does not count toward the
+        // 1275-byte per-frame limit. Only the total Opus packet size is bounded.
+        if extended.len() > multistream::MAX_SUBSTREAM_BYTES {
+            return Err(SpatialError::InvalidValue(
+                "center packet plus metadata exceeds the Opus packet limit",
+            ));
         }
+        packet.substreams[center] = extended;
         Ok(out)
     }
 }

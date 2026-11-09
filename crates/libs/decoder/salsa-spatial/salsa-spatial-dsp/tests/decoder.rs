@@ -3,8 +3,8 @@ use opus::{Application, Bitrate, Channels, Encoder};
 use salsa_spatial::params::{ParameterAnchor, ParameterTile, SceneParameterEncoder};
 use salsa_spatial::{
     CoreErrorEnvelope, CorePacket, EnhancementTile, OPUS_FRAME_SAMPLES, PARAM_BAND_COUNT,
-    PowerModel, SAMPLE_RATE, SalsaSpatialFrame, SalsaSpatialStreamConfig, SceneSnapshot,
-    TILE_SAMPLES, TrajectoryKnot,
+    SAMPLE_RATE, SalsaSpatialFrame, SalsaSpatialStreamConfig, SceneSnapshot, TILE_SAMPLES,
+    TrajectoryKnot,
 };
 use salsa_spatial_core_decoder::OpusBedDecoder;
 use salsa_spatial_dsp::SalsaSpatialDecoder;
@@ -128,10 +128,6 @@ fn parameter_tile(
     frames: usize,
     scale_half_db: i32,
 ) -> Vec<u8> {
-    let base: Vec<[i32; PARAM_BAND_COUNT]> = (0..object_count)
-        .map(|object| std::array::from_fn(|band| object as i32 * (band as i32 % 3)))
-        .collect();
-
     let anchor_count = frames.div_ceil(OPUS_FRAME_SAMPLES).max(1);
     let mut anchors = Vec::with_capacity(anchor_count);
     for step in 0..anchor_count {
@@ -178,10 +174,6 @@ fn parameter_tile(
     let tile = ParameterTile {
         start_sample: start,
         frames,
-        base: PowerModel {
-            base_half_db: base,
-            fast_half_db: vec![[0; salsa_spatial::DCT_COEFF_COUNT]; object_count],
-        },
         anchors,
         pairs: Vec::new(),
         trajectories,

@@ -214,7 +214,7 @@ pub fn decode_configuration(bytes: &[u8]) -> Result<SalsaSpatialStreamConfig> {
         return Err(SpatialError::Syntax("bad configuration magic"));
     }
     let format_version = reader.u16()?;
-    if !matches!(format_version, 1 | 2 | 3) {
+    if format_version != 4 {
         return Err(SpatialError::UnsupportedVersion {
             version: format_version,
         });
@@ -923,8 +923,6 @@ mod tests {
             let mut config = sample_config();
             config.core_panner = CorePannerConfig::new(rho).unwrap();
             assert!(encode_configuration(&config).is_err());
-            config.format_version = 2;
-            assert!(encode_configuration(&config).is_err());
             config.signal_models[0].algorithm_version = 2;
             let bytes = encode_configuration(&config).unwrap();
             let decoded = decode_configuration(&bytes).unwrap();
@@ -942,20 +940,12 @@ mod tests {
     }
 
     #[test]
-    fn version_one_has_no_coding_angle_extension() {
-        let config = sample_config();
-        let old = encode_configuration(&config).unwrap();
-        assert_eq!(
-            decode_configuration(&old).unwrap().core_panner,
-            CorePannerConfig::default()
-        );
-        let mut extended = config.clone();
-        extended.format_version = 2;
-        let mut bytes = encode_configuration(&extended).unwrap();
-        assert_eq!(bytes.len(), old.len() + 8);
-        bytes[4..6].copy_from_slice(&old[4..6]);
-        bytes.truncate(old.len());
-        assert_eq!(bytes, old);
+    fn configuration_version_four_is_required() {
+        let mut config = sample_config();
+        config.format_version = 3;
+        assert!(encode_configuration(&config).is_err());
+        config.format_version = 4;
+        assert!(encode_configuration(&config).is_ok());
     }
 
     fn sample_checkpoint() -> SceneSnapshot {
@@ -976,11 +966,6 @@ mod tests {
                 active: vec![true; object_count],
                 ell_half_db: vec![[3; crate::constants::PARAM_BAND_COUNT]; object_count],
             },
-            power_model: crate::params::PowerModel {
-                base_half_db: vec![[2; crate::constants::PARAM_BAND_COUNT]; object_count],
-                fast_half_db: vec![[1; crate::constants::DCT_COEFF_COUNT]; object_count],
-            },
-            correction_half_db: vec![[0; crate::constants::PARAM_BAND_COUNT]; object_count],
             error_log: [[0; crate::constants::PARAM_BAND_COUNT];
                 crate::constants::CORE_CHANNEL_COUNT],
             error_unobservable: [[false; crate::constants::PARAM_BAND_COUNT];

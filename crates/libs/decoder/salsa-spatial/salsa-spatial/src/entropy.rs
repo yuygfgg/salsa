@@ -286,24 +286,17 @@ impl constriction::stream::model::DecoderModel<RANS_PRECISION> for AdaptiveModel
     }
 }
 
-/// Per-tile entropy contexts.
+/// Adaptive entropy contexts for the parameter stream.
 ///
-/// Every context listed in the design has its own adaptive model. The set is
-/// reset at the start of each 100 ms tile so that no probability tables need to
-/// be transmitted.
+/// Every context has its own adaptive probability model. Contexts persist
+/// across parameter tiles and reset only at independently coded checkpoints,
+/// so a seek starts from a self-contained probability and predictor state.
 #[derive(Debug, Clone)]
 pub struct EntropyContexts {
     pub activity_change: AdaptiveModel,
     pub activity_value: AdaptiveModel,
-    pub base_update: AdaptiveModel,
-    /// Base innovations, conditioned on the previous frequency band (`24` for
-    /// the first band of an object).
-    pub base_innovation: Vec<AdaptiveModel>,
-    /// Fast innovations, conditioned on the DCT coefficient index.
-    pub fast_innovation: Vec<AdaptiveModel>,
-    pub correction_count: AdaptiveModel,
-    pub correction_gap: AdaptiveModel,
-    pub correction_value: AdaptiveModel,
+    /// Per-band temporal power deltas.
+    pub power_delta: Vec<AdaptiveModel>,
     pub correlation_count: AdaptiveModel,
     pub correlation_present: AdaptiveModel,
     pub correlation_magnitude: Vec<AdaptiveModel>,
@@ -318,14 +311,10 @@ pub struct EntropyContexts {
     pub trajectory_update: AdaptiveModel,
     pub trajectory_count: AdaptiveModel,
     pub trajectory_time: AdaptiveModel,
-    pub trajectory_position: AdaptiveModel,
     pub trajectory_position_delta: AdaptiveModel,
     pub snapshot_flag: AdaptiveModel,
     pub snapshot_bits: AdaptiveModel,
     pub snapshot_ell: AdaptiveModel,
-    pub snapshot_base: AdaptiveModel,
-    pub snapshot_fast: AdaptiveModel,
-    pub snapshot_correction: AdaptiveModel,
     pub snapshot_error: AdaptiveModel,
     pub snapshot_trajectory: AdaptiveModel,
     pub snapshot_position_delta: AdaptiveModel,
@@ -355,16 +344,9 @@ impl EntropyContexts {
         Self {
             activity_change: flag_model(),
             activity_value: flag_model(),
-            base_update: flag_model(),
-            base_innovation: (0..=crate::constants::PARAM_BAND_COUNT)
+            power_delta: (0..crate::constants::PARAM_BAND_COUNT)
                 .map(|_| innovation_model())
                 .collect(),
-            fast_innovation: (0..crate::constants::DCT_COEFF_COUNT)
-                .map(|_| innovation_model())
-                .collect(),
-            correction_count: AdaptiveModel::uniform(crate::constants::PARAM_BAND_COUNT + 1),
-            correction_gap: AdaptiveModel::uniform(crate::constants::PARAM_BAND_COUNT),
-            correction_value: innovation_model(),
             correlation_count: AdaptiveModel::uniform(max_pairs + 1),
             correlation_present: flag_model(),
             correlation_magnitude: (0..crate::constants::PARAM_BAND_COUNT)
@@ -385,14 +367,10 @@ impl EntropyContexts {
             trajectory_update: flag_model(),
             trajectory_count: innovation_model(),
             trajectory_time: innovation_model(),
-            trajectory_position: flag_model(),
             trajectory_position_delta: innovation_model(),
             snapshot_flag: flag_model(),
             snapshot_bits: flag_model(),
             snapshot_ell: innovation_model(),
-            snapshot_base: innovation_model(),
-            snapshot_fast: innovation_model(),
-            snapshot_correction: innovation_model(),
             snapshot_error: innovation_model(),
             snapshot_trajectory: innovation_model(),
             snapshot_position_delta: innovation_model(),
@@ -400,7 +378,7 @@ impl EntropyContexts {
         }
     }
 
-    /// Reset every context to its tile-start prior.
+    /// Reset every context to its independent-checkpoint prior.
     pub fn reset_tile(&mut self) {
         *self = Self::new(self.correlation_pair_a.symbol_count());
     }

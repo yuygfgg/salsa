@@ -9,6 +9,7 @@ contains the current measurements.
 
 | Property | Current value |
 |---|---|
+| Bitstream version | Configuration and parameter syntax version 4 |
 | Sample rate | 48 kHz |
 | Object limit | 128 non-LFE objects |
 | Core | 5.1(side)-compatible fallback (FL, FR, FC, LFE, SL, SR) plus two auxiliary height observations |
@@ -22,21 +23,26 @@ contains the current measurements.
 | Parameter tile | 100 ms |
 | Regular anchors | 0, 20, 40, 60, 80, and 95 ms in a full tile |
 | Transient refinement | Up to four extra anchors on the 5 ms grid |
-| Fast spectral model | Six DCT-II coefficients per object |
+| Power model | Per-band temporal delta from the previous reconstructed anchor |
+| Inactive powers | Exactly zero; no power symbols are emitted |
 | Active power range | 90 dB |
 | Power state grid | 0.5 dB |
 | Candidate power quantizers | 0.5, 1, 2, and 4 dB |
-| Base quantizer | Twice the selected power quantizer step |
 | Correlation pairs | At most eight disjoint pairs per tile |
 | Correlation magnitude | Steps of 1/16, capped at 15/16 |
 | Correlation phase | 32 directions |
 | Error-envelope quantizer | 2 dB |
+| Error prediction | Two-dimensional logarithmic predictor |
 | Numerical system floor | 1e-12 (dimensionless, diagonally normalized) |
 | Position precision | 12 bits per coordinate |
 | Moving-trajectory knot spacing | At most 100 ms |
 | Trajectory gain-error bound | 0.005 in L2 norm |
 | Independent checkpoint | Once per second |
-| Metadata RD weight | Fixed per encode; default beta = 0.000001 |
+| Metadata RD weight | Fixed per encode; default beta = 0.00000075 |
+| Entropy context lifetime | Persists across tiles; resets at checkpoints |
+| Tile metadata transport | One fragment attached to the tile's first Opus packet |
+| Configuration resend | Descriptor tables only after the first full record |
+| Correction payload | Entropy-coded support, factors, and scales |
 
 The 24 bands use these half-open positive-frequency bin boundaries:
 
@@ -112,12 +118,10 @@ cargo run --release -p salsa-spatial-encode -- input.atmos \
   --out output.ogg --ceiling-horizontal-gain 0.25
 ```
 
-A nonzero value requires configuration version 2 and core-panner model
-version 2. The configuration appends one big-endian f64 after the initial
-trajectories. Version 1 has no such field and uses zero. Base-fold tags
-remain zero for no fold or one for the fixed matrix. Older Salsa decoders
-that only accept configuration version 1 cannot decode the compressed-angle
-enhancement; ordinary Ogg Opus playback keeps the same public channel map.
+A nonzero value requires core-panner model version 2. Configuration version
+4 always carries the ceiling gain as one big-endian f64. Base-fold tags remain
+zero for no fold or one for the fixed matrix. Ordinary Ogg Opus playback keeps
+the same public channel map.
 
 Audio generation, trajectory validation, local RD measurements, and the
 decoder use the same configured panner. In particular, the RD reconstruction
@@ -131,20 +135,32 @@ signal errors, and perceptual-proxy results. The default remains zero.
 
 The standard Ogg Opus track carries one multistream packet per 20 ms. The
 mono center substream carries versioned Salsa records in an experimental Opus
-padding extension. Records carry the configuration, independent checkpoints,
-parameter tiles, and fragment framing. A tile carries no second object or event
-list: downstream `ObjectState` values are generated from the decoded parameter
-and trajectory state. The shared silence substream is zero input and uses
-unconstrained VBR.
+padding extension. Each tile's complete record bundle is attached to the
+tile's first Opus packet as one fragment. Records carry the configuration,
+independent checkpoints, and parameter tiles. A tile carries no second object
+or event list: downstream `ObjectState` values are generated from the decoded
+parameter and trajectory state. The shared silence substream is zero input and
+uses unconstrained VBR.
+
+The first configuration record contains the initial objects and trajectories.
+Later configuration resends clear those fields: every subsequent checkpoint
+carries the complete current power, activity, error, pair, and trajectory
+state. If a checkpoint has an empty trajectory, the writer keeps the full
+initial scene as a fallback.
 
 The parameter coder uses constriction with 24-bit rANS probability precision.
 It assigns integer frequencies by largest remainder, with ties resolved by
 symbol index. Counts rescale by ceiling halving when their total reaches
-4,096. Entropy contexts reset for each tile; parameter predictors persist
-until a checkpoint replaces them. A checkpoint is a separate length-delimited
-record with its own reset entropy contexts, so it can be parsed without any
-earlier tile or the current tile's parameter payload. It describes the state
-immediately before its tile.
+4,096. Entropy contexts persist across parameter tiles and reset at each
+independent checkpoint; parameter predictors follow the same boundary. A
+checkpoint is a separate length-delimited record with its own reset entropy
+contexts, so it can be parsed without any earlier tile or the current tile's
+parameter payload. It describes the state immediately before its tile.
+
+The optional reconstruction-correction trailer is entropy coded as well. Its
+adaptive models cover keyframe and band presence, rank, shared support, sorted
+support gaps, complex factor nibbles, and f32 scales. The trailer remains
+length-delimited and can be omitted without affecting the pair baseline.
 
 ## Rust components
 

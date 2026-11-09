@@ -145,7 +145,7 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
 
     use objectaudio_ir::SpatialDecoder;
     let config = parser.config().cloned().expect("stream configuration");
-    assert_eq!(config.format_version, 3);
+    assert_eq!(config.format_version, 4);
     assert_eq!(
         config.core_panner,
         salsa_spatial::CorePannerConfig::default()
@@ -176,7 +176,7 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
         .unwrap();
     frames.extend(parser.flush().unwrap());
     let config = parser.config().unwrap().clone();
-    assert_eq!(config.format_version, 3);
+    assert_eq!(config.format_version, 4);
     assert_eq!(config.signal_models[0].algorithm_version, 2);
     assert_eq!(config.core_panner.ceiling_horizontal_gain(), 0.25);
     assert!(

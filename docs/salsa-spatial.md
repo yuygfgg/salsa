@@ -653,70 +653,53 @@ reduce interpolation error without changing the transform.
 ## 6. Parameter compression
 
 The metadata rate is reduced before entropy coding: the model removes
-absolute power, shares a spectral basis, predicts changes over time, and
-uses sparse corrections.
+absolute power, predicts every active band from its previous reconstructed
+value, omits inactive objects, and entropy codes the optional reconstruction
+correction with the same integer probability machinery.
 
-### 6.1 Persistent base and low-order spectral changes
+### 6.1 Per-band temporal power prediction
 
-For object $i$, band $b$, and anchor $t$, represent the selected quantized
-log power as
+For object $i$, band $b$, and anchor $t$, the selected quantized log power is
+$\ell_i(t,b)$ on the fixed half-dB grid. Relative powers in each band are
+normalised with the band maximum set to zero. An inactive object has exactly
+zero power and emits no power symbols.
 
-$$
-\ell_i(t,b)=\mathcal Q_g\left[
-h_i(b)+\sum_{r=0}^{Q-1}c_{i,r}(t)\phi_r(b)\right]+\delta_i(t,b).
-$$
-
-Here, $\mathcal Q_g$ rounds to the fixed predictor grid and $\delta_i$ is
-an integer multiple of that grid spacing.
-
-The orthonormal $B$-point DCT-II basis is
+For an active object, the encoder codes
 
 $$
-\phi_0(b)=B^{-1/2},\qquad
-\phi_r(b)=\sqrt{\frac2B}
-\cos\left(\frac{\pi r(b+1/2)}B\right),\quad r>0.
+\Delta_i(t,b)=\ell_i(t,b)-\ell_i(t-1,b),
 $$
 
-The persistent base $h_i$ holds stable spectral shape. The low-order
-coefficients describe broad changes; the constant coefficient describes a
-broadband level change. Sparse corrections $\delta_i$ describe detail that
-the low-order basis does not represent.
+where $\ell_i(t-1,b)$ is the previous **reconstructed** anchor value. The
+predictor is initialised to zero at the start of an independent checkpoint
+and whenever an object is inactive. Reactivation therefore codes its target
+from zero.
 
-The selected model uses six DCT coefficients. A base update absorbs
-persistent detail and resets the fast coefficient and correction predictors.
-The encoder retains a base until replacing it reduces the total RD cost.
+Power deltas use one adaptive model per band. Prediction is purely temporal:
+each active band refers to its previous reconstructed value.
 
 ### 6.2 Quantization and exact predictor state
 
-The encoder first selects a quantized target log-power vector. It then:
+The encoder selects a quantized target log-power vector and codes each active
+band as an integer temporal delta. Coarser quantizers select subsets of the
+fixed half-dB grid, so changing the quantizer scale does not reinterpret the
+stored predictor state.
 
-1. Subtracts the persistent base.
-2. Projects the residual onto the retained DCT basis.
-3. Quantizes the DCT coefficients.
-4. Reconstructs and rounds the base-plus-DCT vector.
-5. Codes every nonzero difference from the target as a sparse correction.
-
-Thus, the DCT and sparse representation reproduces the selected quantized
-target. Loss comes from selecting that target, its temporal sampling, and
-the covariance model. The representation itself does not silently discard
-the remaining bands.
-
-The predictor uses a fixed integer log-power grid. Coarser quantizers select
-subsets of this grid. Changing quantizer scale therefore does not reinterpret
-the stored predictor state.
-
-Each coded innovation is the difference from the previous **reconstructed**
-value. Both sides update the predictor with the reconstructed value. This
-closed prediction loop prevents quantization error from causing state drift.
+Each coded delta is the difference from the previous **reconstructed** value.
+Both sides update the predictor with the reconstructed value. This closed
+prediction loop prevents quantization error from causing state drift. The
+representation reproduces the selected quantized target exactly; loss comes
+from selecting that target, its temporal sampling, and the covariance model.
 
 ### 6.3 Other parameter families
 
 | Parameters | Representation |
 |---|---|
+| Object powers | Per-band temporal deltas from the previous reconstructed anchor; inactive objects emit nothing |
 | Object activity | Explicit state changes |
 | Correlation pairs | Object indices, per-band magnitude, and wrapped phase innovations |
-| Reconstruction correction | Rank, sparse object support, quantized complex factors, right rows, and per-component scales |
-| Core error | Predicted logarithmic error-power envelopes and unobservable flags |
+| Reconstruction correction | Entropy-coded rank, sparse object support, quantized complex factors, right rows, and per-component scales |
+| Core error | Two-dimensional logarithmic prediction and unobservable flags |
 | Trajectories | Quantized piecewise-linear positions and sample-time updates |
 | Recovery state | Periodic independent predictor and trajectory checkpoints |
 
@@ -750,10 +733,10 @@ The encoder obtains adaptive intervals in decoding order, then encodes
 them in reverse order. The decoder consumes symbols in forward order
 and performs the same probability updates.
 
-Entropy contexts reset at tile boundaries. Parameter predictors continue
-across tiles until replaced by a checkpoint. A checkpoint has its own entropy
-stream and records the state immediately before its tile, so recovery does not
-depend on earlier tiles. The rate proxy uses the same
+Entropy contexts persist across parameter tiles and reset only at independent
+checkpoints. Parameter predictors likewise continue across tiles. A checkpoint
+has its own entropy stream and records the state immediately before its tile,
+so recovery does not depend on earlier tiles. The rate proxy uses the same
 integer frequencies as the coder:
 
 $$
@@ -762,6 +745,11 @@ $$
 
 This cost can rank parameter choices without introducing a separate,
 inconsistent probability model.
+
+The optional correction trailer uses an independent set of adaptive integer
+models for its keyframe structure, support gaps, complex factor nibbles, and
+scale fields. It is decoded from its own length-delimited trailer, so a
+decoder that omits the correction still reconstructs the pair baseline.
 
 ## 7. Closed-loop rate-distortion optimization
 
@@ -890,14 +878,13 @@ The search combines continuous proposals with discrete acceptance:
 
 1. Construct measured-power and previous-power candidates.
 2. Test the selected quantizer scales.
-3. Test retained and updated spectral bases.
-4. Test the regular anchor grid and transient refinements.
-5. Refine active powers with L-BFGS and an Armijo line search.
-6. Quantize the retained optimization points and evaluate their complete RD cost.
-7. Test activity suppression with the complete cost.
-8. Rank correlation changes by their distortion differential.
-9. Evaluate the promising quantized pair additions, replacements, and removals.
-10. Refine powers again for the selected pair set.
+3. Test the regular anchor grid and transient refinements.
+4. Refine active powers with L-BFGS and an Armijo line search.
+5. Quantize the retained optimization points and evaluate their complete RD cost.
+6. Test activity suppression with the complete cost.
+7. Rank correlation changes by their distortion differential.
+8. Evaluate the promising quantized pair additions, replacements, and removals.
+9. Refine powers again for the selected pair set.
 
 Continuous refinement minimizes distortion. Quantization and the complete
 RD evaluation decide whether to accept a proposal. This keeps the discrete

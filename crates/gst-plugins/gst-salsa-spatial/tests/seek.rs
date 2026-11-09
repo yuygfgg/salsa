@@ -23,11 +23,6 @@ fn checkpoint(start: u64) -> SceneSnapshot {
             active: vec![false],
             ell_half_db: vec![[0; salsa_spatial::PARAM_BAND_COUNT]],
         },
-        power_model: salsa_spatial::PowerModel {
-            base_half_db: vec![[0; salsa_spatial::PARAM_BAND_COUNT]],
-            fast_half_db: vec![[0; salsa_spatial::DCT_COEFF_COUNT]],
-        },
-        correction_half_db: vec![[0; salsa_spatial::PARAM_BAND_COUNT]],
         error_log: [[0; salsa_spatial::PARAM_BAND_COUNT]; salsa_spatial::CORE_CHANNEL_COUNT],
         error_unobservable: [[false; salsa_spatial::PARAM_BAND_COUNT];
             salsa_spatial::CORE_CHANNEL_COUNT],

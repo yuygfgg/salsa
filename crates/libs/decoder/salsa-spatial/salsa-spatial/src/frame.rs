@@ -110,7 +110,7 @@ impl Default for SalsaSpatialStreamConfig {
     fn default() -> Self {
         let codec = CodecBinding::initial();
         Self {
-            format_version: 1,
+            format_version: 4,
             profile: 1,
             config_id: 1,
             object_count: 0,
@@ -143,24 +143,19 @@ impl SalsaSpatialStreamConfig {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if !matches!(self.format_version, 1 | 2 | 3) {
+        if self.format_version != 4 {
             return Err(SpatialError::UnsupportedVersion {
                 version: self.format_version,
             });
         }
-        if self.core_panner.algorithm_version() == 2 {
-            if self.format_version < 2 {
-                return Err(SpatialError::InvalidValue(
-                    "coding-angle compression requires configuration version 2",
-                ));
-            }
-            if self.signal_models.iter().any(|model| {
+        if self.core_panner.algorithm_version() == 2
+            && self.signal_models.iter().any(|model| {
                 model.algorithm == ModelAlgorithm::SalsaCorePanner && model.algorithm_version == 1
-            }) {
-                return Err(SpatialError::InvalidValue(
-                    "coding-angle compression requires core-panner model version 2",
-                ));
-            }
+            })
+        {
+            return Err(SpatialError::InvalidValue(
+                "coding-angle compression requires core-panner model version 2",
+            ));
         }
         validate_configuration(
             &self.codec,

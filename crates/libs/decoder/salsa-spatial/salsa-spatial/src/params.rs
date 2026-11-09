@@ -4,32 +4,31 @@
 //! the encoder-side RD search and the decoder-side parameter timeline:
 //!
 //! * relative object powers with an explicit inactive state,
-//! * the persistent 24-band base envelope plus six fast DCT-II coefficients
-//!   and sparse band corrections,
+//! * per-band temporal power deltas against the previous anchor,
 //! * disjoint bounded correlation pairs,
 //! * seven scene-level core-error envelopes with an unobservable-band mask,
 //! * piecewise-linear object trajectories, and
 //! * independent one-second checkpoints of the complete predictor state.
 //!
 //! All predictor state is integer-valued. The half-dB state grid is used for
-//! log powers; error envelopes use a 2 dB grid. Floating-point DCT analysis,
-//! synthesis and power conversion happen only *after* reconstruction, never
-//! inside a predictor or entropy decision.
+//! log powers; error envelopes use a 2 dB grid. Power conversion happens only
+//! *after* reconstruction, never inside a predictor or entropy decision.
 //!
 //! The tile syntax is:
 //!
-//! 1. base-retain/replace flag and (on replace) base innovations,
-//! 2. anchor count, then per anchor: sample delta, activity changes, fast
-//!    coefficient innovations, sparse band corrections, and the error
-//!    envelope,
+//! 1. anchor count,
+//! 2. per anchor: sample delta, activity changes, active-object power deltas,
+//!    and the error envelope,
 //! 3. the disjoint correlation pair list and per-band coefficient
 //!    innovations,
 //! 4. per-object trajectory updates.
 //!
-//! Every symbol is coded with the adaptive contexts in [`EntropyContexts`],
-//! which are reset at the start of each 100 ms tile. Predictors persist across
-//! tiles. A checkpoint is serialized independently with its own reset entropy
-//! contexts and describes the state immediately *before* its tile.
+//! Every symbol is coded with the adaptive contexts in [`EntropyContexts`].
+//! Power deltas are predicted from the previous parameter anchor; inactive
+//! objects carry zero power and emit no power symbols. Contexts persist across
+//! tiles and reset at each independently coded checkpoint. A checkpoint is
+//! serialized with its own reset entropy contexts and describes the state
+//! immediately *before* its tile.
 
 use crate::constants::{
     CORE_CHANNEL_COUNT, DCT_COEFF_COUNT, HALF_DB_SCALE, MAX_OBJECTS, PARAM_BAND_COUNT,
@@ -188,23 +187,6 @@ impl SceneParameters {
     }
 }
 
-/// A sparse band correction in half-dB units.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BandCorrection {
-    pub object: u16,
-    pub band: u8,
-    pub delta_half_db: i16,
-}
-
-/// Persistent base envelope and fast coefficients for all objects.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct PowerModel {
-    /// [object][band], half-dB units.
-    pub base_half_db: Vec<[i32; PARAM_BAND_COUNT]>,
-    /// [object][coefficient], half-dB units.
-    pub fast_half_db: Vec<[i32; DCT_COEFF_COUNT]>,
-}
-
 /// Quantized object activity and log-power state.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ObjectPowerState {
@@ -293,7 +275,6 @@ impl Default for ParameterAnchor {
 pub struct ParameterTile {
     pub start_sample: u64,
     pub frames: usize,
-    pub base: PowerModel,
     pub anchors: Vec<ParameterAnchor>,
     /// Tile-level disjoint correlation pairs (same pair list for every
     /// band/anchor in the tile).
@@ -311,9 +292,6 @@ struct ScenePredictor {
     object_count: usize,
     active: Vec<bool>,
     ell_half_db: Vec<[i32; PARAM_BAND_COUNT]>,
-    base_half_db: Vec<[i32; PARAM_BAND_COUNT]>,
-    fast_half_db: Vec<[i32; DCT_COEFF_COUNT]>,
-    correction_half_db: Vec<[i32; PARAM_BAND_COUNT]>,
     error_log: [[i32; PARAM_BAND_COUNT]; CORE_CHANNEL_COUNT],
     error_unobservable: [[bool; PARAM_BAND_COUNT]; CORE_CHANNEL_COUNT],
     pairs: Vec<CorrelationPair>,
@@ -326,9 +304,6 @@ impl ScenePredictor {
             object_count,
             active: vec![false; object_count],
             ell_half_db: vec![[0; PARAM_BAND_COUNT]; object_count],
-            base_half_db: vec![[0; PARAM_BAND_COUNT]; object_count],
-            fast_half_db: vec![[0; DCT_COEFF_COUNT]; object_count],
-            correction_half_db: vec![[0; PARAM_BAND_COUNT]; object_count],
             error_log: [[0; PARAM_BAND_COUNT]; CORE_CHANNEL_COUNT],
             error_unobservable: [[false; PARAM_BAND_COUNT]; CORE_CHANNEL_COUNT],
             pairs: Vec::new(),
@@ -346,11 +321,6 @@ impl ScenePredictor {
                 active: self.active.clone(),
                 ell_half_db: self.ell_half_db.clone(),
             },
-            power_model: PowerModel {
-                base_half_db: self.base_half_db.clone(),
-                fast_half_db: self.fast_half_db.clone(),
-            },
-            correction_half_db: self.correction_half_db.clone(),
             error_log: self.error_log,
             error_unobservable: self.error_unobservable,
             correlation_pairs: self.pairs.clone(),
@@ -368,18 +338,12 @@ impl ScenePredictor {
         if snapshot.active.len() != self.object_count
             || snapshot.power.active.len() != self.object_count
             || snapshot.power.ell_half_db.len() != self.object_count
-            || snapshot.power_model.base_half_db.len() != self.object_count
-            || snapshot.power_model.fast_half_db.len() != self.object_count
-            || snapshot.correction_half_db.len() != self.object_count
             || snapshot.trajectories.len() != self.object_count
         {
             return Err(SpatialError::Parameter("checkpoint state length mismatch"));
         }
         self.active = snapshot.active.clone();
         self.ell_half_db = snapshot.power.ell_half_db.clone();
-        self.base_half_db = snapshot.power_model.base_half_db.clone();
-        self.fast_half_db = snapshot.power_model.fast_half_db.clone();
-        self.correction_half_db = snapshot.correction_half_db.clone();
         self.error_log = snapshot.error_log;
         self.error_unobservable = snapshot.error_unobservable;
         self.pairs = snapshot.correlation_pairs.clone();
@@ -412,6 +376,11 @@ impl SceneParameterEncoder {
 
     pub fn reset(&mut self) {
         self.predictor = ScenePredictor::new(self.object_count);
+        self.contexts = EntropyContexts::new(self.object_count);
+    }
+
+    /// Reset entropy contexts at an independently coded checkpoint.
+    pub fn reset_entropy(&mut self) {
         self.contexts = EntropyContexts::new(self.object_count);
     }
 
@@ -450,11 +419,9 @@ impl SceneParameterEncoder {
 
         let mut state = self.predictor.clone();
         let mut contexts = self.contexts.clone();
-        contexts.reset_tile();
         let mut encoder = EntropyEncoder::new();
-        let dct = DctBasis::new();
 
-        encode_power(&mut encoder, &mut contexts, &mut state, &dct, tile)?;
+        encode_power(&mut encoder, &mut contexts, &mut state, tile)?;
         encode_correlations(&mut encoder, &mut contexts, &mut state, tile)?;
         encode_trajectories(&mut encoder, &mut contexts, &mut state, tile)?;
 
@@ -506,6 +473,11 @@ impl SceneParameterDecoder {
         self.contexts = EntropyContexts::new(self.object_count);
     }
 
+    /// Reset entropy contexts at an independently coded checkpoint.
+    pub fn reset_entropy(&mut self) {
+        self.contexts = EntropyContexts::new(self.object_count);
+    }
+
     /// State immediately before the tile that starts at `start_sample`.
     pub fn checkpoint(&self, start_sample: u64) -> SceneSnapshot {
         self.snapshot(start_sample)
@@ -517,14 +489,14 @@ impl SceneParameterDecoder {
 
     /// Validate and install a checkpoint as the committed predictor state.
     ///
-    /// The checkpoint replaces the integer predictors and trajectory state but
-    /// leaves the per-tile entropy contexts untouched; tile contexts always
-    /// reset at the start of a tile anyway. A checkpoint that fails validation
-    /// leaves the previous state untouched.
+    /// The checkpoint replaces the integer predictors and trajectory state and
+    /// resets the entropy contexts, matching the independent checkpoint stream.
+    /// A checkpoint that fails validation leaves the previous state untouched.
     pub fn install_checkpoint(&mut self, checkpoint: &SceneSnapshot) -> Result<()> {
         let mut predictor = self.predictor.clone();
         predictor.apply_snapshot(checkpoint)?;
         self.predictor = predictor;
+        self.contexts = EntropyContexts::new(self.object_count);
         Ok(())
     }
 
@@ -552,11 +524,9 @@ impl SceneParameterDecoder {
     ) -> Result<(ParameterTile, ScenePredictor, EntropyContexts)> {
         let mut state = self.predictor.clone();
         let mut contexts = self.contexts.clone();
-        contexts.reset_tile();
         let mut decoder = EntropyDecoder::new(bytes)?;
-        let dct = DctBasis::new();
 
-        let anchors = decode_power(&mut decoder, &mut contexts, &mut state, &dct, start_sample)?;
+        let anchors = decode_power(&mut decoder, &mut contexts, &mut state, start_sample)?;
         let pairs = decode_correlations(&mut decoder, &mut contexts, &mut state)?;
         let trajectories =
             decode_trajectories(&mut decoder, &mut contexts, &mut state, start_sample)?;
@@ -566,10 +536,6 @@ impl SceneParameterDecoder {
         let tile = ParameterTile {
             start_sample,
             frames,
-            base: PowerModel {
-                base_half_db: state.base_half_db.clone(),
-                fast_half_db: state.fast_half_db.clone(),
-            },
             anchors,
             pairs,
             trajectories,
@@ -580,9 +546,6 @@ impl SceneParameterDecoder {
 }
 
 fn validate_tile(tile: &ParameterTile, object_count: usize) -> Result<()> {
-    if tile.base.base_half_db.len() != object_count {
-        return Err(SpatialError::Parameter("base object count mismatch"));
-    }
     if tile.trajectories.len() != object_count {
         return Err(SpatialError::Parameter("trajectory object count mismatch"));
     }
@@ -640,36 +603,9 @@ fn encode_power(
     encoder: &mut EntropyEncoder,
     contexts: &mut EntropyContexts,
     state: &mut ScenePredictor,
-    dct: &DctBasis,
     tile: &ParameterTile,
 ) -> Result<()> {
     let object_count = state.object_count;
-    let base_changed = tile.base.base_half_db != state.base_half_db;
-    encoder.encode(&mut contexts.base_update, usize::from(base_changed))?;
-
-    if base_changed {
-        for object in 0..object_count {
-            for band in 0..PARAM_BAND_COUNT {
-                let context_index = if band == 0 {
-                    PARAM_BAND_COUNT
-                } else {
-                    band - 1
-                };
-                let innovation = i64::from(tile.base.base_half_db[object][band])
-                    - i64::from(state.base_half_db[object][band]);
-                enc_signed(
-                    encoder,
-                    &mut contexts.base_innovation[context_index],
-                    &mut contexts.tail,
-                    innovation,
-                )?;
-                state.base_half_db[object][band] = tile.base.base_half_db[object][band];
-            }
-        }
-        state.fast_half_db = vec![[0; DCT_COEFF_COUNT]; object_count];
-        state.correction_half_db = vec![[0; PARAM_BAND_COUNT]; object_count];
-    }
-
     enc_unsigned(
         encoder,
         &mut contexts.anchor_count,
@@ -699,63 +635,20 @@ fn encode_power(
         }
 
         for object in 0..object_count {
+            if !anchor.active[object] {
+                state.ell_half_db[object] = [0; PARAM_BAND_COUNT];
+                continue;
+            }
             let target = anchor.ell_half_db[object];
-            let mut residual = [0.0f64; PARAM_BAND_COUNT];
             for band in 0..PARAM_BAND_COUNT {
-                residual[band] = f64::from(target[band] - state.base_half_db[object][band]);
-            }
-            let analysis = dct.analysis(&residual);
-            let mut coefficients = [0i32; DCT_COEFF_COUNT];
-            for r in 0..DCT_COEFF_COUNT {
-                let desired = analysis[r].round() as i32;
-                let innovation = i64::from(desired) - i64::from(state.fast_half_db[object][r]);
+                let delta = i64::from(target[band]) - i64::from(state.ell_half_db[object][band]);
                 enc_signed(
                     encoder,
-                    &mut contexts.fast_innovation[r],
+                    &mut contexts.power_delta[band],
                     &mut contexts.tail,
-                    innovation,
+                    delta,
                 )?;
-                coefficients[r] = desired;
             }
-
-            let mut coefficient_values = [0.0f64; DCT_COEFF_COUNT];
-            for r in 0..DCT_COEFF_COUNT {
-                coefficient_values[r] = f64::from(coefficients[r]);
-            }
-            let synthesized = dct.synthesis(&coefficient_values);
-
-            let mut corrections = [0i32; PARAM_BAND_COUNT];
-            let mut used = 0usize;
-            for band in 0..PARAM_BAND_COUNT {
-                let rounded = (f64::from(state.base_half_db[object][band]) + synthesized[band])
-                    .round() as i32;
-                let correction = target[band] - rounded;
-                corrections[band] = correction;
-                used += usize::from(correction != 0);
-            }
-            encoder.encode(&mut contexts.correction_count, used)?;
-
-            let mut previous_band: i32 = -1;
-            for band in 0..PARAM_BAND_COUNT {
-                let correction = corrections[band];
-                if correction == 0 {
-                    continue;
-                }
-                let gap = (band as i32 - previous_band - 1) as usize;
-                encoder.encode(&mut contexts.correction_gap, gap)?;
-                let predicted = state.correction_half_db[object][band];
-                let innovation = i64::from(correction) - i64::from(predicted);
-                enc_signed(
-                    encoder,
-                    &mut contexts.correction_value,
-                    &mut contexts.tail,
-                    innovation,
-                )?;
-                previous_band = band as i32;
-            }
-
-            state.fast_half_db[object] = coefficients;
-            state.correction_half_db[object] = corrections;
             state.ell_half_db[object] = target;
         }
 
@@ -769,34 +662,9 @@ fn decode_power(
     decoder: &mut EntropyDecoder<'_>,
     contexts: &mut EntropyContexts,
     state: &mut ScenePredictor,
-    dct: &DctBasis,
     start_sample: u64,
 ) -> Result<Vec<ParameterAnchor>> {
     let object_count = state.object_count;
-    let base_changed = decoder.decode(&mut contexts.base_update)? == 1;
-    if base_changed {
-        for object in 0..object_count {
-            for band in 0..PARAM_BAND_COUNT {
-                let context_index = if band == 0 {
-                    PARAM_BAND_COUNT
-                } else {
-                    band - 1
-                };
-                let innovation = dec_signed(
-                    decoder,
-                    &mut contexts.base_innovation[context_index],
-                    &mut contexts.tail,
-                )?;
-                let value = i64::from(state.base_half_db[object][band]) + innovation;
-                let value = i32::try_from(value)
-                    .map_err(|_| SpatialError::Parameter("base innovation overflow"))?;
-                state.base_half_db[object][band] = value;
-            }
-        }
-        state.fast_half_db = vec![[0; DCT_COEFF_COUNT]; object_count];
-        state.correction_half_db = vec![[0; PARAM_BAND_COUNT]; object_count];
-    }
-
     let anchor_count =
         dec_unsigned(decoder, &mut contexts.anchor_count, &mut contexts.tail)? as usize;
     if anchor_count > MAX_TRAJECTORY_KNOTS {
@@ -832,57 +700,18 @@ fn decode_power(
 
         let mut ell_half_db = vec![[0i32; PARAM_BAND_COUNT]; object_count];
         for object in 0..object_count {
-            let mut coefficients = [0i32; DCT_COEFF_COUNT];
-            for r in 0..DCT_COEFF_COUNT {
-                let innovation = dec_signed(
-                    decoder,
-                    &mut contexts.fast_innovation[r],
-                    &mut contexts.tail,
-                )?;
-                let value = i64::from(state.fast_half_db[object][r]) + innovation;
-                coefficients[r] = i32::try_from(value)
-                    .map_err(|_| SpatialError::Parameter("fast innovation overflow"))?;
+            if !active[object] {
+                state.ell_half_db[object] = [0; PARAM_BAND_COUNT];
+                continue;
             }
-
-            let mut coefficient_values = [0.0f64; DCT_COEFF_COUNT];
-            for r in 0..DCT_COEFF_COUNT {
-                coefficient_values[r] = f64::from(coefficients[r]);
-            }
-            let synthesized = dct.synthesis(&coefficient_values);
-
-            let used = decoder.decode(&mut contexts.correction_count)?;
-            if used > PARAM_BAND_COUNT {
-                return Err(SpatialError::Parameter("invalid correction count"));
-            }
-            let mut corrections = [0i32; PARAM_BAND_COUNT];
-            let mut previous_band: i32 = -1;
-            for _ in 0..used {
-                let gap = decoder.decode(&mut contexts.correction_gap)?;
-                let band = previous_band + 1 + gap as i32;
-                if band < 0 || band as usize >= PARAM_BAND_COUNT {
-                    return Err(SpatialError::Parameter("correction band out of range"));
-                }
-                let band = band as usize;
-                let predicted = state.correction_half_db[object][band];
-                let innovation =
-                    dec_signed(decoder, &mut contexts.correction_value, &mut contexts.tail)?;
-                let value = i64::from(predicted) + innovation;
-                corrections[band] = i32::try_from(value)
-                    .map_err(|_| SpatialError::Parameter("correction overflow"))?;
-                previous_band = band as i32;
-            }
-
             let mut ell = [0i32; PARAM_BAND_COUNT];
             for band in 0..PARAM_BAND_COUNT {
-                let rounded = (f64::from(state.base_half_db[object][band]) + synthesized[band])
-                    .round() as i32;
-                let value = i64::from(rounded) + i64::from(corrections[band]);
+                let delta =
+                    dec_signed(decoder, &mut contexts.power_delta[band], &mut contexts.tail)?;
+                let value = i64::from(state.ell_half_db[object][band]) + delta;
                 ell[band] =
                     i32::try_from(value).map_err(|_| SpatialError::Parameter("power overflow"))?;
             }
-
-            state.fast_half_db[object] = coefficients;
-            state.correction_half_db[object] = corrections;
             state.ell_half_db[object] = ell;
             ell_half_db[object] = ell;
         }
@@ -941,7 +770,8 @@ fn encode_error_envelope(
             let predicted = if band == 0 {
                 state.error_log[channel][0]
             } else {
-                (state.error_log[channel][band] + current[channel][band - 1]) / 2
+                current[channel][band - 1] + state.error_log[channel][band]
+                    - state.error_log[channel][band - 1]
             };
             enc_signed(
                 encoder,
@@ -978,7 +808,8 @@ fn decode_error_envelope(
             let predicted = if band == 0 {
                 state.error_log[channel][0]
             } else {
-                (state.error_log[channel][band] + current[channel][band - 1]) / 2
+                current[channel][band - 1] + state.error_log[channel][band]
+                    - state.error_log[channel][band - 1]
             };
             let innovation = dec_signed(
                 decoder,
@@ -1375,50 +1206,6 @@ fn encode_checkpoint_state(
         }
     }
 
-    raw_unsigned(
-        encoder,
-        contexts,
-        snapshot.power_model.base_half_db.len() as u64,
-    )?;
-    for bands in &snapshot.power_model.base_half_db {
-        for band in 0..PARAM_BAND_COUNT {
-            enc_signed(
-                encoder,
-                &mut contexts.snapshot_base,
-                &mut contexts.tail,
-                i64::from(bands[band]),
-            )?;
-        }
-    }
-
-    raw_unsigned(
-        encoder,
-        contexts,
-        snapshot.power_model.fast_half_db.len() as u64,
-    )?;
-    for bands in &snapshot.power_model.fast_half_db {
-        for coefficient in 0..DCT_COEFF_COUNT {
-            enc_signed(
-                encoder,
-                &mut contexts.snapshot_fast,
-                &mut contexts.tail,
-                i64::from(bands[coefficient]),
-            )?;
-        }
-    }
-
-    raw_unsigned(encoder, contexts, snapshot.correction_half_db.len() as u64)?;
-    for bands in &snapshot.correction_half_db {
-        for band in 0..PARAM_BAND_COUNT {
-            enc_signed(
-                encoder,
-                &mut contexts.snapshot_correction,
-                &mut contexts.tail,
-                i64::from(bands[band]),
-            )?;
-        }
-    }
-
     for channel in 0..CORE_CHANNEL_COUNT {
         for band in 0..PARAM_BAND_COUNT {
             enc_signed(
@@ -1538,62 +1325,6 @@ fn decode_checkpoint_state(
         ell_half_db.push(bands);
     }
 
-    let base_count = read_raw_unsigned(decoder, contexts)? as usize;
-    if base_count > MAX_OBJECTS {
-        return Err(SpatialError::Parameter("snapshot base count too large"));
-    }
-    let mut base_half_db = Vec::with_capacity(base_count);
-    for _ in 0..base_count {
-        let mut bands = [0i32; PARAM_BAND_COUNT];
-        for band in &mut bands {
-            *band = i32::try_from(dec_signed(
-                decoder,
-                &mut contexts.snapshot_base,
-                &mut contexts.tail,
-            )?)
-            .map_err(|_| SpatialError::Parameter("snapshot base overflow"))?;
-        }
-        base_half_db.push(bands);
-    }
-
-    let fast_count = read_raw_unsigned(decoder, contexts)? as usize;
-    if fast_count > MAX_OBJECTS {
-        return Err(SpatialError::Parameter("snapshot fast count too large"));
-    }
-    let mut fast_half_db = Vec::with_capacity(fast_count);
-    for _ in 0..fast_count {
-        let mut coefficients = [0i32; DCT_COEFF_COUNT];
-        for coefficient in &mut coefficients {
-            *coefficient = i32::try_from(dec_signed(
-                decoder,
-                &mut contexts.snapshot_fast,
-                &mut contexts.tail,
-            )?)
-            .map_err(|_| SpatialError::Parameter("snapshot fast overflow"))?;
-        }
-        fast_half_db.push(coefficients);
-    }
-
-    let correction_count = read_raw_unsigned(decoder, contexts)? as usize;
-    if correction_count > MAX_OBJECTS {
-        return Err(SpatialError::Parameter(
-            "snapshot correction count too large",
-        ));
-    }
-    let mut correction_half_db = Vec::with_capacity(correction_count);
-    for _ in 0..correction_count {
-        let mut bands = [0i32; PARAM_BAND_COUNT];
-        for band in &mut bands {
-            *band = i32::try_from(dec_signed(
-                decoder,
-                &mut contexts.snapshot_correction,
-                &mut contexts.tail,
-            )?)
-            .map_err(|_| SpatialError::Parameter("snapshot correction overflow"))?;
-        }
-        correction_half_db.push(bands);
-    }
-
     let mut error_log = [[0i32; PARAM_BAND_COUNT]; CORE_CHANNEL_COUNT];
     let mut error_unobservable = [[false; PARAM_BAND_COUNT]; CORE_CHANNEL_COUNT];
     for channel in 0..CORE_CHANNEL_COUNT {
@@ -1647,11 +1378,6 @@ fn decode_checkpoint_state(
             active,
             ell_half_db,
         },
-        power_model: PowerModel {
-            base_half_db,
-            fast_half_db,
-        },
-        correction_half_db,
         error_log,
         error_unobservable,
         correlation_pairs,
@@ -1721,7 +1447,11 @@ mod tests {
                 active[object] = object % 3 != 2 || step == 1;
                 for band in 0..PARAM_BAND_COUNT {
                     let base_value = if object < 4 { base[object][band] } else { 0 };
-                    ell[object][band] = base_value + ((band as i32 * (step as i32 + 1)) % 7) - 3;
+                    ell[object][band] = if active[object] {
+                        base_value + ((band as i32 * (step as i32 + 1)) % 7) - 3
+                    } else {
+                        0
+                    };
                 }
             }
             let mut error = default_error();
@@ -1791,10 +1521,6 @@ mod tests {
         ParameterTile {
             start_sample,
             frames: 4800,
-            base: PowerModel {
-                base_half_db: base.to_vec(),
-                fast_half_db: vec![[0; DCT_COEFF_COUNT]; 4],
-            },
             anchors,
             pairs,
             trajectories,
@@ -1889,6 +1615,7 @@ mod tests {
         let mut encoder = SceneParameterEncoder::new(4);
         let first_bytes = encoder.encode_tile(&first).unwrap();
         let checkpoint = encoder.checkpoint(second.start_sample);
+        encoder.reset_entropy();
         let second_bytes = encoder.encode_tile(&second).unwrap();
 
         let encoded = encode_checkpoint(&checkpoint).unwrap();
@@ -1900,6 +1627,7 @@ mod tests {
         continuous
             .decode_tile(first.start_sample, first.frames, &first_bytes)
             .unwrap();
+        continuous.reset_entropy();
         let expected = continuous
             .decode_tile(second.start_sample, second.frames, &second_bytes)
             .unwrap();

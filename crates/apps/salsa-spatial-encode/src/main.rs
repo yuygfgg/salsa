@@ -23,7 +23,7 @@ struct Cli {
     #[arg(short, long)]
     out: PathBuf,
     /// Metadata rate-distortion weight per encoded bit.
-    #[arg(long, default_value_t = 1e-6)]
+    #[arg(long, default_value_t = 7.5e-7)]
     beta: f64,
     /// Encode at most this many source frames.
     #[arg(long)]

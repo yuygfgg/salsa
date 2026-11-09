@@ -12,8 +12,7 @@ use anyhow::Result;
 use rayon::prelude::*;
 use salsa_spatial::params::{CorrelationCoefficient, ParameterAnchor, SceneParameterEncoder};
 use salsa_spatial::{
-    CORRECTION_SCALES_DB, CoreErrorEnvelope, CorrelationPair, DCT_COEFF_COUNT, PARAM_BAND_COUNT,
-    PowerModel, TrajectoryKnot,
+    CORRECTION_SCALES_DB, CoreErrorEnvelope, CorrelationPair, PARAM_BAND_COUNT, TrajectoryKnot,
 };
 use salsa_spatial_dsp::BandStatistics;
 
@@ -190,33 +189,6 @@ fn build_anchors(
     anchors
 }
 
-fn fit_base(
-    anchors: &[ParameterAnchor],
-    object_count: usize,
-    scale: f64,
-) -> Vec<[i32; PARAM_BAND_COUNT]> {
-    let mut base = vec![[0i32; PARAM_BAND_COUNT]; object_count];
-    let step = (4.0 * scale).round().max(1.0) as i32;
-    for object in 0..object_count {
-        for band in 0..PARAM_BAND_COUNT {
-            let mut sum = 0.0;
-            let mut count = 0usize;
-            for anchor in anchors {
-                if anchor.active[object] {
-                    sum += f64::from(anchor.ell_half_db[object][band]);
-                    count += 1;
-                }
-            }
-            if count > 0 {
-                let average = sum / count as f64;
-                let quantized = ((average / f64::from(step)).round() as i32) * step;
-                base[object][band] = quantized.clamp(-180, 0);
-            }
-        }
-    }
-    base
-}
-
 fn measured_pairs(measurements: &TileMeasurements) -> Vec<(CorrelationPair, f64)> {
     let active = &measurements.active_objects;
     let count = active.len();
@@ -373,7 +345,6 @@ fn refine_pairs(
 fn make_tile(
     start_sample: u64,
     frames: usize,
-    base: &[[i32; PARAM_BAND_COUNT]],
     anchors: &[ParameterAnchor],
     pairs: &[CorrelationPair],
     trajectories: &[Vec<TrajectoryKnot>],
@@ -381,10 +352,6 @@ fn make_tile(
     salsa_spatial::params::ParameterTile {
         start_sample,
         frames,
-        base: PowerModel {
-            base_half_db: base.to_vec(),
-            fast_half_db: vec![[0i32; DCT_COEFF_COUNT]; base.len()],
-        },
         anchors: anchors.to_vec(),
         pairs: pairs.to_vec(),
         trajectories: trajectories.to_vec(),
@@ -538,7 +505,11 @@ fn refine_powers(
     encoder: &SceneParameterEncoder,
     beta: f64,
 ) -> Result<Best> {
-    let object_count = best.tile.base.base_half_db.len();
+    let object_count = best
+        .tile
+        .anchors
+        .first()
+        .map_or(0, |anchor| anchor.ell_half_db.len());
     let stride = object_count * PARAM_BAND_COUNT;
     if stride == 0 {
         return Ok(best);
@@ -569,8 +540,6 @@ fn refine_powers(
                 }
             }
             let group = specs.len();
-            specs.push((tile.clone(), scale, group));
-            tile.base.base_half_db = fit_base(&tile.anchors, object_count, scale);
             specs.push((tile, scale, group));
         }
     }
@@ -590,7 +559,6 @@ pub fn search_tile(
     start_sample: u64,
     frames: usize,
     trajectories: &[Vec<TrajectoryKnot>],
-    previous_base: &[[i32; PARAM_BAND_COUNT]],
     previous_ell: &[[i32; PARAM_BAND_COUNT]],
     beta: f64,
 ) -> Result<SearchResult> {
@@ -619,8 +587,6 @@ pub fn search_tile(
             EllMode::Measured,
             previous_ell,
         );
-        let replaced_base = fit_base(&measured, object_count, scale);
-        let base_candidates = [(previous_base.to_vec(), false), (replaced_base, true)];
         for transient in &transient_options {
             let anchors = if *transient {
                 build_anchors(
@@ -635,13 +601,11 @@ pub fn search_tile(
                 measured.clone()
             };
             for pairs in [&empty, &greedy] {
-                for (base, _) in &base_candidates {
-                    specs.push((
-                        make_tile(start_sample, frames, base, &anchors, pairs, trajectories),
-                        scale,
-                        group,
-                    ));
-                }
+                specs.push((
+                    make_tile(start_sample, frames, &anchors, pairs, trajectories),
+                    scale,
+                    group,
+                ));
                 group += 1;
             }
         }
@@ -661,14 +625,7 @@ pub fn search_tile(
         let held_group = measured_group_count + pair_index;
         for &scale in &CORRECTION_SCALES_DB {
             specs.push((
-                make_tile(
-                    start_sample,
-                    frames,
-                    previous_base,
-                    &held,
-                    pairs,
-                    trajectories,
-                ),
+                make_tile(start_sample, frames, &held, pairs, trajectories),
                 scale,
                 held_group,
             ));
@@ -687,8 +644,7 @@ pub fn search_tile(
                 EllMode::Measured,
                 previous_ell,
             );
-            let base = fit_base(&anchors, object_count, 1.0);
-            let tile = make_tile(start_sample, frames, &base, &anchors, &empty, trajectories);
+            let tile = make_tile(start_sample, frames, &anchors, &empty, trajectories);
             let eval = evaluate_candidate(&tile, &context, encoder, beta)?;
             Best {
                 tile,
@@ -781,16 +737,6 @@ pub fn search_tile(
             sweep_specs.push((tile, best.scale, sweep_group));
             sweep_group += 1;
         }
-
-        let alternate_base = if best.tile.base.base_half_db.as_slice() == previous_base {
-            fit_base(&best.tile.anchors, object_count, best.scale)
-        } else {
-            previous_base.to_vec()
-        };
-        let mut tile = best.tile.clone();
-        tile.base.base_half_db = alternate_base;
-        sweep_specs.push((tile, best.scale, sweep_group));
-        sweep_group += 1;
 
         let alternate_pairs = if best.tile.pairs.is_empty() {
             greedy.clone()
@@ -908,7 +854,7 @@ mod tests {
                 )
             );
         }
-        let good = make_tile(0, frames, &previous, &anchors, &[], &trajectories);
+        let good = make_tile(0, frames, &anchors, &[], &trajectories);
         let mut bad = good.clone();
         bad.anchors[0].active[0] = false;
         bad.anchors[1].active[0] = false;
@@ -940,8 +886,7 @@ mod tests {
                 error: CoreErrorEnvelope::default(),
             })
             .collect();
-        let base = fit_base(&anchors, 2, 0.5);
-        let original = make_tile(0, salsa_spatial::TILE_SAMPLES, &base, &anchors, &[], &[]);
+        let original = make_tile(0, salsa_spatial::TILE_SAMPLES, &anchors, &[], &[]);
         let mut candidate = original.clone();
 
         toggle_object(&mut candidate, 0, &anchors);
@@ -961,14 +906,7 @@ mod tests {
         let (measurements, trajectories) = sequential_objects();
         let previous = vec![[0; PARAM_BAND_COUNT]; 2];
         let anchors = build_anchors(&measurements, 0, 0.5, false, EllMode::Measured, &previous);
-        let original = make_tile(
-            0,
-            salsa_spatial::TILE_SAMPLES,
-            &previous,
-            &anchors,
-            &[],
-            &trajectories,
-        );
+        let original = make_tile(0, salsa_spatial::TILE_SAMPLES, &anchors, &[], &trajectories);
         let context = RenderContext::new(&measurements);
         let encoder = SceneParameterEncoder::new(2);
         let beta = 1e-6;
@@ -1014,25 +952,6 @@ mod tests {
             assert_eq!(ell[0][band], -180);
             assert_eq!(ell[1][band], -180);
         }
-    }
-
-    #[test]
-    fn base_fit_averages_active_anchors_and_pays_the_scale_step() {
-        let mut anchors = Vec::new();
-        for _ in 0..2 {
-            let mut ell = vec![[0i32; PARAM_BAND_COUNT]; 2];
-            ell[0][0] = -10;
-            ell[1][0] = -20;
-            anchors.push(ParameterAnchor {
-                sample: 0,
-                active: vec![true, true],
-                ell_half_db: ell,
-                error: CoreErrorEnvelope::default(),
-            });
-        }
-        let base = fit_base(&anchors, 2, 0.5);
-        assert_eq!(base[0][0], -10);
-        assert_eq!(base[1][0], -20);
     }
 
     #[test]
