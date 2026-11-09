@@ -4051,6 +4051,7 @@ name = "salsa-spatial"
 version = "0.1.0"
 dependencies = [
  "constriction",
+ "num-complex",
  "objectaudio-ir",
  "proptest",
  "salsa-bitstream",

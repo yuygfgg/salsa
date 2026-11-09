@@ -58,14 +58,14 @@ the shared rear-silence stream use unconstrained VBR.
 
 | Substream | Type | Logical channels | Default target |
 |---|---|---|---:|
-| 0 | Stereo | FL, FR | 200 kbps |
-| 1 | Stereo | SL, SR | 128 kbps |
-| 2 | Stereo | H_L, H_R | 120 kbps |
-| 3 | Mono | FC | 112 kbps |
+| 0 | Stereo | FL, FR | 146 kbps |
+| 1 | Stereo | SL, SR | 80 kbps |
+| 2 | Stereo | H_L, H_R | 88 kbps |
+| 3 | Mono | FC | 70 kbps |
 | 4 | Mono | LFE | 24 kbps |
 | 5 | Mono | Shared rear silence | 16 kbps target; ~1.6 kbps measured |
 
-The five active substreams target 584 kbps. The silence value is an encoder setting, not a budget: exact-zero VBR produces three-byte packets, about 1.2 kbps payload (1.6 kbps with framing).
+The five active substreams target 408 kbps by default. The silence value is an encoder setting, not a budget: exact-zero VBR produces three-byte packets, about 1.2 kbps payload (1.6 kbps with framing).
 
 The public family-1 map is `[0, 6, 1, 2, 3, 8, 8, 7]`. The private
 `logical_to_coded` permutation is `[0, 1, 6, 7, 2, 3, 4, 5, 8]`. Coded channels
@@ -75,6 +75,9 @@ speaker map.
 Metadata, framing, and setup add to the core rate. LFE's actual VBR payload
 also varies with the source. The encoder reports each byte category and
 calculates total rate from the complete serialized stream.
+
+The reconstruction-matrix correction is enabled by default with rank 4,
+support 16, three keyframes per tile, and a rate weight of 0.6.
 
 Core targets and the metadata RD weight are independent settings. The encoder
 has no target-rate feedback loop. The quality report records the manually

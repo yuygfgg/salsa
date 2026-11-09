@@ -34,6 +34,7 @@
 use crate::constants::{
     CORE_CHANNEL_COUNT, DCT_COEFF_COUNT, HALF_DB_SCALE, MAX_OBJECTS, PARAM_BAND_COUNT,
 };
+use crate::correction::{TileCorrection, decode_trailing_corrections};
 use crate::entropy::{
     AdaptiveModel, DIRECT_INNOVATION_COUNT, EntropyContexts, EntropyDecoder, EntropyEncoder,
     zigzag_decode, zigzag_encode,
@@ -301,6 +302,9 @@ pub struct ParameterTile {
     /// Per-object piecewise-linear trajectory knots in absolute sample
     /// positions.
     pub trajectories: Vec<Vec<TrajectoryKnot>>,
+    /// Optional rank-r reconstruction-matrix correction keyframes for this
+    /// tile. The decoder spaces them evenly over the tile and interpolates.
+    pub correction: Vec<TileCorrection>,
 }
 
 #[derive(Debug, Clone)]
@@ -455,12 +459,23 @@ impl SceneParameterEncoder {
         encode_correlations(&mut encoder, &mut contexts, &mut state, tile)?;
         encode_trajectories(&mut encoder, &mut contexts, &mut state, tile)?;
 
-        let bits = encoder.estimated_total_bits();
-        let bytes = if build_bytes {
+        let mut bits = encoder.estimated_total_bits();
+        let mut bytes = if build_bytes {
             encoder.finish()
         } else {
             Vec::new()
         };
+        if tile
+            .correction
+            .iter()
+            .any(|correction| !correction.is_empty())
+        {
+            let trailer = crate::correction::encode_keyframes(&tile.correction);
+            bits += 8.0 * trailer.len() as f64;
+            if build_bytes {
+                bytes.extend_from_slice(&trailer);
+            }
+        }
         Ok((bytes, bits, state, contexts))
     }
 }
@@ -559,6 +574,7 @@ impl SceneParameterDecoder {
             anchors,
             pairs,
             trajectories,
+            correction: decode_trailing_corrections(bytes)?,
         };
         Ok((tile, state, contexts))
     }
@@ -578,6 +594,11 @@ fn validate_tile(tile: &ParameterTile, object_count: usize) -> Result<()> {
     }
     if tile.pairs.len() > MAX_CORRELATION_PAIRS {
         return Err(SpatialError::Parameter("too many correlation pairs"));
+    }
+    for correction in &tile.correction {
+        if correction.bands.len() != PARAM_BAND_COUNT {
+            return Err(SpatialError::Parameter("correction band count mismatch"));
+        }
     }
     Ok(())
 }
@@ -1731,7 +1752,33 @@ mod tests {
             anchors,
             pairs,
             trajectories,
+            correction: Vec::new(),
         }
+    }
+
+    #[test]
+    fn correction_trailer_roundtrips_through_a_parameter_tile() {
+        use crate::correction::{CorrectionComponent, TileCorrection};
+        use num_complex::Complex;
+
+        let mut tile = make_tile(4, 0);
+        let mut correction = TileCorrection::default();
+        correction.bands[2].components.push(CorrectionComponent {
+            support: vec![0, 2],
+            left: vec![Complex::new(1.0, 0.0), Complex::new(4.0 / 7.0, 0.0)],
+            right: [Complex::new(2.0 / 7.0, 0.0); 7],
+            left_scale: 0.5,
+            right_scale: 1.0,
+        });
+        tile.correction = vec![correction.clone()];
+        let mut encoder = SceneParameterEncoder::new(4);
+        let bytes = encoder.encode_tile(&tile).unwrap();
+        assert!(!decode_trailing_corrections(&bytes).unwrap().is_empty());
+        let mut decoder = SceneParameterDecoder::new(4);
+        let decoded = decoder
+            .decode_tile(tile.start_sample, tile.frames, &bytes)
+            .unwrap();
+        assert_eq!(decoded.correction, vec![correction]);
     }
 
     #[test]

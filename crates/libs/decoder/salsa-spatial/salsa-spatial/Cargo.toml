@@ -12,6 +12,7 @@ salsa-bitstream.workspace = true
 objectaudio-ir.workspace = true
 thiserror.workspace = true
 constriction.workspace = true
+num-complex.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

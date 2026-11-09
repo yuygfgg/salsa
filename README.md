@@ -523,7 +523,7 @@ target/release/salsa-spatial-encode master.atmos -o excerpt.ogg \
 
 Input must be 48 kHz. The 128-object limit includes expanded non-LFE bed
 channels. LFE is coded separately. The five active substream targets total
-584 kbps: front 200, surround 128, auxiliary 120, center 112, and LFE 24. The
+408 kbps: front 146, surround 80, auxiliary 88, center 70, and LFE 24. The
 shared silence encoder uses a 16 kbps VBR *target setting*, not a measured
 budget: exact-zero input produces three-byte packets, about 1.2 kbps payload or
 1.6 kbps with multistream framing. Metadata and container framing add to that
@@ -545,11 +545,15 @@ the metadata rate-distortion tradeoff; it does not specify a total bitrate.
 | :--- | :--- | :--- |
 | `MASTER` | *required* | DAMF manifest; audio and metadata sidecars are resolved from the manifest. |
 | `-o`, `--out PATH` | *required* | Output Salsa Ogg Opus multistream. |
-| `--front-bitrate BPS` | `200000` | Combined L/R Opus target. |
-| `--surround-bitrate BPS` | `128000` | Combined Ls/Rs Opus target. |
-| `--aux-bitrate BPS` | `120000` | Combined H_L/H_R auxiliary Opus target. |
-| `--center-bitrate BPS` | `112000` | Center Opus target. |
+| `--front-bitrate BPS` | `146000` | Combined L/R Opus target. |
+| `--surround-bitrate BPS` | `80000` | Combined Ls/Rs Opus target. |
+| `--aux-bitrate BPS` | `88000` | Combined H_L/H_R auxiliary Opus target. |
+| `--center-bitrate BPS` | `70000` | Center Opus target. |
 | `--lfe-bitrate BPS` | `24000` | Mono LFE VBR target. |
+| `--correction-rank N` | `4` | Per-band reconstruction-correction rank; `0` restores the pair baseline. |
+| `--correction-support N` | `16` | Sparse object support per correction component. |
+| `--correction-keyframes N` | `3` | Correction updates per 100 ms tile. |
+| `--correction-rate-weight F` | `0.6` | Minimum distortion reduction per correction byte. |
 | `--beta F` | `1e-6` | Metadata RD weight per bit; larger values penalize metadata rate more. |
 | `--reference-start N` | `0` | First source sample frame to encode. |
 | `--max-frames N` | remaining source | Maximum source sample frames to encode; 48,000 frames equal one second. |

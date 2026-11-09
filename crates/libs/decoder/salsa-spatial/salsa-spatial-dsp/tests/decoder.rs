@@ -185,6 +185,7 @@ fn parameter_tile(
         anchors,
         pairs: Vec::new(),
         trajectories,
+        correction: Vec::new(),
     };
     encoder.encode_tile(&tile).unwrap()
 }

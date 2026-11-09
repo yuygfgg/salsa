@@ -37,17 +37,29 @@ struct Cli {
     /// Horizontal gain retained at the ceiling in [0, 1); zero uses the original curve.
     #[arg(long, default_value_t = 0.0)]
     ceiling_horizontal_gain: f64,
+    /// Rank of the per-band reconstruction-matrix correction (0 disables it).
+    #[arg(long, default_value_t = 4)]
+    correction_rank: u32,
+    /// Sparse object support per correction component.
+    #[arg(long, default_value_t = 16)]
+    correction_support: u32,
+    /// Number of correction keyframes spread over each 100 ms tile.
+    #[arg(long, default_value_t = 3)]
+    correction_keyframes: u32,
+    /// Distortion reduction required per correction byte (0 keeps every useful component).
+    #[arg(long, default_value_t = 0.6)]
+    correction_rate_weight: f64,
     /// Front L/R Opus bitrate in bits/s.
-    #[arg(long, default_value_t = 200_000)]
+    #[arg(long, default_value_t = 146_000)]
     front_bitrate: u32,
     /// Surround Ls/Rs Opus bitrate in bits/s.
-    #[arg(long, default_value_t = 128_000)]
+    #[arg(long, default_value_t = 80_000)]
     surround_bitrate: u32,
     /// Auxiliary H_L/H_R Opus bitrate in bits/s.
-    #[arg(long = "aux-bitrate", default_value_t = 120_000)]
+    #[arg(long = "aux-bitrate", default_value_t = 88_000)]
     aux_bitrate: u32,
     /// Center Opus bitrate in bits/s.
-    #[arg(long, default_value_t = 112_000)]
+    #[arg(long, default_value_t = 70_000)]
     center_bitrate: u32,
     /// LFE Opus bitrate in bits/s.
     #[arg(long, default_value_t = 24_000)]
@@ -86,6 +98,10 @@ fn main() -> Result<()> {
         reference_start: cli.reference_start,
         headroom_db: cli.headroom_db,
         ceiling_horizontal_gain: cli.ceiling_horizontal_gain,
+        correction_rank: cli.correction_rank,
+        correction_support: cli.correction_support,
+        correction_keyframes: cli.correction_keyframes,
+        correction_rate_weight: cli.correction_rate_weight,
     };
 
     let mut progress = Progress::new(!cli.no_progress);

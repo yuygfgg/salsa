@@ -3,6 +3,7 @@
 
 pub mod bands;
 pub mod constants;
+pub mod correction;
 pub mod descriptor;
 pub mod entropy;
 pub mod error;
@@ -17,6 +18,9 @@ pub mod stream;
 
 pub use bands::{bin_weight, parameter_band_for_bin, parameter_band_range};
 pub use constants::*;
+pub use correction::{
+    BandCorrectionSet, CorrectionComponent, TileCorrection, decode_trailing_correction,
+};
 pub use descriptor::{
     BaseFold, CodecBinding, CorePannerConfig, InputDomain, ModelAlgorithm, ModelRow,
     ObservationGroup, Projection, ReconstructionStage, SignalModel,

@@ -317,6 +317,23 @@ pub fn estimate_objects(
     active: bool,
     unobservable: &[bool; PARAM_BAND_COUNT],
 ) -> Result<Vec<Vec<Complex<f64>>>, ReconstructionError> {
+    estimate_objects_with_correction(hop, core, d, covariance, nu, active, unobservable, None)
+}
+
+/// Like [`estimate_objects`], with an optional per-band additive correction to
+/// the reconstruction matrix. `correction[band][object]` is one complex row per
+/// object and observation channel.
+#[allow(clippy::too_many_arguments)]
+pub fn estimate_objects_with_correction(
+    hop: usize,
+    core: &[Complex<f64>],
+    d: &[[f64; CORE_CHANNEL_COUNT]],
+    covariance: &BandCovariance,
+    nu: &[[f64; CORE_CHANNEL_COUNT]; PARAM_BAND_COUNT],
+    active: bool,
+    unobservable: &[bool; PARAM_BAND_COUNT],
+    correction: Option<&[Vec<[Complex<f64>; CORE_CHANNEL_COUNT]>]>,
+) -> Result<Vec<Vec<Complex<f64>>>, ReconstructionError> {
     if core.len() != CORE_CHANNEL_COUNT * FFT_BINS {
         return Err(ReconstructionError::InvalidInput(format!(
             "core spectrum has {} values, expected {}",
@@ -347,7 +364,7 @@ pub fn estimate_objects(
         if energy <= SILENCE_EPSILON {
             continue;
         }
-        let reconstruction = match solve_regularized(d, covariance, band, &nu[band]) {
+        let mut reconstruction = match solve_regularized(d, covariance, band, &nu[band]) {
             Ok(reconstruction) => reconstruction,
             Err(error) => {
                 return Err(ReconstructionError::Factorization {
@@ -357,25 +374,38 @@ pub fn estimate_objects(
                 });
             }
         };
+        if let Some(rows) = correction.and_then(|bands| bands.get(band)) {
+            for (row, delta) in reconstruction.matrix.iter_mut().zip(rows) {
+                for (value, add) in row.iter_mut().zip(delta) {
+                    *value += *add;
+                }
+            }
+        }
         for bin in parameter_band_range(band) {
             let mut observation = [Complex::new(0.0, 0.0); CORE_CHANNEL_COUNT];
             for channel in 0..CORE_CHANNEL_COUNT {
                 observation[channel] = core[channel * FFT_BINS + bin];
             }
             let endpoint = bin == 0 || bin == FFT_BINS - 1;
-            let estimates = if endpoint {
-                let real =
-                    solve_regularized(d, &real_covariance, band, &nu[band]).map_err(|error| {
-                        ReconstructionError::Factorization {
+            let estimates =
+                if endpoint {
+                    let mut real = solve_regularized(d, &real_covariance, band, &nu[band])
+                        .map_err(|error| ReconstructionError::Factorization {
                             hop,
                             band,
                             message: error.to_string(),
+                        })?;
+                    if let Some(rows) = correction.and_then(|bands| bands.get(band)) {
+                        for (row, delta) in real.matrix.iter_mut().zip(rows) {
+                            for (value, add) in row.iter_mut().zip(delta) {
+                                value.re += add.re;
+                            }
                         }
-                    })?;
-                real.apply(&observation)
-            } else {
-                reconstruction.apply(&observation)
-            };
+                    }
+                    real.apply(&observation)
+                } else {
+                    reconstruction.apply(&observation)
+                };
             for (object, mut value) in estimates.into_iter().enumerate() {
                 if endpoint {
                     value = Complex::new(value.re, 0.0);
@@ -530,6 +560,43 @@ mod tests {
                 assert!(masked[object][bin].norm() < 1e-15);
             }
         }
+    }
+
+    #[test]
+    fn correction_adds_its_rank_one_row_to_the_estimate() {
+        use salsa_spatial::correction::{CorrectionComponent, TileCorrection};
+
+        let covariance = covariance_from_band_powers(&scaled_powers(1, 1.0), &[]);
+        let d = identity_columns(1);
+        let nu = [[0.0; CORE_CHANNEL_COUNT]; PARAM_BAND_COUNT];
+        let mut core = vec![Complex::new(0.0, 0.0); CORE_CHANNEL_COUNT * FFT_BINS];
+        let bin = parameter_band_range(1).start;
+        core[bin] = Complex::new(1.0, 0.0);
+        let unobservable = [false; PARAM_BAND_COUNT];
+        let baseline =
+            estimate_objects(0, &core, &d, &covariance, &nu, true, &unobservable).unwrap();
+
+        let mut correction = TileCorrection::default();
+        correction.bands[1].components.push(CorrectionComponent {
+            support: vec![0],
+            left: vec![Complex::new(1.0, 0.0)],
+            right: [Complex::new(1.0, 0.0); CORE_CHANNEL_COUNT],
+            left_scale: 1.0,
+            right_scale: 1.0,
+        });
+        let dense = correction.dense(1);
+        let corrected = estimate_objects_with_correction(
+            0,
+            &core,
+            &d,
+            &covariance,
+            &nu,
+            true,
+            &unobservable,
+            Some(dense.as_slice()),
+        )
+        .unwrap();
+        assert!((corrected[0][bin] - baseline[0][bin] - Complex::new(1.0, 0.0)).norm() < 1e-10);
     }
 
     #[test]

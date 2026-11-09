@@ -8,6 +8,7 @@
 //! `salsa-spatial`'s shared writer.
 
 mod core_codec;
+mod correction;
 mod downmix;
 mod measurement;
 mod objective;
@@ -17,6 +18,9 @@ pub mod source;
 mod trajectory;
 
 pub use core_codec::MultistreamCodec;
+pub use correction::{
+    CorrectionFit, CorrectionOptions, fit_tile_correction, fit_tile_corrections, validate_fit,
+};
 pub use downmix::TransportSignals;
 pub use source::{SourceReader, TileSource};
 
@@ -53,6 +57,14 @@ pub struct EncodeOptions {
     pub headroom_db: Option<f64>,
     /// Minimum horizontal panner gain at the ceiling, in [0, 1).
     pub ceiling_horizontal_gain: f64,
+    /// Rank of the optional reconstruction-matrix correction (0 disables it).
+    pub correction_rank: u32,
+    /// Sparse object support of each correction component.
+    pub correction_support: u32,
+    /// Number of correction keyframes spread over each tile.
+    pub correction_keyframes: u32,
+    /// Distortion reduction required per transmitted correction byte.
+    pub correction_rate_weight: f64,
 }
 
 /// The encoder pass currently processing source samples.
@@ -84,6 +96,11 @@ pub struct TileReport {
     pub transport_bytes: u64,
     pub object_count: usize,
     pub active_objects: usize,
+    pub correction_bytes: u64,
+    pub correction_components: usize,
+    pub correction_bands: usize,
+    pub correction_baseline_snr_db: f64,
+    pub correction_corrected_snr_db: f64,
 }
 
 /// Whole-program report.
@@ -109,6 +126,10 @@ pub struct EncodeReport {
     pub object_count: usize,
     pub opus_wrapper: &'static str,
     pub opus_native: String,
+    pub correction_bytes: u64,
+    pub correction_components: usize,
+    pub correction_object_snr_baseline_db: f64,
+    pub correction_object_snr_corrected_db: f64,
     /// Unsupported authored properties reported by the DAMF conversion path.
     pub warnings: Vec<String>,
 }
@@ -126,6 +147,7 @@ struct ProcessedTile {
     core_bytes: u64,
     active_objects: usize,
     frames: usize,
+    correction: Option<CorrectionFit>,
 }
 
 fn checkpoint_due(start_sample: u64, program_start: u64) -> bool {
@@ -138,6 +160,14 @@ fn bitrate(bytes: u64, samples: u64) -> f64 {
         return 0.0;
     }
     bytes as f64 * 8.0 * f64::from(SAMPLE_RATE) / samples as f64
+}
+
+fn snr_db(signal: f64, error: f64) -> f64 {
+    if signal <= 0.0 || error <= 0.0 {
+        0.0
+    } else {
+        10.0 * (signal / error).log10()
+    }
 }
 
 fn quantize_gain(gain: f64) -> f64 {
@@ -309,6 +339,7 @@ fn process_job(
     previous_ell: &[[i32; PARAM_BAND_COUNT]],
     beta: f64,
     checkpoint_due: bool,
+    correction: CorrectionOptions,
 ) -> Result<ProcessedTile> {
     let local_start = job.source.start_sample - program_start;
     let prefix = measurement.prefix_frames();
@@ -342,7 +373,39 @@ fn process_job(
         beta,
     )?;
     let search_ms = search_start.elapsed().as_secs_f64() * 1000.0;
-    let tile: ParameterTile = search.tile;
+    let mut tile: ParameterTile = search.tile;
+    let mut correction_fit = None;
+    if correction.rank > 0 {
+        let mut fit = fit_tile_corrections(&measurements, &tile, correction)?;
+        log::debug!(
+            "tile {}: raw correction {} comp / {} bands, {} B, signal {:.4e}, errors {:.4e} -> {:.4e}",
+            job.source.start_sample,
+            fit.components,
+            fit.bands,
+            fit.bytes,
+            fit.signal,
+            fit.baseline_error,
+            fit.corrected_error,
+        );
+        if fit
+            .corrections
+            .iter()
+            .any(|correction| !correction.is_empty())
+            && fit.corrected_error < fit.baseline_error
+        {
+            tile.correction = std::mem::take(&mut fit.corrections);
+            log::info!(
+                "tile {}: correction {} comp / {} bands, {} B, object SNR {:.2} -> {:.2} dB",
+                job.source.start_sample,
+                fit.components,
+                fit.bands,
+                fit.bytes,
+                fit.baseline_snr_db(),
+                fit.corrected_snr_db(),
+            );
+            correction_fit = Some(fit);
+        }
+    }
 
     let encode_start = std::time::Instant::now();
     let enhancement_bytes = encoder
@@ -390,6 +453,7 @@ fn process_job(
         core_bytes,
         active_objects,
         frames: job.source.frames,
+        correction: correction_fit,
     })
 }
 
@@ -401,6 +465,23 @@ fn tile_report(
     object_count: usize,
 ) -> TileReport {
     let metadata_bytes = sizes.metadata_bytes();
+    let correction_bytes = processed
+        .correction
+        .as_ref()
+        .map_or(0, |fit| fit.bytes as u64);
+    let correction_components = processed
+        .correction
+        .as_ref()
+        .map_or(0, |fit| fit.components);
+    let correction_bands = processed.correction.as_ref().map_or(0, |fit| fit.bands);
+    let correction_baseline_snr_db = processed
+        .correction
+        .as_ref()
+        .map_or(0.0, |fit| fit.baseline_snr_db());
+    let correction_corrected_snr_db = processed
+        .correction
+        .as_ref()
+        .map_or(0.0, |fit| fit.corrected_snr_db());
     let framing_bytes = transport_bytes
         .saturating_sub(processed.core_bytes)
         .saturating_sub(metadata_bytes);
@@ -416,6 +497,11 @@ fn tile_report(
         transport_bytes,
         object_count,
         active_objects: processed.active_objects,
+        correction_bytes,
+        correction_components,
+        correction_bands,
+        correction_baseline_snr_db,
+        correction_corrected_snr_db,
     }
 }
 
@@ -496,6 +582,17 @@ pub fn encode_with_progress(
     let mut transport_bytes = 0u64;
     let mut tile_reports = Vec::new();
     let mut peak_metadata_bitrate = 0.0f64;
+    let mut correction_bytes = 0u64;
+    let mut correction_signal = 0.0f64;
+    let mut correction_baseline_error = 0.0f64;
+    let mut correction_corrected_error = 0.0f64;
+    let mut correction_components = 0usize;
+    let correction_options = CorrectionOptions {
+        rank: options.correction_rank as usize,
+        support: options.correction_support as usize,
+        keyframes: options.correction_keyframes as usize,
+        rate_weight: options.correction_rate_weight,
+    };
 
     while remaining > 0 {
         let frames = remaining.min(TILE_SAMPLES as u64) as usize;
@@ -561,6 +658,7 @@ pub fn encode_with_progress(
                 &previous_ell,
                 options.beta,
                 due,
+                correction_options,
             )?;
             let mut sizes = salsa_spatial::RecordSizes::default();
             let transport = writer
@@ -582,6 +680,13 @@ pub fn encode_with_progress(
             configuration_bytes += report.configuration_bytes;
             other_scene_bytes += report.other_scene_bytes;
             metadata_bytes += report.metadata_bytes;
+            correction_bytes += report.correction_bytes;
+            correction_components += report.correction_components;
+            if let Some(fit) = &processed.correction {
+                correction_signal += fit.signal;
+                correction_baseline_error += fit.baseline_error;
+                correction_corrected_error += fit.corrected_error;
+            }
             framing_bytes += report.framing_bytes;
             transport_bytes += report.transport_bytes;
             let tile_rate = bitrate(report.metadata_bytes, processed.frames as u64);
@@ -620,6 +725,7 @@ pub fn encode_with_progress(
             &previous_ell,
             options.beta,
             due,
+            correction_options,
         )?;
         let mut sizes = salsa_spatial::RecordSizes::default();
         let transport = writer
@@ -641,6 +747,13 @@ pub fn encode_with_progress(
         configuration_bytes += report.configuration_bytes;
         other_scene_bytes += report.other_scene_bytes;
         metadata_bytes += report.metadata_bytes;
+        correction_bytes += report.correction_bytes;
+        correction_components += report.correction_components;
+        if let Some(fit) = &processed.correction {
+            correction_signal += fit.signal;
+            correction_baseline_error += fit.baseline_error;
+            correction_corrected_error += fit.corrected_error;
+        }
         framing_bytes += report.framing_bytes;
         transport_bytes += report.transport_bytes;
         let tile_rate = bitrate(report.metadata_bytes, processed.frames as u64);
@@ -689,6 +802,10 @@ pub fn encode_with_progress(
         object_count,
         opus_wrapper: opus.wrapper,
         opus_native: opus.native,
+        correction_bytes,
+        correction_components,
+        correction_object_snr_baseline_db: snr_db(correction_signal, correction_baseline_error),
+        correction_object_snr_corrected_db: snr_db(correction_signal, correction_corrected_error),
         warnings: info.warnings.clone(),
     })
 }

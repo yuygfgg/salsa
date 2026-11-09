@@ -46,11 +46,12 @@ use salsa_spatial::{
     SceneSnapshot, TILE_SAMPLES, TrajectoryKnot,
 };
 use salsa_spatial_core_decoder::{CoreDecodeError, OpusBedDecoder};
+use std::sync::Arc;
 use thiserror::Error;
 
 use crate::covariance::{BandCovariance, covariance_from_band_powers};
 use crate::panner::CorePanner;
-use crate::reconstruct::{ReconstructionError, estimate_objects};
+use crate::reconstruct::{ReconstructionError, estimate_objects_with_correction};
 use crate::stft::{Spectrum, Stft, Synthesis};
 
 /// Crossfade length between the bed fallback and the object render: one 20 ms
@@ -95,6 +96,8 @@ struct ModeTransition {
     len: u64,
 }
 
+type DenseCorrection = Vec<Vec<[Complex<f64>; CORE_CHANNEL_COUNT]>>;
+
 /// One decoded anchor prepared for the 5 ms timeline.
 #[derive(Debug, Clone)]
 struct TimelineAnchor {
@@ -120,7 +123,37 @@ struct SceneView {
     covariance: BandCovariance,
     nu: [[f64; CORE_CHANNEL_COUNT]; PARAM_BAND_COUNT],
     unobservable: [bool; PARAM_BAND_COUNT],
+    correction: Option<Arc<DenseCorrection>>,
     active: bool,
+}
+
+fn blend_corrections(
+    first: &DenseCorrection,
+    second: &DenseCorrection,
+    amount: f64,
+) -> DenseCorrection {
+    first
+        .iter()
+        .zip(second)
+        .map(|(first_band, second_band)| {
+            first_band
+                .iter()
+                .zip(second_band)
+                .map(|(first_row, second_row)| {
+                    std::array::from_fn(|channel| {
+                        first_row[channel] * (1.0 - amount) + second_row[channel] * amount
+                    })
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Dense correction keyframe on the source sample clock.
+#[derive(Debug, Clone)]
+struct CorrectionAnchor {
+    sample: u64,
+    correction: Arc<DenseCorrection>,
 }
 
 /// The complete salsa-spatial object decoder.
@@ -145,6 +178,7 @@ pub struct SalsaSpatialDecoder {
     lfe_synthesis: Synthesis,
 
     anchors: Vec<TimelineAnchor>,
+    correction_anchors: Vec<CorrectionAnchor>,
     current_trajectories: Vec<Vec<TrajectoryKnot>>,
     base_trajectories: Vec<Vec<TrajectoryKnot>>,
     trajectory_history: Vec<TrajectorySnapshot>,
@@ -216,6 +250,7 @@ impl SalsaSpatialDecoder {
             object_synthesis,
             lfe_synthesis: Synthesis::new(),
             anchors: Vec::new(),
+            correction_anchors: Vec::new(),
             current_trajectories,
             base_trajectories,
             trajectory_history: Vec::new(),
@@ -248,6 +283,7 @@ impl SalsaSpatialDecoder {
         self.object_synthesis = (0..self.object_count).map(|_| Synthesis::new()).collect();
         self.lfe_synthesis = Synthesis::new();
         self.anchors.clear();
+        self.correction_anchors.clear();
         self.current_trajectories = self.base_trajectories.clone();
         self.trajectory_history.clear();
         self.mode = None;
@@ -517,6 +553,26 @@ impl SalsaSpatialDecoder {
     }
 
     fn install_anchors(&mut self, tile: &ParameterTile) {
+        let keyframe_count = tile.correction.len();
+        for (keyframe, correction) in tile.correction.iter().enumerate() {
+            if keyframe_count == 0 {
+                break;
+            }
+            let numerator = tile.frames as u64 * (2 * keyframe as u64 + 1);
+            let denominator = 2 * keyframe_count as u64;
+            let sample = tile.start_sample + numerator / denominator;
+            let entry = CorrectionAnchor {
+                sample,
+                correction: Arc::new(correction.dense(self.object_count)),
+            };
+            match self
+                .correction_anchors
+                .binary_search_by_key(&sample, |anchor| anchor.sample)
+            {
+                Ok(index) => self.correction_anchors[index] = entry,
+                Err(index) => self.correction_anchors.insert(index, entry),
+            }
+        }
         for anchor in &tile.anchors {
             let powers = anchor_band_powers(anchor);
             let covariance = covariance_from_band_powers(&powers, &tile.pairs);
@@ -543,6 +599,54 @@ impl SalsaSpatialDecoder {
             }
         }
         self.prune_anchors(tile.start_sample);
+        self.prune_correction_anchors(tile.start_sample);
+    }
+
+    fn prune_correction_anchors(&mut self, current_start: u64) {
+        if self.correction_anchors.len() <= 8 {
+            return;
+        }
+        let cutoff = current_start.saturating_sub(2 * TILE_SAMPLES as u64);
+        let keep_from = self
+            .correction_anchors
+            .partition_point(|anchor| anchor.sample < cutoff)
+            .saturating_sub(1);
+        if keep_from > 0 {
+            self.correction_anchors.drain(0..keep_from);
+        }
+    }
+
+    fn correction_at(&self, sample: u64) -> Option<Arc<DenseCorrection>> {
+        if self.correction_anchors.is_empty() {
+            return None;
+        }
+        let index = self
+            .correction_anchors
+            .partition_point(|anchor| anchor.sample <= sample);
+        if index == 0 {
+            return Some(Arc::clone(&self.correction_anchors[0].correction));
+        }
+        if index >= self.correction_anchors.len() {
+            return Some(Arc::clone(
+                &self.correction_anchors[self.correction_anchors.len() - 1].correction,
+            ));
+        }
+        let first = &self.correction_anchors[index - 1];
+        let second = &self.correction_anchors[index];
+        let span = second.sample.saturating_sub(first.sample);
+        if span == 0 {
+            return Some(Arc::clone(&first.correction));
+        }
+        let amount = ((sample - first.sample) as f64 / span as f64).clamp(0.0, 1.0);
+        if Arc::ptr_eq(&first.correction, &second.correction) {
+            Some(Arc::clone(&first.correction))
+        } else {
+            Some(Arc::new(blend_corrections(
+                &first.correction,
+                &second.correction,
+                amount,
+            )))
+        }
     }
 
     fn prune_anchors(&mut self, current_start: u64) {
@@ -652,11 +756,13 @@ impl SalsaSpatialDecoder {
                     first.unobservable[band][channel] || second.unobservable[band][channel];
             }
         }
+        let correction = self.correction_at(sample);
         let active = (0..PARAM_BAND_COUNT).any(|band| covariance.trace(band) > TRACE_EPSILON);
         Some(SceneView {
             covariance,
             nu,
             unobservable,
+            correction,
             active,
         })
     }
@@ -717,7 +823,7 @@ impl SalsaSpatialDecoder {
             if let Some(scene) = scene.as_ref() {
                 let downmix = self.downmix_at(center);
                 let hop = (center / HOP_SAMPLES as u64) as usize;
-                Some(estimate_objects(
+                Some(estimate_objects_with_correction(
                     hop,
                     core,
                     &downmix,
@@ -725,6 +831,7 @@ impl SalsaSpatialDecoder {
                     &scene.nu,
                     scene.active,
                     &scene.unobservable,
+                    scene.correction.as_deref().map(Vec::as_slice),
                 )?)
             } else {
                 None

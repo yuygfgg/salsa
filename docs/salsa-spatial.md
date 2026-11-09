@@ -1,7 +1,8 @@
 # salsa-spatial codec design
 
 salsa-spatial represents an object scene with a 5.1(side) compatible core,
-two auxiliary height observations, and compact reconstruction parameters.
+two auxiliary height observations, compact covariance parameters, and a sparse
+rank-r correction of the reconstruction matrix.
 
 The public container is a standard 7.1 Ogg Opus mapping-family-1 track. Its
 FL, FR, FC, LFE, SL, and SR channels carry the 5.1(side) fallback mix, BL and
@@ -76,7 +77,7 @@ flowchart LR
     E --> P["Quantized parameter search"]
     P --> T["Parameter prediction and entropy coding"]
     C --> Y["Decoded core"]
-    T --> V["Reconstructed covariance and trajectories"]
+    T --> V["Reconstructed covariance, trajectories, and correction"]
     V --> M["Regularized synthesis matrix"]
     Y --> M
     M --> O["Reconstructed object signals"]
@@ -84,7 +85,9 @@ flowchart LR
 ~~~
 
 The core supplies waveform information. The parameters control how the
-decoder distributes that information among the objects.
+decoder distributes that information among the objects, and the sparse
+reconstruction correction removes part of the residual mapping error that the
+pair covariance cannot represent.
 
 ## 2. Why the representation avoids hard clustering
 
@@ -484,6 +487,99 @@ Core error powers are interpolated in linear power units. The decoder then
 forms a new $K$ and $M$ at the hop. Interpolating log powers or correlation
 phases separately would define a different covariance path.
 
+Reconstruction-matrix corrections follow the same rule at their own
+keyframes. Between two correction keyframes, the dense $\Delta M$ is
+interpolated linearly. An empty correction keyframe is represented by zero, so
+a correction can fade out within a corrected tile. A tile with no correction at all leaves the surrounding keyframes to
+interpolate across it.
+Either way, the pair baseline and its regularization are unchanged.
+
+### 4.6 Reconstruction-matrix correction
+
+The pair covariance supplies the baseline estimator $M_0$ from Section 4.4.
+It is a sparse approximation to a dense, common-factor source covariance. The
+encoder also measures the empirical linear estimator over a region:
+
+$$
+M_\star=R_{sy}R_{yy}^{\dagger}.
+$$
+
+For a fixed correction $\Delta M$ applied to a region containing hops $h$,
+write $M_h=M_{0,h}+\Delta M$ and define the moment-weighted baseline
+
+$$
+\bar M_0=
+\left(\sum_h M_{0,h}R_{yy,h}\right)
+\left(\sum_h R_{yy,h}\right)^{\dagger}.
+$$
+
+Let $R_{yy}=\sum_h R_{yy,h}$ and $R_{sy}=\sum_h R_{sy,h}$. The missing
+mapping and its weighted form are
+
+$$
+D=M_\star-\bar M_0,\qquad G=DR_{yy}^{1/2}.
+$$
+
+The rank-$r$ correction that minimizes the measured residual is
+
+$$
+\Delta M_r=G_rR_{yy}^{\dagger/2},
+\qquad
+G=U\Sigma V^H,
+\qquad
+G_r=U_r\Sigma_rV_r^H.
+$$
+
+Equivalently,
+
+$$
+\Delta M_r=\sum_{k=1}^{r}u_kw_k^H,
+$$
+
+where $u_k$ is a sparse complex left factor over source objects and $w_k^H$
+is a dense seven-channel right row. This is a correction to the mapping from
+the seven core observations, not a replacement source covariance. The pair
+model and its sparse rate advantage remain the baseline.
+
+The encoder fits each component as follows:
+
+1. Select the objects with the largest left-factor energy, restricted to
+   objects that are active in the region.
+2. Quantize the left factor with a per-component scale.
+3. Solve the least-squares right row for the **quantized** left factor,
+   $w^H=u^HD/(u^Hu)$. For an invertible $R_{yy}$ this does not depend on the
+   metric weighting; the pseudo-inverse handles rank deficiency.
+4. Repeat greedily on the residual $D-\sum_{k<r}\Delta M_k$, so each component
+   removes error left by the preceding quantized components.
+5. Keep a component only when its measured distortion reduction exceeds a
+   Lagrangian rate weight times its signaling bytes.
+
+The profile bounds the rank per band and the sparse support. The encoder
+selects the rank, support, keyframe density, and rate-distortion tradeoff with
+the same cost used for the other parameters.
+
+A tile carries a small number of correction keyframes, evenly spaced over the
+tile. The decoder interpolates the dense correction between keyframes with the
+same convex rule used for covariance:
+
+$$
+\Delta M(t)=(1-\alpha)\Delta M_0+\alpha\Delta M_1.
+$$
+
+Interpolating the correction keeps the baseline $M_0$ and its regularization
+untouched. Correction keyframes reset at tile boundaries and do not enter the
+persistent power, pair, or trajectory predictors.
+
+The correction is an optional side parameter set for a tile. A decoder that
+omits it uses the pair estimator $M_0$. The syntax bounds rank and support, so
+the correction remains a sparse correction to the mapping rather than a dense
+object covariance.
+
+Selection uses the measured deterministic moments, not the Gaussian formula.
+Activity gates still apply: inactive objects have exactly zero power and are
+excluded from the support, so a correction cannot inject energy into a silent
+object.
+
 ## 5. Time-frequency analysis and synthesis
 
 ### 5.1 Analysis frame and parameter bands
@@ -548,6 +644,7 @@ the gain correct at programme boundaries as well as in the steady state.
 | Audio samples | Downmix gains, authored position steps, and output PCM |
 | Analysis hops | Reconstruction matrices and their covariance interpolation |
 | Parameter anchors and tiles | Transmitted model updates and prediction state |
+| Correction keyframes | Sub-tile updates of the synthesis correction, interpolated at each hop |
 
 The analysis window controls spectral resolution. Anchor spacing controls
 how quickly the model can change. Additional anchors around transients
@@ -618,6 +715,7 @@ closed prediction loop prevents quantization error from causing state drift.
 |---|---|
 | Object activity | Explicit state changes |
 | Correlation pairs | Object indices, per-band magnitude, and wrapped phase innovations |
+| Reconstruction correction | Rank, sparse object support, quantized complex factors, right rows, and per-component scales |
 | Core error | Predicted logarithmic error-power envelopes and unobservable flags |
 | Trajectories | Quantized piecewise-linear positions and sample-time updates |
 | Recovery state | Periodic independent predictor and trajectory checkpoints |
@@ -820,7 +918,10 @@ state, rather than optimizing the whole programme jointly.
 5. Analyze source, ideal core, and decoded core with the shared transform.
 6. Accumulate the moments and core-error envelopes.
 7. Select quantized parameters with the tile RD search.
-8. Predict and entropy-code the selected parameters.
+8. Fit, quantize, and rate-prune reconstruction-correction keyframes from the
+   measured moments.
+9. Predict and entropy-code the selected parameters and signal the selected
+   correction keyframes.
 
 ### Decoder
 
@@ -830,9 +931,10 @@ state, rather than optimizing the whole programme jointly.
 4. Construct each anchor's positive-semidefinite covariance.
 5. Interpolate covariance and error power at each hop.
 6. Solve the regularized core system for each band.
-7. Apply the resulting matrix to each bin in that band.
-8. Synthesize the object signals with normalized overlap-add.
-9. Render the objects at the transmitted positions and carry LFE separately.
+7. Interpolate the reconstruction correction and add it to the solved matrix.
+8. Apply the resulting matrix to each bin in that band.
+9. Synthesize the object signals with normalized overlap-add.
+10. Render the objects at the transmitted positions and carry LFE separately.
 
 ## 9. Computational structure
 
@@ -845,8 +947,14 @@ The core inverse stays small as $N$ grows. The object synthesis work and
 power metadata grow with object count. Storing diagonal powers and pair
 terms requires $O(N+P)$ covariance entries per band.
 
+The reconstruction correction adds an $O(NJ^2)$ rank-$r$ factor fit per band
+and keyframe; with $J=7$ this is small compared with the audio-rate STFT. The
+decoder materializes $O(NJ)$ dense rows per band and keyframe and interpolates
+them at $O(NJ)$ per hop. Its signaling cost scales with rank, sparse
+support, and keyframe count, not with a dense $N\times N$ object covariance.
+
 The algorithm relies on four shared quantities: reconstructed trajectories,
-parameter predictor state, analysis timing, and the covariance interpolation
-rule. Agreement on these quantities makes the encoder's candidate estimator
-the estimator that the decoder uses.
+parameter predictor state, analysis timing, and the covariance and correction
+interpolation rules. Agreement on these quantities makes the encoder's
+candidate estimator the estimator that the decoder uses.
 

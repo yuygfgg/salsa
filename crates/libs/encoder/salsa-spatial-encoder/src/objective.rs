@@ -237,7 +237,7 @@ pub fn power_parameters(tile: &salsa_spatial::params::ParameterTile) -> Vec<f64>
         .collect()
 }
 
-fn candidate_powers(
+pub(crate) fn candidate_powers(
     anchor: &ParameterAnchor,
     values: &[f64],
     active: &[usize],
@@ -271,7 +271,10 @@ fn candidate_powers(
 
 /// Remap full-object correlation pairs onto the compact active set. Pairs that
 /// involve an object with no energy in this tile are dropped.
-fn compact_pairs(pairs: &[CorrelationPair], compact_of: &[usize]) -> Vec<CorrelationPair> {
+pub(crate) fn compact_pairs(
+    pairs: &[CorrelationPair],
+    compact_of: &[usize],
+) -> Vec<CorrelationPair> {
     pairs
         .iter()
         .filter_map(|pair| {
@@ -797,6 +800,7 @@ mod tests {
             anchors,
             pairs: Vec::new(),
             trajectories,
+            correction: Vec::new(),
         };
         (tile, RenderContext::new(&measured))
     }

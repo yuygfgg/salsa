@@ -71,6 +71,10 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
         reference_start: 91,
         headroom_db: None,
         ceiling_horizontal_gain: 0.0,
+        correction_rank: 0,
+        correction_support: 8,
+        correction_keyframes: 1,
+        correction_rate_weight: 0.0,
     };
     let mut updates = Vec::new();
     let pool = rayon::ThreadPoolBuilder::new()
