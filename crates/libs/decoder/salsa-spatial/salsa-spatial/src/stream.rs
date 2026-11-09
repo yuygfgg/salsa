@@ -88,6 +88,8 @@ impl MultistreamWriter {
             }
         }
 
+        // A checkpoint is independently decodable, so it carries the
+        // configuration record needed by a parser that starts at its offset.
         let resend = match self.last_config_sample {
             None => true,
             Some(sample) => {

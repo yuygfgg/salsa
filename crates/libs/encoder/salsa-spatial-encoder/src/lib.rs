@@ -320,8 +320,8 @@ fn make_config(
         core_panner,
         ..SalsaSpatialStreamConfig::default()
     };
+    config.format_version = 3;
     if core_panner.algorithm_version() == 2 {
-        config.format_version = 2;
         config.signal_models[0].algorithm_version = 2;
     }
     config

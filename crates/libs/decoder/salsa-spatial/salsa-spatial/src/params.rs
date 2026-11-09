@@ -37,7 +37,6 @@ use crate::constants::{
 use crate::correction::{TileCorrection, decode_trailing_corrections};
 use crate::entropy::{
     AdaptiveModel, DIRECT_INNOVATION_COUNT, EntropyContexts, EntropyDecoder, EntropyEncoder,
-    zigzag_decode, zigzag_encode,
 };
 use crate::error::{Result, SpatialError};
 use crate::snapshot::SceneSnapshot;
@@ -48,7 +47,7 @@ const MAX_ERROR_LOG: i32 = 160;
 const POSITION_STEPS: f64 = 4095.0;
 const MAX_TRAJECTORY_KNOTS: usize = 100_000;
 /// Payload magic for an independently coded checkpoint.
-pub const CHECKPOINT_MAGIC: u32 = 0x5343_4B50; // "SCKP"
+pub const CHECKPOINT_MAGIC: u32 = 0x5343_4B51; // "SCKQ"
 
 /// One piecewise-linear trajectory knot.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1173,39 +1172,15 @@ fn position_limits(axis: usize) -> (f64, f64) {
     if axis < 2 { (-1.0, 1.0) } else { (0.0, 1.0) }
 }
 
-fn quantize_position(axis: usize, value: f64) -> u16 {
+pub(crate) fn quantize_position(axis: usize, value: f64) -> u16 {
     let (low, high) = position_limits(axis);
     let normalized = ((value - low) / (high - low)).clamp(0.0, 1.0);
     (normalized * POSITION_STEPS).round() as u16
 }
 
-fn dequantize_position(axis: usize, code: u16) -> f64 {
+pub(crate) fn dequantize_position(axis: usize, code: u16) -> f64 {
     let (low, high) = position_limits(axis);
     low + (f64::from(code) / POSITION_STEPS) * (high - low)
-}
-
-fn encode_bits(
-    encoder: &mut EntropyEncoder,
-    model: &mut AdaptiveModel,
-    value: u32,
-    bits: u32,
-) -> Result<()> {
-    for bit in (0..bits).rev() {
-        encoder.encode(model, ((value >> bit) & 1) as usize)?;
-    }
-    Ok(())
-}
-
-fn decode_bits(
-    decoder: &mut EntropyDecoder<'_>,
-    model: &mut AdaptiveModel,
-    bits: u32,
-) -> Result<u32> {
-    let mut value = 0u32;
-    for _ in 0..bits {
-        value = (value << 1) | decoder.decode(model)? as u32;
-    }
-    Ok(value)
 }
 
 fn encode_trajectories(
@@ -1231,6 +1206,12 @@ fn encode_trajectories(
         let mut previous_sample = state.trajectories[object]
             .last()
             .map_or(tile.start_sample as i64, |knot| knot.sample as i64);
+        let mut previous_position = [0u16; 3];
+        if let Some(last) = state.trajectories[object].last() {
+            for axis in 0..3 {
+                previous_position[axis] = quantize_position(axis, last.position[axis]);
+            }
+        }
         let mut decoded = Vec::with_capacity(knots.len());
         for knot in knots {
             let delta = knot.sample as i64 - previous_sample;
@@ -1244,12 +1225,14 @@ fn encode_trajectories(
             let mut position = [0.0f64; 3];
             for axis in 0..3 {
                 let code = quantize_position(axis, knot.position[axis]);
-                encode_bits(
+                let code_delta = i64::from(code) - i64::from(previous_position[axis]);
+                enc_signed(
                     encoder,
-                    &mut contexts.trajectory_position,
-                    u32::from(code),
-                    12,
+                    &mut contexts.trajectory_position_delta,
+                    &mut contexts.tail,
+                    code_delta,
                 )?;
+                previous_position[axis] = code;
                 position[axis] = dequantize_position(axis, code);
             }
             decoded.push(TrajectoryKnot {
@@ -1284,6 +1267,12 @@ fn decode_trajectories(
         let mut previous_sample = state.trajectories[object]
             .last()
             .map_or(start_sample as i64, |knot| knot.sample as i64);
+        let mut previous_position = [0u16; 3];
+        if let Some(last) = state.trajectories[object].last() {
+            for axis in 0..3 {
+                previous_position[axis] = quantize_position(axis, last.position[axis]);
+            }
+        }
         let mut knots = Vec::with_capacity(knot_count);
         for _ in 0..knot_count {
             let delta = dec_signed(decoder, &mut contexts.trajectory_time, &mut contexts.tail)?;
@@ -1296,7 +1285,14 @@ fn decode_trajectories(
             previous_sample = sample;
             let mut position = [0.0f64; 3];
             for axis in 0..3 {
-                let code = decode_bits(decoder, &mut contexts.trajectory_position, 12)? as u16;
+                let code_delta = dec_signed(
+                    decoder,
+                    &mut contexts.trajectory_position_delta,
+                    &mut contexts.tail,
+                )?;
+                let code = (i64::from(previous_position[axis]) + code_delta)
+                    .clamp(0, POSITION_STEPS as i64) as u16;
+                previous_position[axis] = code;
                 position[axis] = dequantize_position(axis, code);
             }
             knots.push(TrajectoryKnot {
@@ -1318,27 +1314,11 @@ fn raw_unsigned(
     encoder.encode_unsigned(value, &mut contexts.snapshot_bits)
 }
 
-fn raw_signed(
-    encoder: &mut EntropyEncoder,
-    contexts: &mut EntropyContexts,
-    value: i64,
-) -> Result<()> {
-    raw_unsigned(encoder, contexts, zigzag_encode(value))
-}
-
 fn read_raw_unsigned(
     decoder: &mut EntropyDecoder<'_>,
     contexts: &mut EntropyContexts,
 ) -> Result<u64> {
     decoder.decode_unsigned(&mut contexts.snapshot_bits)
-}
-
-fn read_raw_signed(
-    decoder: &mut EntropyDecoder<'_>,
-    contexts: &mut EntropyContexts,
-) -> Result<i64> {
-    let value = read_raw_unsigned(decoder, contexts)?;
-    Ok(zigzag_decode(value))
 }
 
 fn encode_checkpoint_state(
@@ -1360,12 +1340,25 @@ fn encode_checkpoint_state(
     for knots in &snapshot.trajectories {
         raw_unsigned(encoder, contexts, knots.len() as u64)?;
         let mut previous_sample = 0i64;
+        let mut previous_position = [0u16; 3];
         for knot in knots {
-            raw_signed(encoder, contexts, knot.sample as i64 - previous_sample)?;
+            enc_signed(
+                encoder,
+                &mut contexts.snapshot_trajectory,
+                &mut contexts.tail,
+                knot.sample as i64 - previous_sample,
+            )?;
             previous_sample = knot.sample as i64;
             for axis in 0..3 {
                 let code = quantize_position(axis, knot.position[axis]);
-                encode_bits(encoder, &mut contexts.snapshot_bits, u32::from(code), 12)?;
+                let code_delta = i64::from(code) - i64::from(previous_position[axis]);
+                enc_signed(
+                    encoder,
+                    &mut contexts.snapshot_position_delta,
+                    &mut contexts.tail,
+                    code_delta,
+                )?;
+                previous_position[axis] = code;
             }
         }
     }
@@ -1373,7 +1366,12 @@ fn encode_checkpoint_state(
     raw_unsigned(encoder, contexts, snapshot.power.ell_half_db.len() as u64)?;
     for bands in &snapshot.power.ell_half_db {
         for band in 0..PARAM_BAND_COUNT {
-            raw_signed(encoder, contexts, i64::from(bands[band]))?;
+            enc_signed(
+                encoder,
+                &mut contexts.snapshot_ell,
+                &mut contexts.tail,
+                i64::from(bands[band]),
+            )?;
         }
     }
 
@@ -1384,7 +1382,12 @@ fn encode_checkpoint_state(
     )?;
     for bands in &snapshot.power_model.base_half_db {
         for band in 0..PARAM_BAND_COUNT {
-            raw_signed(encoder, contexts, i64::from(bands[band]))?;
+            enc_signed(
+                encoder,
+                &mut contexts.snapshot_base,
+                &mut contexts.tail,
+                i64::from(bands[band]),
+            )?;
         }
     }
 
@@ -1395,22 +1398,33 @@ fn encode_checkpoint_state(
     )?;
     for bands in &snapshot.power_model.fast_half_db {
         for coefficient in 0..DCT_COEFF_COUNT {
-            raw_signed(encoder, contexts, i64::from(bands[coefficient]))?;
+            enc_signed(
+                encoder,
+                &mut contexts.snapshot_fast,
+                &mut contexts.tail,
+                i64::from(bands[coefficient]),
+            )?;
         }
     }
 
     raw_unsigned(encoder, contexts, snapshot.correction_half_db.len() as u64)?;
     for bands in &snapshot.correction_half_db {
         for band in 0..PARAM_BAND_COUNT {
-            raw_signed(encoder, contexts, i64::from(bands[band]))?;
+            enc_signed(
+                encoder,
+                &mut contexts.snapshot_correction,
+                &mut contexts.tail,
+                i64::from(bands[band]),
+            )?;
         }
     }
 
     for channel in 0..CORE_CHANNEL_COUNT {
         for band in 0..PARAM_BAND_COUNT {
-            raw_signed(
+            enc_signed(
                 encoder,
-                contexts,
+                &mut contexts.snapshot_error,
+                &mut contexts.tail,
                 i64::from(snapshot.error_log[channel][band]),
             )?;
             encoder.encode(
@@ -1472,8 +1486,13 @@ fn decode_checkpoint_state(
         }
         let mut knots = Vec::with_capacity(knot_count);
         let mut previous_sample = 0i64;
+        let mut previous_position = [0u16; 3];
         for _ in 0..knot_count {
-            let delta = read_raw_signed(decoder, contexts)?;
+            let delta = dec_signed(
+                decoder,
+                &mut contexts.snapshot_trajectory,
+                &mut contexts.tail,
+            )?;
             let sample = previous_sample
                 .checked_add(delta)
                 .ok_or(SpatialError::Parameter("snapshot trajectory time overflow"))?;
@@ -1483,7 +1502,14 @@ fn decode_checkpoint_state(
             previous_sample = sample;
             let mut position = [0.0f64; 3];
             for axis in 0..3 {
-                let code = decode_bits(decoder, &mut contexts.snapshot_bits, 12)? as u16;
+                let code_delta = dec_signed(
+                    decoder,
+                    &mut contexts.snapshot_position_delta,
+                    &mut contexts.tail,
+                )?;
+                let code = (i64::from(previous_position[axis]) + code_delta)
+                    .clamp(0, POSITION_STEPS as i64) as u16;
+                previous_position[axis] = code;
                 position[axis] = dequantize_position(axis, code);
             }
             knots.push(TrajectoryKnot {
@@ -1502,8 +1528,12 @@ fn decode_checkpoint_state(
     for _ in 0..ell_count {
         let mut bands = [0i32; PARAM_BAND_COUNT];
         for band in &mut bands {
-            *band = i32::try_from(read_raw_signed(decoder, contexts)?)
-                .map_err(|_| SpatialError::Parameter("snapshot power overflow"))?;
+            *band = i32::try_from(dec_signed(
+                decoder,
+                &mut contexts.snapshot_ell,
+                &mut contexts.tail,
+            )?)
+            .map_err(|_| SpatialError::Parameter("snapshot power overflow"))?;
         }
         ell_half_db.push(bands);
     }
@@ -1516,8 +1546,12 @@ fn decode_checkpoint_state(
     for _ in 0..base_count {
         let mut bands = [0i32; PARAM_BAND_COUNT];
         for band in &mut bands {
-            *band = i32::try_from(read_raw_signed(decoder, contexts)?)
-                .map_err(|_| SpatialError::Parameter("snapshot base overflow"))?;
+            *band = i32::try_from(dec_signed(
+                decoder,
+                &mut contexts.snapshot_base,
+                &mut contexts.tail,
+            )?)
+            .map_err(|_| SpatialError::Parameter("snapshot base overflow"))?;
         }
         base_half_db.push(bands);
     }
@@ -1530,8 +1564,12 @@ fn decode_checkpoint_state(
     for _ in 0..fast_count {
         let mut coefficients = [0i32; DCT_COEFF_COUNT];
         for coefficient in &mut coefficients {
-            *coefficient = i32::try_from(read_raw_signed(decoder, contexts)?)
-                .map_err(|_| SpatialError::Parameter("snapshot fast overflow"))?;
+            *coefficient = i32::try_from(dec_signed(
+                decoder,
+                &mut contexts.snapshot_fast,
+                &mut contexts.tail,
+            )?)
+            .map_err(|_| SpatialError::Parameter("snapshot fast overflow"))?;
         }
         fast_half_db.push(coefficients);
     }
@@ -1546,8 +1584,12 @@ fn decode_checkpoint_state(
     for _ in 0..correction_count {
         let mut bands = [0i32; PARAM_BAND_COUNT];
         for band in &mut bands {
-            *band = i32::try_from(read_raw_signed(decoder, contexts)?)
-                .map_err(|_| SpatialError::Parameter("snapshot correction overflow"))?;
+            *band = i32::try_from(dec_signed(
+                decoder,
+                &mut contexts.snapshot_correction,
+                &mut contexts.tail,
+            )?)
+            .map_err(|_| SpatialError::Parameter("snapshot correction overflow"))?;
         }
         correction_half_db.push(bands);
     }
@@ -1556,8 +1598,12 @@ fn decode_checkpoint_state(
     let mut error_unobservable = [[false; PARAM_BAND_COUNT]; CORE_CHANNEL_COUNT];
     for channel in 0..CORE_CHANNEL_COUNT {
         for band in 0..PARAM_BAND_COUNT {
-            error_log[channel][band] = i32::try_from(read_raw_signed(decoder, contexts)?)
-                .map_err(|_| SpatialError::Parameter("snapshot error overflow"))?;
+            error_log[channel][band] = i32::try_from(dec_signed(
+                decoder,
+                &mut contexts.snapshot_error,
+                &mut contexts.tail,
+            )?)
+            .map_err(|_| SpatialError::Parameter("snapshot error overflow"))?;
             let value = decoder.decode(&mut contexts.snapshot_flag)?;
             if value > 1 {
                 return Err(SpatialError::Parameter("invalid snapshot error mask"));

@@ -14,7 +14,7 @@ use crate::descriptor::{
 };
 use crate::error::{Result, SpatialError};
 use crate::frame::{EnhancementTile, SalsaSpatialStreamConfig};
-use crate::params::TrajectoryKnot;
+use crate::params::{TrajectoryKnot, dequantize_position, quantize_position};
 use crate::params::{decode_checkpoint, encode_checkpoint};
 use crate::snapshot::SceneSnapshot;
 
@@ -181,15 +181,23 @@ pub fn encode_configuration(config: &SalsaSpatialStreamConfig) -> Result<Vec<u8>
     }
     writer.u32(config.initial_objects.len() as u32);
     for object in &config.initial_objects {
-        encode_object(&mut writer, object);
+        if config.format_version >= 3 {
+            encode_object_compact(&mut writer, object);
+        } else {
+            encode_object(&mut writer, object);
+        }
     }
     writer.u32(config.initial_trajectories.len() as u32);
     for trajectory in &config.initial_trajectories {
         writer.u32(trajectory.len() as u32);
-        for knot in trajectory {
-            writer.u64(knot.sample);
-            for coordinate in knot.position {
-                writer.f64(coordinate);
+        if config.format_version >= 3 {
+            encode_trajectory_compact(&mut writer, trajectory);
+        } else {
+            for knot in trajectory {
+                writer.u64(knot.sample);
+                for coordinate in knot.position {
+                    writer.f64(coordinate);
+                }
             }
         }
     }
@@ -206,7 +214,7 @@ pub fn decode_configuration(bytes: &[u8]) -> Result<SalsaSpatialStreamConfig> {
         return Err(SpatialError::Syntax("bad configuration magic"));
     }
     let format_version = reader.u16()?;
-    if !matches!(format_version, 1 | 2) {
+    if !matches!(format_version, 1 | 2 | 3) {
         return Err(SpatialError::UnsupportedVersion {
             version: format_version,
         });
@@ -325,17 +333,25 @@ pub fn decode_configuration(bytes: &[u8]) -> Result<SalsaSpatialStreamConfig> {
     let object_total = reader.bounded_count(1)?;
     let mut initial_objects = Vec::with_capacity(object_total);
     for _ in 0..object_total {
-        initial_objects.push(decode_object(&mut reader)?);
+        initial_objects.push(if format_version >= 3 {
+            decode_object_compact(&mut reader)?
+        } else {
+            decode_object(&mut reader)?
+        });
     }
     let trajectory_count = reader.bounded_count(1)?;
     let mut initial_trajectories = Vec::with_capacity(trajectory_count);
     for _ in 0..trajectory_count {
         let knot_count = reader.bounded_count(1)?;
         let mut trajectory = Vec::with_capacity(knot_count);
-        for _ in 0..knot_count {
-            let sample = reader.u64()?;
-            let position = [reader.f64()?, reader.f64()?, reader.f64()?];
-            trajectory.push(TrajectoryKnot { sample, position });
+        if format_version >= 3 {
+            decode_trajectory_compact(&mut reader, knot_count, &mut trajectory)?;
+        } else {
+            for _ in 0..knot_count {
+                let sample = reader.u64()?;
+                let position = [reader.f64()?, reader.f64()?, reader.f64()?];
+                trajectory.push(TrajectoryKnot { sample, position });
+            }
         }
         initial_trajectories.push(trajectory);
     }
@@ -577,6 +593,142 @@ fn decode_binding(reader: &mut Reader) -> Result<CodecBinding> {
         channel_mapping,
         logical_to_coded,
     })
+}
+
+fn on_position_grid(axis: usize, value: f32) -> Option<u16> {
+    let code = quantize_position(axis, f64::from(value));
+    let decoded = dequantize_position(axis, code) as f32;
+    (decoded.to_bits() == value.to_bits()).then_some(code)
+}
+
+fn encode_object_compact(writer: &mut Writer, object: &ObjectState) {
+    writer.u16(object.id as u16);
+    let codes = [
+        on_position_grid(0, object.position[0]),
+        on_position_grid(1, object.position[1]),
+        on_position_grid(2, object.position[2]),
+    ];
+    let compact = codes.iter().all(Option::is_some);
+    writer.u8(compact as u8);
+    if compact {
+        for code in codes {
+            writer.u16(code.expect("all axes are on the position grid"));
+        }
+    } else {
+        for coordinate in object.position {
+            writer.f32(coordinate);
+        }
+    }
+    writer.f32(object.gain);
+    let flags = u8::from(object.enabled)
+        | (u8::from(object.size.is_some()) << 1)
+        | (u8::from(object.spread.is_some()) << 2);
+    writer.u8(flags);
+    if let Some(size) = object.size {
+        writer.f32(size);
+    }
+    if let Some(spread) = object.spread {
+        writer.f32(spread);
+    }
+}
+
+fn decode_object_compact(reader: &mut Reader) -> Result<ObjectState> {
+    let id = u32::from(reader.u16()?);
+    let compact = reader.u8()? != 0;
+    let position = if compact {
+        [
+            dequantize_position(0, reader.u16()?) as f32,
+            dequantize_position(1, reader.u16()?) as f32,
+            dequantize_position(2, reader.u16()?) as f32,
+        ]
+    } else {
+        [reader.f32()?, reader.f32()?, reader.f32()?]
+    };
+    let gain = reader.f32()?;
+    let flags = reader.u8()?;
+    let enabled = flags & 1 != 0;
+    let size = if flags & 2 != 0 {
+        Some(reader.f32()?)
+    } else {
+        None
+    };
+    let spread = if flags & 4 != 0 {
+        Some(reader.f32()?)
+    } else {
+        None
+    };
+    Ok(ObjectState {
+        id,
+        position,
+        gain,
+        enabled,
+        size,
+        spread,
+    })
+}
+
+fn encode_trajectory_compact(writer: &mut Writer, trajectory: &[TrajectoryKnot]) {
+    let mut previous_sample = 0i64;
+    for knot in trajectory {
+        let sample_delta = knot.sample as i64 - previous_sample;
+        previous_sample = knot.sample as i64;
+        let codes = [
+            on_position_grid(0, knot.position[0] as f32),
+            on_position_grid(1, knot.position[1] as f32),
+            on_position_grid(2, knot.position[2] as f32),
+        ];
+        let compact = sample_delta >= 0
+            && sample_delta <= u64::from(u32::MAX) as i64
+            && codes.iter().all(Option::is_some);
+        writer.u8(compact as u8);
+        if compact {
+            writer.u32(sample_delta as u32);
+            for code in codes {
+                writer.u16(code.expect("all axes are on the position grid"));
+            }
+        } else {
+            writer.u64(knot.sample);
+            for coordinate in knot.position {
+                writer.f64(coordinate);
+            }
+        }
+    }
+}
+
+fn decode_trajectory_compact(
+    reader: &mut Reader,
+    knot_count: usize,
+    trajectory: &mut Vec<TrajectoryKnot>,
+) -> Result<()> {
+    let mut previous_sample = 0i64;
+    for _ in 0..knot_count {
+        let compact = reader.u8()? != 0;
+        if compact {
+            let sample_delta = i64::from(reader.u32()?);
+            let sample = previous_sample
+                .checked_add(sample_delta)
+                .ok_or(SpatialError::Truncated)?;
+            if sample < 0 {
+                return Err(SpatialError::InvalidValue("invalid trajectory sample"));
+            }
+            previous_sample = sample;
+            let position = [
+                dequantize_position(0, reader.u16()?),
+                dequantize_position(1, reader.u16()?),
+                dequantize_position(2, reader.u16()?),
+            ];
+            trajectory.push(TrajectoryKnot {
+                sample: sample as u64,
+                position,
+            });
+        } else {
+            let sample = reader.u64()?;
+            let position = [reader.f64()?, reader.f64()?, reader.f64()?];
+            previous_sample = sample as i64;
+            trajectory.push(TrajectoryKnot { sample, position });
+        }
+    }
+    Ok(())
 }
 
 fn encode_object(writer: &mut Writer, object: &ObjectState) {

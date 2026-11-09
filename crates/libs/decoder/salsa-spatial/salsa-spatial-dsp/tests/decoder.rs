@@ -180,7 +180,7 @@ fn parameter_tile(
         frames,
         base: PowerModel {
             base_half_db: base,
-            fast_half_db: vec![[0; 6]; object_count],
+            fast_half_db: vec![[0; salsa_spatial::DCT_COEFF_COUNT]; object_count],
         },
         anchors,
         pairs: Vec::new(),

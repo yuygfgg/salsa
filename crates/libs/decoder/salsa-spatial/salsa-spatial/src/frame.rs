@@ -143,7 +143,7 @@ impl SalsaSpatialStreamConfig {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if !matches!(self.format_version, 1 | 2) {
+        if !matches!(self.format_version, 1 | 2 | 3) {
             return Err(SpatialError::UnsupportedVersion {
                 version: self.format_version,
             });

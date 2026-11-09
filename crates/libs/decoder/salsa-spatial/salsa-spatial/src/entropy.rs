@@ -319,8 +319,16 @@ pub struct EntropyContexts {
     pub trajectory_count: AdaptiveModel,
     pub trajectory_time: AdaptiveModel,
     pub trajectory_position: AdaptiveModel,
+    pub trajectory_position_delta: AdaptiveModel,
     pub snapshot_flag: AdaptiveModel,
     pub snapshot_bits: AdaptiveModel,
+    pub snapshot_ell: AdaptiveModel,
+    pub snapshot_base: AdaptiveModel,
+    pub snapshot_fast: AdaptiveModel,
+    pub snapshot_correction: AdaptiveModel,
+    pub snapshot_error: AdaptiveModel,
+    pub snapshot_trajectory: AdaptiveModel,
+    pub snapshot_position_delta: AdaptiveModel,
     /// Shared binary model for escape tails.
     pub tail: AdaptiveModel,
 }
@@ -378,8 +386,16 @@ impl EntropyContexts {
             trajectory_count: innovation_model(),
             trajectory_time: innovation_model(),
             trajectory_position: flag_model(),
+            trajectory_position_delta: innovation_model(),
             snapshot_flag: flag_model(),
             snapshot_bits: flag_model(),
+            snapshot_ell: innovation_model(),
+            snapshot_base: innovation_model(),
+            snapshot_fast: innovation_model(),
+            snapshot_correction: innovation_model(),
+            snapshot_error: innovation_model(),
+            snapshot_trajectory: innovation_model(),
+            snapshot_position_delta: innovation_model(),
             tail: tail_model(),
         }
     }

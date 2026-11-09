@@ -24,6 +24,8 @@ use crate::error::{Result, SpatialError};
 pub const CORRECTION_TRAILER_MAGIC: u32 = 0x5343_5254; // "SCRT"
 /// Correction payload version.
 pub const CORRECTION_VERSION: u8 = 2;
+/// Compact per-band keyframe payload version.
+pub const CORRECTION_VERSION_COMPACT: u8 = 3;
 /// Maximum number of rank-one components per band supported by the syntax.
 pub const CORRECTION_MAX_RANK: usize = 7;
 /// Maximum sparse support length per component.
@@ -189,7 +191,15 @@ fn write_bands(payload: &mut Vec<u8>, correction: &TileCorrection) {
 }
 
 /// Serialize a list of per-tile correction keyframes, including the trailer.
+///
+/// The compact form shares a band component's support, left factor, and
+/// left scale across keyframes when they match. It also quantizes the two
+/// scale values and replaces the per-band rank bytes with a band mask and
+/// per-band rank modes.
 pub fn encode_keyframes(corrections: &[TileCorrection]) -> Vec<u8> {
+    if let Some(payload) = encode_compact_keyframes(corrections) {
+        return payload;
+    }
     let mut payload = Vec::new();
     payload.push(CORRECTION_VERSION);
     let count = corrections.len().min(CORRECTION_MAX_KEYFRAMES);
@@ -197,10 +207,115 @@ pub fn encode_keyframes(corrections: &[TileCorrection]) -> Vec<u8> {
     for correction in corrections.iter().take(count) {
         write_bands(&mut payload, correction);
     }
+    finish_payload(payload)
+}
+
+fn finish_payload(mut payload: Vec<u8>) -> Vec<u8> {
     let length = payload.len() as u32;
     payload.extend_from_slice(&length.to_le_bytes());
     payload.extend_from_slice(&CORRECTION_TRAILER_MAGIC.to_le_bytes());
     payload
+}
+
+fn encode_compact_keyframes(corrections: &[TileCorrection]) -> Option<Vec<u8>> {
+    let count = corrections.len().min(CORRECTION_MAX_KEYFRAMES);
+    if count == 0 {
+        return None;
+    }
+    let corrections = &corrections[..count];
+    let mut band_mask = 0u32;
+    for band in 0..PARAM_BAND_COUNT {
+        let max_rank = corrections
+            .iter()
+            .map(|correction| correction.bands[band].components.len())
+            .max()
+            .unwrap_or(0);
+        if max_rank > CORRECTION_MAX_RANK {
+            return None;
+        }
+        if max_rank > 0 {
+            band_mask |= 1 << band;
+        }
+    }
+    if band_mask == 0 {
+        return Some(finish_payload(vec![
+            CORRECTION_VERSION_COMPACT,
+            count as u8,
+            0,
+            0,
+            0,
+        ]));
+    }
+
+    let mut payload = Vec::new();
+    payload.push(CORRECTION_VERSION_COMPACT);
+    payload.push(count as u8);
+    payload.extend_from_slice(&band_mask.to_le_bytes()[..3]);
+    for band in 0..PARAM_BAND_COUNT {
+        if band_mask & (1 << band) == 0 {
+            continue;
+        }
+        let rank = corrections[0].bands[band].components.len();
+        let same_rank = corrections
+            .iter()
+            .all(|correction| correction.bands[band].components.len() == rank);
+        payload.push(u8::from(!same_rank));
+        if same_rank {
+            payload.push(rank as u8);
+            for component in 0..rank {
+                let first = &corrections[0].bands[band].components[component];
+                let shared = corrections.iter().all(|correction| {
+                    let other = &correction.bands[band].components[component];
+                    first.support == other.support
+                        && first.left == other.left
+                        && (first.left_scale - other.left_scale).abs() < 1e-9
+                });
+                payload.push(u8::from(shared));
+                if shared {
+                    write_support_left(&mut payload, first);
+                }
+                for correction in corrections {
+                    let current = &correction.bands[band].components[component];
+                    if !shared {
+                        write_support_left(&mut payload, current);
+                    }
+                    for value in &current.right {
+                        payload.push(pack_complex(*value));
+                    }
+                    payload.extend_from_slice(&(current.right_scale as f32).to_le_bytes());
+                }
+            }
+        } else {
+            for correction in corrections {
+                let components = &correction.bands[band].components;
+                payload.push(components.len() as u8);
+                for component in components {
+                    write_support_left(&mut payload, component);
+                    for value in &component.right {
+                        payload.push(pack_complex(*value));
+                    }
+                    payload.extend_from_slice(&(component.right_scale as f32).to_le_bytes());
+                }
+            }
+        }
+    }
+    Some(finish_payload(payload))
+}
+
+fn write_support_left(payload: &mut Vec<u8>, component: &CorrectionComponent) {
+    let support_len = component
+        .support
+        .len()
+        .min(CORRECTION_MAX_SUPPORT)
+        .min(component.left.len());
+    payload.push(support_len as u8);
+    for &object in component.support.iter().take(support_len) {
+        payload.push(object.min((MAX_OBJECTS - 1) as u16) as u8);
+    }
+    for value in component.left.iter().take(support_len) {
+        payload.push(pack_complex(*value));
+    }
+    payload.extend_from_slice(&(component.left_scale as f32).to_le_bytes());
 }
 
 /// Parse every optional correction keyframe from a complete tile payload.
@@ -247,6 +362,7 @@ fn decode_payload(bytes: &[u8]) -> Result<Vec<TileCorrection>> {
     let version = reader.u8()?;
     let corrections = match version {
         1 => vec![decode_bands(&mut reader)?],
+        CORRECTION_VERSION_COMPACT => decode_compact_bands(&mut reader)?,
         CORRECTION_VERSION => {
             let count = usize::from(reader.u8()?);
             if count > CORRECTION_MAX_KEYFRAMES {
@@ -268,6 +384,109 @@ fn decode_payload(bytes: &[u8]) -> Result<Vec<TileCorrection>> {
         return Err(SpatialError::Syntax("trailing correction payload"));
     }
     Ok(corrections)
+}
+
+fn decode_compact_bands(reader: &mut SliceReader<'_>) -> Result<Vec<TileCorrection>> {
+    let count = usize::from(reader.u8()?);
+    if count == 0 || count > CORRECTION_MAX_KEYFRAMES {
+        return Err(SpatialError::Parameter("invalid correction keyframe count"));
+    }
+    let mut mask = [0u8; 3];
+    for byte in &mut mask {
+        *byte = reader.u8()?;
+    }
+    let band_mask = u32::from_le_bytes([mask[0], mask[1], mask[2], 0]);
+    let mut corrections = vec![TileCorrection::default(); count];
+    for band in 0..PARAM_BAND_COUNT {
+        if band_mask & (1 << band) == 0 {
+            continue;
+        }
+        let per_keyframe_rank = reader.u8()? != 0;
+        if per_keyframe_rank {
+            for correction in &mut corrections {
+                let rank = usize::from(reader.u8()?);
+                if rank > CORRECTION_MAX_RANK {
+                    return Err(SpatialError::Parameter("correction rank out of range"));
+                }
+                for _ in 0..rank {
+                    let (support, left, left_scale) = read_support_left(reader)?;
+                    let mut right = [Complex::new(0.0, 0.0); CORE_CHANNEL_COUNT];
+                    for value in &mut right {
+                        *value = unpack_complex(reader.u8()?);
+                    }
+                    let right_scale = f64::from(reader.f32()?);
+                    correction.bands[band].components.push(CorrectionComponent {
+                        support,
+                        left,
+                        right,
+                        left_scale,
+                        right_scale,
+                    });
+                }
+            }
+            continue;
+        }
+        let rank = usize::from(reader.u8()?);
+        if rank > CORRECTION_MAX_RANK {
+            return Err(SpatialError::Parameter("correction rank out of range"));
+        }
+        for _ in 0..rank {
+            let shared = reader.u8()? != 0;
+            let shared_data = if shared {
+                Some(read_support_left(reader)?)
+            } else {
+                None
+            };
+            for correction in &mut corrections {
+                let (support, left, left_scale) =
+                    if let Some((support, left, left_scale)) = &shared_data {
+                        (support.clone(), left.clone(), *left_scale)
+                    } else {
+                        read_support_left(reader)?
+                    };
+                let mut right = [Complex::new(0.0, 0.0); CORE_CHANNEL_COUNT];
+                for value in &mut right {
+                    *value = unpack_complex(reader.u8()?);
+                }
+                let right_scale = f64::from(reader.f32()?);
+                correction.bands[band].components.push(CorrectionComponent {
+                    support,
+                    left,
+                    right,
+                    left_scale,
+                    right_scale,
+                });
+            }
+        }
+    }
+    Ok(corrections)
+}
+
+fn read_support_left(reader: &mut SliceReader<'_>) -> Result<(Vec<u16>, Vec<Complex<f64>>, f64)> {
+    let support_len = usize::from(reader.u8()?);
+    if support_len > CORRECTION_MAX_SUPPORT {
+        return Err(SpatialError::Parameter("correction support too large"));
+    }
+    let mut support = Vec::with_capacity(support_len);
+    for _ in 0..support_len {
+        let object = u16::from(reader.u8()?);
+        if usize::from(object) >= MAX_OBJECTS {
+            return Err(SpatialError::Parameter("correction object out of range"));
+        }
+        if support.last().is_some_and(|&previous| object <= previous) {
+            return Err(SpatialError::Parameter("correction support is not sorted"));
+        }
+        support.push(object);
+    }
+    let mut left = Vec::with_capacity(support.len());
+    for _ in 0..support.len() {
+        left.push(unpack_complex(reader.u8()?));
+    }
+    let left_scale = f64::from(reader.f32()?);
+    if !left_scale.is_finite() {
+        return Err(SpatialError::Parameter("non-finite correction scale"));
+    }
+    Ok((support, left, left_scale))
 }
 
 fn decode_bands(reader: &mut SliceReader<'_>) -> Result<TileCorrection> {
@@ -400,7 +619,7 @@ mod tests {
                 Complex::new(0.0, 0.0),
                 Complex::new(-0.125, 0.125),
             ],
-            left_scale: 0.75,
+            left_scale: 0.5,
             right_scale: 2.0,
         });
         let mut bytes = vec![9, 8, 7, 6];
@@ -409,7 +628,7 @@ mod tests {
         assert_eq!(decoded.bands[3].components.len(), 1);
         let component = &decoded.bands[3].components[0];
         assert_eq!(component.support, vec![1, 7, 42]);
-        assert!((component.left_scale - 0.75).abs() < 1e-6);
+        assert!((component.left_scale - 0.5).abs() < 1e-6);
         assert!((component.right_scale - 2.0).abs() < 1e-6);
     }
 
