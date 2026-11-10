@@ -751,7 +751,6 @@ fn encode_error_envelope(
     state: &mut ScenePredictor,
     anchor: &ParameterAnchor,
 ) -> Result<()> {
-    let mut current = [[0i32; PARAM_BAND_COUNT]; CORE_CHANNEL_COUNT];
     for channel in 0..CORE_CHANNEL_COUNT {
         for band in 0..PARAM_BAND_COUNT {
             let unobservable = anchor.error.unobservable[channel][band];
@@ -767,12 +766,8 @@ fn encode_error_envelope(
             } else {
                 quantize_error(anchor.error.nu[channel][band])
             };
-            let predicted = if band == 0 {
-                state.error_log[channel][0]
-            } else {
-                current[channel][band - 1] + state.error_log[channel][band]
-                    - state.error_log[channel][band - 1]
-            };
+
+            let predicted = state.error_log[channel][band];
             enc_signed(
                 encoder,
                 &mut contexts.error_innovation[channel],
@@ -780,7 +775,6 @@ fn encode_error_envelope(
                 i64::from(quantized) - i64::from(predicted),
             )?;
             state.error_log[channel][band] = quantized;
-            current[channel][band] = quantized;
         }
     }
     Ok(())
@@ -792,7 +786,6 @@ fn decode_error_envelope(
     state: &mut ScenePredictor,
 ) -> Result<CoreErrorEnvelope> {
     let mut envelope = CoreErrorEnvelope::default();
-    let mut current = [[0i32; PARAM_BAND_COUNT]; CORE_CHANNEL_COUNT];
     for channel in 0..CORE_CHANNEL_COUNT {
         for band in 0..PARAM_BAND_COUNT {
             let changed = decoder.decode(&mut contexts.error_mask_change)? == 1;
@@ -805,12 +798,8 @@ fn decode_error_envelope(
             }
             let unobservable = state.error_unobservable[channel][band];
 
-            let predicted = if band == 0 {
-                state.error_log[channel][0]
-            } else {
-                current[channel][band - 1] + state.error_log[channel][band]
-                    - state.error_log[channel][band - 1]
-            };
+
+            let predicted = state.error_log[channel][band];
             let innovation = dec_signed(
                 decoder,
                 &mut contexts.error_innovation[channel],
@@ -821,7 +810,6 @@ fn decode_error_envelope(
                 .map_err(|_| SpatialError::Parameter("error envelope overflow"))?
                 .clamp(MIN_ERROR_LOG, MAX_ERROR_LOG);
             state.error_log[channel][band] = quantized;
-            current[channel][band] = quantized;
 
             envelope.unobservable[channel][band] = unobservable;
             envelope.nu[channel][band] = if unobservable {

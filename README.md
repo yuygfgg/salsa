@@ -42,7 +42,7 @@ Salsa is an open-source spatial audio toolkit and GStreamer plugin suite for **D
       - [`reac3e` Core Parameters](#reac3e-core-parameters)
       - [JOC / OAMD / EMDF Parameters](#joc--oamd--emdf-parameters)
       - [Downmix \& Signing Parameters](#downmix--signing-parameters)
-    - [DAMF → salsa-spatial Encoder (experimental)](#damf--salsa-spatial-encoder-salsa-spatial-encode-experimental)
+    - [DAMF → salsa-spatial Encoder (`salsa-spatial-encode`) (experimental)](#damf--salsa-spatial-encoder-salsa-spatial-encode-experimental)
       - [salsa-spatial Encoding Parameters](#salsa-spatial-encoding-parameters)
   - [4. GStreamer Plugins](#4-gstreamer-plugins)
     - [Elements Overview](#elements-overview)
@@ -550,7 +550,7 @@ the metadata rate-distortion tradeoff; it does not specify a total bitrate.
 | `--aux-bitrate BPS` | `88000` | Combined H_L/H_R auxiliary Opus target. |
 | `--center-bitrate BPS` | `70000` | Center Opus target. |
 | `--lfe-bitrate BPS` | `24000` | Mono LFE VBR target. |
-| `--correction-rank N` | `4` | Per-band reconstruction-correction rank; `0` restores the pair baseline. |
+| `--correction-rank N` | `4` | Per-band reconstruction-correction rank. |
 | `--correction-support N` | `16` | Sparse object support per correction component. |
 | `--correction-keyframes N` | `3` | Correction updates per 100 ms tile. |
 | `--correction-rate-weight F` | `0.6` | Minimum distortion reduction per correction byte. |

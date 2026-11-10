@@ -699,7 +699,7 @@ from selecting that target, its temporal sampling, and the covariance model.
 | Object activity | Explicit state changes |
 | Correlation pairs | Object indices, per-band magnitude, and wrapped phase innovations |
 | Reconstruction correction | Entropy-coded rank, sparse object support, quantized complex factors, right rows, and per-component scales |
-| Core error | Two-dimensional logarithmic prediction and unobservable flags |
+| Core error | Per-band temporal logarithmic prediction and unobservable flags |
 | Trajectories | Quantized piecewise-linear positions and sample-time updates |
 | Recovery state | Periodic independent predictor and trajectory checkpoints |
 

@@ -32,7 +32,7 @@ contains the current measurements.
 | Correlation magnitude | Steps of 1/16, capped at 15/16 |
 | Correlation phase | 32 directions |
 | Error-envelope quantizer | 2 dB |
-| Error prediction | Two-dimensional logarithmic predictor |
+| Error prediction | Per-band temporal logarithmic predictor |
 | Numerical system floor | 1e-12 (dimensionless, diagonally normalized) |
 | Position precision | 12 bits per coordinate |
 | Moving-trajectory knot spacing | At most 100 ms |
