@@ -7,9 +7,6 @@ elements.
 
 The experimental salsa-spatial object codec follows the E-AC-3 JOC crate
 split: codec libraries, an encoding CLI, and a GStreamer parser/decoder plugin.
-See the [codec design](salsa-spatial.md),
-[implementation guide](salsa-spatial-implementation.md), and
-[quality evaluation](salsa-spatial-quality.md).
 
 ```text
 E-AC-3 JOC / TrueHD

@@ -98,7 +98,3 @@ correlation, lower Zimtohrli distance, and lower waveform error. SSR includes
 spatial placement while SRR measures residual waveform distortion, so the
 disagreement is consistent with the opening excerpt's larger spatial
 advantage. The other four excerpts have higher SRR in all 48 combinations.
-
-The [codec design](salsa-spatial.md) explains the algorithms. The
-[implementation guide](salsa-spatial-implementation.md) describes the profile,
-pipeline integration, and current gaps.

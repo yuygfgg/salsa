@@ -563,7 +563,8 @@ the metadata rate-distortion tradeoff; it does not specify a total bitrate.
 | `--log` | off | Enable info-level logging. |
 
 Open the result in Salsa Studio or use the GStreamer pipelines below. See
-the [codec design](docs/salsa-spatial.md),
+the [bitstream specification](docs/salsa-spatial.md),
+[design rationale](docs/salsa-spatial-design.md),
 [implementation guide](docs/salsa-spatial-implementation.md), and
 [quality evaluation](docs/salsa-spatial-quality.md) for further details.
 

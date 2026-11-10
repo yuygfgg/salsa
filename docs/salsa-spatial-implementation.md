@@ -1,9 +1,7 @@
-# salsa-spatial implementation
+# salsa-spatial implementation (informative)
 
-This document describes the current software and bitstream profile.
-The [codec design](salsa-spatial.md) defines the algorithms and their
-mathematical model. The [quality evaluation](salsa-spatial-quality.md)
-contains the current measurements.
+This document describes the current software and encoder choices. It is
+informative.
 
 ## Profile
 
@@ -57,10 +55,12 @@ refinement pass.
 
 ## Core encoding
 
-The core uses libopus 1.6.1 through the Rust opus wrapper. Each substream uses
-restricted low delay, complexity 10, and 20 ms packets. DTX, FEC, and DRED are
-disabled. The front, surround, auxiliary, and center streams use CBR. LFE and
-the shared rear-silence stream use unconstrained VBR.
+The tested core uses libopus 1.6.1 through the Rust opus wrapper. Each
+substream uses restricted low delay, complexity 10, and 20 ms packets.
+DTX, FEC, and DRED are disabled. In `MultistreamCodec`, the five active
+streams, including LFE, use CBR. The shared rear-silence stream uses
+unconstrained VBR. The legacy
+five-stream `CoreCodec` separately enables unconstrained VBR for LFE.
 
 | Substream | Type | Logical channels | Default target |
 |---|---|---|---:|
@@ -78,16 +78,14 @@ The public family-1 map is `[0, 6, 1, 2, 3, 8, 8, 7]`. The private
 4 and 5 carry the auxiliary height observations and never appear in the public
 speaker map.
 
-Metadata, framing, and setup add to the core rate. LFE's actual VBR payload
-also varies with the source. The encoder reports each byte category and
-calculates total rate from the complete serialized stream.
+Metadata, framing, and setup add to the core rate. The encoder reports each
+byte category and calculates total rate from the complete serialized stream.
 
 The reconstruction-matrix correction is enabled by default with rank 4,
 support 16, three keyframes per tile, and a rate weight of 0.6.
 
 Core targets and the metadata RD weight are independent settings. The encoder
-has no target-rate feedback loop. The quality report records the manually
-selected core targets used for its 768 kbps comparisons.
+has no target-rate feedback loop.
 
 ## Source and transport
 
@@ -129,9 +127,8 @@ matrix includes the fixed fold rather than the unfolded geometric rows.
 Reports include the selected ceiling gain and programme headroom gain.
 Compression remains opt-in. A three-span Sol Levante comparison at matched
 total bitrates found small height and binaural gains at `RHO = 0.25`, with
-ground-channel regressions and no gain across all render layouts. See
-[the measurement report](salsa-spatial-coding-angle.md) for the rates,
-signal errors, and perceptual-proxy results. The default remains zero.
+ground-channel regressions and no gain across all render layouts. The default
+remains zero.
 
 The standard Ogg Opus track carries one multistream packet per 20 ms. The
 mono center substream carries versioned Salsa records in an experimental Opus
@@ -149,13 +146,13 @@ state. If a checkpoint has an empty trajectory, the writer keeps the full
 initial scene as a fallback.
 
 The parameter coder uses constriction with 24-bit rANS probability precision.
-It assigns integer frequencies by largest remainder, with ties resolved by
-symbol index. Counts rescale by ceiling halving when their total reaches
-4,096. Entropy contexts persist across parameter tiles and reset at each
-independent checkpoint; parameter predictors follow the same boundary. A
-checkpoint is a separate length-delimited record with its own reset entropy
-contexts, so it can be parsed without any earlier tile or the current tile's
-parameter payload. It describes the state immediately before its tile.
+It floors the scaled counts, then assigns remaining units in ascending symbol
+index order. Counts rescale by ceiling halving when their total reaches 4,096.
+Entropy contexts persist across parameter tiles and reset at each independent
+checkpoint. Checkpoints replace predictors with their transmitted values.
+A checkpoint is a separate length-delimited record with its own fresh entropy
+contexts. It describes the state immediately before its tile and can be
+decoded independently of that tile's parameter payload and preceding tiles.
 
 The optional reconstruction-correction trailer is entropy coded as well. Its
 adaptive models cover keyframe and band presence, rank, shared support, sorted
@@ -220,7 +217,7 @@ and binaural renderers consume that state.
 | Area | Current behavior |
 |---|---|
 | Programme calibration | Manifest warp mode is not imported or transported. |
-| Final core samples | The extra tail packet is transported with Ogg end trimming; other containers are not yet sample-exact. |
+| Final core samples | The writer transports a drain packet, but its final Ogg granule uses packet-rounded duration. The shared parser drops granule/EOS information and can group the drain as tile audio. |
 | Checkpoint rate cost | Checkpoint bytes count in the file rate but are added after the tile search. |
 | Endpoint RD cost | The decoder uses real DC/Nyquist matrices; the search still uses a complex-band proxy. |
 | Seeking | `salsaspatialparse` indexes checkpoint byte offsets, snaps flushing time seeks to the preceding checkpoint, restores the segment target, and lets `salsaspatialdec` preroll the Opus/filterbank path before clipped output starts. |
