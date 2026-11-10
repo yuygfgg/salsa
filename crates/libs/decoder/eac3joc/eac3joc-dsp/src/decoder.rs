@@ -70,12 +70,11 @@ impl Eac3JocDecoder {
     }
 
     fn decode_core(&mut self, frame: &Eac3JocFrame) -> Result<CorePcm, DspError> {
-        let packets: Vec<Vec<u8>> = frame
-            .syncframes
-            .iter()
-            .map(|syncframe| syncframe.bytes.clone())
-            .collect();
-        let pcm = self.core.decode_packets(&packets)?;
+        // libavcodec only assembles dependent substreams when they arrive in
+        // the same packet as their independent substream.  Sending the
+        // syncframes separately makes it discard every dependent frame.
+        let bytes = frame.core_bytes();
+        let pcm = self.core.decode(&bytes)?;
         if pcm.channels == 0 {
             return Err(DspError::SampleCount {
                 expected: frame.samples,
@@ -122,7 +121,13 @@ impl SpatialDecoder for Eac3JocDecoder {
         } else {
             let mut params = JocParams::silent();
             params.dmx_config_idx = self.last_config;
-            params.n_channels = num_channels_for_config(u32::from(self.last_config)).unwrap_or(5);
+            params.n_channels = frame
+                .bed_plan
+                .or(self.last_bed_plan)
+                .map(|plan| plan.core_channels() as u8)
+                .unwrap_or_else(|| {
+                    num_channels_for_config(u32::from(self.last_config)).unwrap_or(5)
+                });
             silent = Box::new(params);
             silent.as_ref()
         };

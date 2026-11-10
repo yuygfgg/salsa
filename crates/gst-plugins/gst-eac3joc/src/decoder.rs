@@ -211,32 +211,38 @@ impl AudioDecoderImpl for Eac3JocDec {
             .unwrap_or(salsa_codec::SAMPLE_RATE as i32);
         {
             let mut state = salsa_gst::lock(&self.state);
-            state.parser = Eac3JocParser::new();
-            state.rate = rate;
-            state.channels = 0;
-            state.caps_set = false;
-            state.decoder = Some(
-                std::thread::Builder::new()
-                    .name("salsa-joc-init".into())
-                    .stack_size(16 * 1024 * 1024)
-                    .spawn(|| Eac3JocDecoder::try_new().map(Box::new))
-                    .map_err(|error| {
-                        gst::loggable_error!(
-                            gst::CAT_RUST,
-                            "cannot spawn the JOC init thread: {error}"
-                        )
-                    })?
-                    .join()
-                    .map_err(|_| {
-                        gst::loggable_error!(gst::CAT_RUST, "the JOC init thread panicked")
-                    })?
-                    .map_err(|error| {
-                        gst::loggable_error!(
-                            gst::CAT_RUST,
-                            "cannot create the JOC decoder: {error}"
-                        )
-                    })?,
-            );
+            // Caps can alternate between the AC-3 core and the E-AC-3
+            // dependent substream of a Blu-ray JOC frame.  Those frames must
+            // stay in one parser/decoder session, so only a rate change or a
+            // missing decoder rebuilds the state.
+            if state.decoder.is_none() || state.rate != rate {
+                state.parser = Eac3JocParser::new();
+                state.rate = rate;
+                state.channels = 0;
+                state.caps_set = false;
+                state.decoder = Some(
+                    std::thread::Builder::new()
+                        .name("salsa-joc-init".into())
+                        .stack_size(16 * 1024 * 1024)
+                        .spawn(|| Eac3JocDecoder::try_new().map(Box::new))
+                        .map_err(|error| {
+                            gst::loggable_error!(
+                                gst::CAT_RUST,
+                                "cannot spawn the JOC init thread: {error}"
+                            )
+                        })?
+                        .join()
+                        .map_err(|_| {
+                            gst::loggable_error!(gst::CAT_RUST, "the JOC init thread panicked")
+                        })?
+                        .map_err(|error| {
+                            gst::loggable_error!(
+                                gst::CAT_RUST,
+                                "cannot create the JOC decoder: {error}"
+                            )
+                        })?,
+                );
+            }
         }
         Ok(())
     }

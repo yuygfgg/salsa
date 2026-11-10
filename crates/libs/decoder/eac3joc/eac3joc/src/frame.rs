@@ -2,7 +2,10 @@
 
 use objectaudio_oamd::{OamdFrame, OamdLimits};
 
-use crate::bed::{BedPlan, compute_bed_plan, compute_bed_plan_for_config, is_core_stream};
+use crate::bed::{
+    BedPlan, compute_bed_plan, compute_bed_plan_for_config, compute_bed_plan_from_headers,
+    is_core_stream,
+};
 use crate::emdf;
 use crate::error::{Eac3JocError, Result};
 use crate::joc::{self, JocParams};
@@ -154,8 +157,16 @@ impl Eac3JocParser {
             .or_else(|_| compute_bed_plan_for_config(params.dmx_config_idx))?;
             self.last_bed_plan = Some(plan);
             Some(plan)
+        } else if let Some(plan) = self.last_bed_plan {
+            Some(plan)
+        } else if let Some(core) = core_header.as_ref() {
+            // The first frame can precede the first JOC/OAMD payload.  The
+            // substream headers still describe the bed layout.
+            let plan = compute_bed_plan_from_headers(core, dependent_header.as_ref())?;
+            self.last_bed_plan = Some(plan);
+            Some(plan)
         } else {
-            self.last_bed_plan
+            None
         };
 
         let frame = Eac3JocFrame {

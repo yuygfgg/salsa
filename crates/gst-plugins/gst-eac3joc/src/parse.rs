@@ -9,7 +9,7 @@ use gst_base::subclass::prelude::*;
 use gstreamer as gst;
 use gstreamer_base as gst_base;
 
-use eac3joc::{Codec, Eac3JocError, FrameReader, SyncFrameHeader};
+use eac3joc::{Eac3JocError, FrameReader, SyncFrameHeader};
 
 fn channel_count(header: &SyncFrameHeader) -> i32 {
     let mut positions = Vec::new();
@@ -138,9 +138,6 @@ impl BaseParseImpl for Eac3JocParse {
                     let Some(header) = eac3joc::parse_syncframe_header(&map) else {
                         return Ok((gst::FlowSuccess::Ok, 1));
                     };
-                    if header.codec != Codec::Eac3 {
-                        return Ok((gst::FlowSuccess::Ok, 1));
-                    }
                     let atmos = eac3joc::parse_syncframe_optional(&map[..size])
                         .ok()
                         .flatten()
@@ -167,10 +164,15 @@ impl BaseParseImpl for Eac3JocParse {
             Action::Frame {
                 size,
                 samples,
-                info,
+                mut info,
             } => {
                 let caps_to_push = {
                     let mut caps = salsa_gst::lock(&self.caps);
+                    // Once the stream has shown a JOC payload, keep the
+                    // Atmos flag on the alternating AC-3 core frames too.
+                    if caps.as_ref().is_some_and(|previous| previous.atmos) {
+                        info.atmos = true;
+                    }
                     match caps.as_ref() {
                         None => {
                             *caps = Some(info);

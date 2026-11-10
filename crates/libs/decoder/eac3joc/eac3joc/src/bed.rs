@@ -183,6 +183,13 @@ impl Default for BedPlan {
     }
 }
 
+impl BedPlan {
+    /// Number of full-band JOC core lanes (5 for 5.1, 7 for 5.1.2/7.1).
+    pub fn core_channels(&self) -> usize {
+        self.lanes.iter().filter(|lane| lane.is_some()).count()
+    }
+}
+
 const EXTRA_PAIR_SLOTS: [[i8; 2]; 5] = [[-1, -1], [6, 7], [8, 9], [-1, -1], [8, 9]];
 
 fn variant_error(message: impl Into<String>) -> Eac3JocError {
@@ -239,6 +246,44 @@ pub fn compute_bed_plan(
     }
     let ordered = sorted_unique(locations);
     plan_from_ordered(ordered, &extra, core_channels, dmx_config_idx)
+}
+
+/// Bed plan inferred from the substream headers when the first audio frame
+/// carries no JOC payload (the JOC configuration then appears one frame
+/// later).  The dependent `chanmap` is enough to identify the extra pair.
+pub fn compute_bed_plan_from_headers(
+    core: &SyncFrameHeader,
+    dependent: Option<&SyncFrameHeader>,
+) -> Result<BedPlan> {
+    let mut core_positions = Vec::new();
+    acmod_positions(core.acmod, &mut core_positions);
+    if core.lfeon {
+        core_positions.push(Position::Lfe);
+    }
+    let mut extra = Vec::new();
+    if let Some(dependent) = dependent
+        && let Some(chanmap) = dependent.chanmap
+    {
+        chanmap_extra_pair(&core_positions, chanmap, &mut extra);
+    }
+    let config = if extra.iter().any(|position| {
+        matches!(
+            position,
+            Position::LeftRearSurround | Position::RightRearSurround
+        )
+    }) {
+        1
+    } else if extra.iter().any(|position| {
+        matches!(
+            position,
+            Position::VerticalHeightLeft | Position::VerticalHeightRight
+        )
+    }) {
+        4
+    } else {
+        3
+    };
+    compute_bed_plan(Some(core), dependent, config)
 }
 
 /// Bed plan driven by `joc_dmx_config_idx` alone, for callers without headers.
