@@ -8,6 +8,8 @@
 use salsa_spatial::TrajectoryKnot;
 use salsa_spatial_dsp::CorePanner;
 
+type DenseTrajectory = Vec<(u64, [f64; 3])>;
+
 pub const POSITION_STEPS: f64 = 4095.0;
 /// Largest allowed knot spacing in a moving segment: 100 ms.
 pub const MAX_KNOT_GAP: u64 = 4_800;
@@ -179,7 +181,7 @@ pub fn dense_points(
     object: usize,
     positions: &[[f32; 3]],
     control_samples: &[u64],
-) -> Vec<(u64, [f64; 3])> {
+) -> DenseTrajectory {
     if frames == 0 || object_count == 0 {
         return Vec::new();
     }
@@ -223,7 +225,7 @@ pub fn fit_trajectory(
     positions: &[[f32; 3]],
     control_samples: &[u64],
     panner: CorePanner,
-) -> (Vec<TrajectoryKnot>, Vec<(u64, [f64; 3])>, bool) {
+) -> (Vec<TrajectoryKnot>, DenseTrajectory, bool) {
     let dense = dense_points(
         start,
         frames,

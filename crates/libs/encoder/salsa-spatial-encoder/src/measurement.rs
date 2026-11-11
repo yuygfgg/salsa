@@ -381,11 +381,10 @@ mod tests {
                 let measured = context.measure_tile(&sources[i], &cores[i], &decoded, &knots, next);
                 for (hop, stats) in measured.stats.per_hop().iter().enumerate() {
                     let spectrum = &spectra[i * TILE_HOPS + hop];
-                    for band in 0..PARAM_BAND_COUNT {
+                    for (band, actual) in stats.bands.iter().enumerate().take(PARAM_BAND_COUNT) {
                         let expected: f64 = parameter_band_range(band)
                             .map(|bin| bin_weight(bin) * spectrum[bin].norm_sqr())
                             .sum();
-                        let actual = &stats.bands[band];
                         assert!(
                             (actual.source_power[0] - expected).abs() < 1e-10 * expected.max(1.0),
                             "tile {i}, hop {hop}, band {band}: {} != {expected}",

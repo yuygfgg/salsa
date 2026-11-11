@@ -94,7 +94,7 @@ mod tests {
     use salsa_spatial::{MultistreamPacket, OggSalsaWriter, SalsaSpatialFrame};
 
     fn elementary(tag: u8) -> Vec<u8> {
-        let mut packet = vec![(31 << 3) | 0];
+        let mut packet = vec![31 << 3];
         packet.extend_from_slice(&[tag; 7]);
         packet
     }

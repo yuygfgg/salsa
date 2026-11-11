@@ -308,8 +308,8 @@ impl SalsaSpatialDecoder {
 
         let mut core_spectra: [Vec<Spectrum>; CORE_CHANNEL_COUNT] =
             std::array::from_fn(|_| Vec::new());
-        for channel in 0..CORE_CHANNEL_COUNT {
-            core_spectra[channel] = self.core_stfts[channel].flush();
+        for (channel, spectra) in core_spectra.iter_mut().enumerate() {
+            *spectra = self.core_stfts[channel].flush();
         }
         let lfe_spectra = self.lfe_stft.flush();
         let count = core_spectra[0].len();
@@ -749,8 +749,8 @@ impl SalsaSpatialDecoder {
         let mut nu = [[0.0; CORE_CHANNEL_COUNT]; PARAM_BAND_COUNT];
         let mut unobservable = [false; PARAM_BAND_COUNT];
         for band in 0..PARAM_BAND_COUNT {
-            for channel in 0..CORE_CHANNEL_COUNT {
-                nu[band][channel] =
+            for (channel, value) in nu[band].iter_mut().enumerate() {
+                *value =
                     (1.0 - amount) * first.nu[band][channel] + amount * second.nu[band][channel];
                 unobservable[band] |=
                     first.unobservable[band][channel] || second.unobservable[band][channel];
@@ -983,14 +983,14 @@ fn anchor_band_powers(anchor: &ParameterAnchor) -> Vec<[f64; PARAM_BAND_COUNT]> 
             continue;
         }
         let mut sum = 0.0;
-        for object in 0..object_count {
+        for (object, power_row) in powers.iter_mut().enumerate() {
             if !anchor.active[object] {
                 continue;
             }
             let log_power = f64::from(anchor.ell_half_db[object][band]) * HALF_DB_SCALE;
             let bounded = (log_power - maximum).max(-90.0);
             let power = 10f64.powf(bounded / 10.0);
-            powers[object][band] = power;
+            power_row[band] = power;
             sum += power;
         }
         if sum > 0.0 {
@@ -1059,15 +1059,9 @@ mod tests {
     #[test]
     fn band_powers_are_normalized_and_inactive_is_zero() {
         let mut ell = vec![[0i32; PARAM_BAND_COUNT]; 3];
-        for values in &mut ell[0] {
-            *values = 20;
-        }
-        for values in &mut ell[1] {
-            *values = 10;
-        }
-        for values in &mut ell[2] {
-            *values = 100;
-        }
+        ell[0].fill(20);
+        ell[1].fill(10);
+        ell[2].fill(100);
         let anchor = ParameterAnchor {
             sample: 0,
             active: vec![true, true, false],

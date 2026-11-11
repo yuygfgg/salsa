@@ -142,10 +142,8 @@ fn parameter_tile(
             })
             .collect();
         let mut error = CoreErrorEnvelope::default();
-        for channel in 0..7 {
-            for band in 0..PARAM_BAND_COUNT {
-                error.nu[channel][band] = 0.01;
-            }
+        for row in &mut error.nu {
+            row.fill(0.01);
         }
         anchors.push(ParameterAnchor {
             sample,

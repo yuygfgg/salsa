@@ -40,7 +40,7 @@ impl StftConfig {
     }
 
     fn validate(&self) {
-        assert!(self.fft_size >= 2 && self.fft_size % 2 == 0);
+        assert!(self.fft_size >= 2 && self.fft_size.is_multiple_of(2));
         assert!(self.hop > 0 && self.hop <= self.fft_size);
     }
 }
@@ -250,11 +250,11 @@ impl BatchAnalyzer {
             if center >= 0 {
                 let start = center - half;
                 scratch.fill(Complex::new(0.0, 0.0));
-                for index in 0..size {
+                for (index, (slot, &window)) in scratch.iter_mut().zip(&self.window).enumerate() {
                     let sample_index = start + index as i64;
                     if sample_index >= 0 && sample_index < total {
-                        let value = f64::from(samples[sample_index as usize]) * self.window[index];
-                        scratch[index] = Complex::new(value, 0.0);
+                        let value = f64::from(samples[sample_index as usize]) * window;
+                        *slot = Complex::new(value, 0.0);
                     }
                 }
                 self.fft.process(&mut scratch);
@@ -342,10 +342,10 @@ impl Synthesis {
 
         let scale = 1.0 / size as f64;
         let offset = (start - self.base) as usize;
-        for index in 0..size {
-            let value = full[index].re * scale * self.window[index];
+        for (index, (&sample, &window)) in full.iter().zip(&self.window).enumerate() {
+            let value = sample.re * scale * window;
             self.ola[offset + index] += value;
-            self.norm[offset + index] += self.window[index] * self.window[index];
+            self.norm[offset + index] += window * window;
         }
 
         self.next_center += self.config.hop as i64;
@@ -545,7 +545,7 @@ pub fn apply_band_matrices_full(
     input: &[Complex<f64>],
     fft_size: usize,
 ) -> Vec<Complex<f64>> {
-    assert!(fft_size >= 2 && fft_size % 2 == 0);
+    assert!(fft_size >= 2 && fft_size.is_multiple_of(2));
     assert_eq!(input.len(), matrices.cols * fft_size);
     let half = fft_size / 2;
     let mut output = vec![Complex::new(0.0, 0.0); matrices.rows * fft_size];
@@ -712,8 +712,8 @@ mod tests {
         let size = 8;
         let matrices = BandMatrices::from_fn(1, 1, |_, _, _| Complex::new(0.3, 0.4));
         let mut input = vec![Complex::new(0.0, 0.0); size];
-        for bin in 0..=size / 2 {
-            input[bin] = Complex::new(bin as f64 + 1.0, 0.5 * bin as f64);
+        for (bin, value) in input.iter_mut().take(size / 2 + 1).enumerate() {
+            *value = Complex::new(bin as f64 + 1.0, 0.5 * bin as f64);
         }
         for bin in 1..size / 2 {
             input[size - bin] = input[bin].conj();

@@ -909,9 +909,9 @@ mod tests {
                 }
                 assert!(input.block[length..].iter().all(|sample| *sample == 0.0));
                 let window_start = start as i64 + length as i64 / 2 - n_fft as i64 / 2;
-                for offset in 0..n_fft {
+                for (offset, &value) in input.window.iter().enumerate().take(n_fft) {
                     assert_eq!(
-                        input.window[offset],
+                        value,
                         expected(window_start + offset as i64),
                         "window {n_fft}, hop {hop}, frame {frame}, offset {offset}"
                     );
@@ -1072,13 +1072,10 @@ mod tests {
             );
         }
         let mut source = DamfSource::open(&master.manifest.path).unwrap();
-        for frame in 0..tracks.n_frames {
+        for (frame, expected) in tracks.positions.iter().enumerate().take(tracks.n_frames) {
             source.seek(frame as u64 * 384).unwrap();
             let block = source.read_block(1).unwrap().unwrap();
-            assert_eq!(
-                tracks.positions[frame],
-                block.payload.objects[0].position.map(f64::from)
-            );
+            assert_eq!(*expected, block.payload.objects[0].position.map(f64::from));
         }
     }
 }

@@ -480,7 +480,7 @@ mod tests {
 
     fn synthetic_packet() -> Vec<u8> {
         // Code 0, 20 ms CELT fullband mono (config 31), followed by fake bytes.
-        let mut packet = vec![(31 << 3) | 0b000];
+        let mut packet = vec![31 << 3];
         packet.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
         packet
     }

@@ -4106,7 +4106,6 @@ dependencies = [
  "nalgebra",
  "num-complex",
  "objectaudio-damf",
- "objectaudio-hrtf",
  "objectaudio-ir",
  "objectaudio-render",
  "opus",

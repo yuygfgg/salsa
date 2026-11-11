@@ -340,20 +340,27 @@ pub fn parse_id14(payload: &[u8]) -> Result<JocParams> {
                 if reader.is_failed() {
                     return Err(Eac3JocError::BitstreamTruncated);
                 }
-                for band in 1..object.n_bands {
-                    symbol.idx[data_point][band] = huff_decode(idx_tree, &mut reader)? as u8;
+                for slot in symbol.idx[data_point]
+                    .iter_mut()
+                    .take(object.n_bands)
+                    .skip(1)
+                {
+                    *slot = huff_decode(idx_tree, &mut reader)? as u8;
                 }
                 let vec_tree =
                     select_tree(object.quant_idx, SymbolKind::Vec, usize::from(n_channels));
-                for band in 0..object.n_bands {
-                    symbol.vec[data_point][band] = huff_decode(vec_tree, &mut reader)?;
+                for slot in symbol.vec[data_point].iter_mut().take(object.n_bands) {
+                    *slot = huff_decode(vec_tree, &mut reader)?;
                 }
             } else {
                 let mtx_tree =
                     select_tree(object.quant_idx, SymbolKind::Mtx, usize::from(n_channels));
-                for channel in 0..usize::from(n_channels) {
-                    for band in 0..object.n_bands {
-                        symbol.mtx[data_point][channel][band] = huff_decode(mtx_tree, &mut reader)?;
+                for row in symbol.mtx[data_point]
+                    .iter_mut()
+                    .take(usize::from(n_channels))
+                {
+                    for slot in row.iter_mut().take(object.n_bands) {
+                        *slot = huff_decode(mtx_tree, &mut reader)?;
                     }
                 }
             }

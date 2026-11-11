@@ -1330,10 +1330,14 @@ impl ExtendedObjectElement {
         if element.b_obj_div_block {
             let mut obj_blk = Vec::with_capacity(object_count);
 
-            for object_index in 0..object_count {
+            for (object_index, object_data) in object_element
+                .object_data
+                .iter()
+                .enumerate()
+                .take(object_count)
+            {
                 let mut blk_blk = Vec::with_capacity(block_count);
 
-                let object_data = &object_element.object_data[object_index];
                 for (block_index, object_info_block) in object_data.iter().enumerate() {
                     let mut blk = ObjectDivergenceBlock::default();
 
@@ -1390,10 +1394,9 @@ impl ExtendedObjectElement {
         if element.b_ext_prec_pos_block {
             let mut pos_blk = Vec::with_capacity(object_count);
 
-            for object_index in 0..object_count {
+            for object_data in object_element.object_data.iter().take(object_count) {
                 let mut blk_blk = Vec::with_capacity(block_count);
 
-                let object_data = &object_element.object_data[object_index]; // has length == block_count
                 for object_info_block in object_data.iter() {
                     let mut blk = ExtendedPrecisionPositionBlock::default();
 

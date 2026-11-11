@@ -36,9 +36,9 @@ pub const RECORD_CHECKPOINT: u8 = 3;
 /// One typed record inside a reassembled bundle.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Record {
-    Configuration(SalsaSpatialStreamConfig),
+    Configuration(Box<SalsaSpatialStreamConfig>),
     Tile(TileRecord),
-    Checkpoint(SceneSnapshot),
+    Checkpoint(Box<SceneSnapshot>),
 }
 
 /// One 100 ms tile record. Scene and activity state live in the parameter
@@ -94,9 +94,9 @@ pub fn parse_records(bytes: &[u8]) -> Result<Vec<Record>> {
         }
         let payload = reader.bytes(length)?;
         let record = match tag {
-            RECORD_CONFIG => Record::Configuration(decode_configuration(payload)?),
+            RECORD_CONFIG => Record::Configuration(Box::new(decode_configuration(payload)?)),
             RECORD_TILE => Record::Tile(decode_tile(payload)?),
-            RECORD_CHECKPOINT => Record::Checkpoint(decode_checkpoint(payload)?),
+            RECORD_CHECKPOINT => Record::Checkpoint(Box::new(decode_checkpoint(payload)?)),
             // Unknown optional record types are skipped by length.
             _ => continue,
         };
@@ -979,8 +979,8 @@ mod tests {
     fn record_round_trips() {
         let config = sample_config();
         let records = vec![
-            Record::Configuration(config),
-            Record::Checkpoint(sample_checkpoint()),
+            Record::Configuration(Box::new(config)),
+            Record::Checkpoint(Box::new(sample_checkpoint())),
             Record::Tile(TileRecord {
                 start_sample: 0,
                 frames: 4800,

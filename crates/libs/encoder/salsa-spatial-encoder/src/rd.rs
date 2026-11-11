@@ -75,9 +75,9 @@ fn measured_ell(
     for band in 0..PARAM_BAND_COUNT {
         let statistics = &bands[band];
         let mut max_power: f64 = 0.0;
-        for object in 0..object_count {
-            if active[object] {
-                max_power = max_power.max(statistics.source_power[object]);
+        for (&is_active, &power) in active.iter().zip(&statistics.source_power) {
+            if is_active {
+                max_power = max_power.max(power);
             }
         }
         for object in 0..object_count {
@@ -102,10 +102,10 @@ fn measured_ell(
 
 fn envelope_from_bands(bands: &[BandStatistics]) -> CoreErrorEnvelope {
     let mut envelope = CoreErrorEnvelope::default();
-    for band in 0..PARAM_BAND_COUNT {
+    for (band, statistics) in bands.iter().enumerate().take(PARAM_BAND_COUNT) {
         for channel in 0..7 {
-            envelope.nu[channel][band] = bands[band].nu[channel];
-            envelope.unobservable[channel][band] = bands[band].unobservable[channel];
+            envelope.nu[channel][band] = statistics.nu[channel];
+            envelope.unobservable[channel][band] = statistics.unobservable[channel];
         }
     }
     envelope.quantized()
@@ -129,10 +129,8 @@ fn transient_hops(measurements: &TileMeasurements) -> Vec<usize> {
             continue;
         }
         let ratio = (current / previous).max(1e-30);
-        if ratio > 4.0 || ratio < 0.25 {
-            if index % 4 != 0 {
-                transients.push(index);
-            }
+        if (ratio > 4.0 || ratio < 0.25) && index % 4 != 0 {
+            transients.push(index);
         }
     }
     transients.truncate(4);
@@ -198,7 +196,7 @@ fn measured_pairs(measurements: &TileMeasurements) -> Vec<(CorrelationPair, f64)
             let mut rho = [None; PARAM_BAND_COUNT];
             let mut score = 0.0;
             let mut bands = 0;
-            for band in 0..PARAM_BAND_COUNT {
+            for (band, rho_band) in rho.iter_mut().enumerate() {
                 let cross = &measurements.source_cross[band];
                 let denominator = (cross[ai * count + ai].re * cross[bi * count + bi].re).sqrt();
                 if denominator <= 1e-30 {
@@ -210,7 +208,7 @@ fn measured_pairs(measurements: &TileMeasurements) -> Vec<(CorrelationPair, f64)
                 let magnitude = (value.norm() * 16.0).round().clamp(0.0, 15.0) as u8;
                 if magnitude != 0 {
                     let phase = ((value.arg() / (2.0 * PI / 32.0)).round().rem_euclid(32.0)) as u8;
-                    rho[band] = Some(CorrelationCoefficient { magnitude, phase });
+                    *rho_band = Some(CorrelationCoefficient { magnitude, phase });
                 }
             }
             if rho.iter().any(Option::is_some) {
@@ -948,9 +946,9 @@ mod tests {
         assert_eq!(ell[0][0], 0);
         assert_eq!(ell[1][0], -40);
         assert_eq!(ell[2][0], 0);
-        for band in 1..PARAM_BAND_COUNT {
-            assert_eq!(ell[0][band], -180);
-            assert_eq!(ell[1][band], -180);
+        for (&a, &b) in ell[0][1..].iter().zip(&ell[1][1..]) {
+            assert_eq!(a, -180);
+            assert_eq!(b, -180);
         }
     }
 

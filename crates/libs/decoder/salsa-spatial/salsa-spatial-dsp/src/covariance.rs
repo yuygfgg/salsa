@@ -6,6 +6,10 @@ use salsa_spatial::{
     CovarianceAnchor, PARAM_BAND_COUNT,
 };
 
+type CoreMatrix = [[Complex<f64>; CORE_CHANNEL_COUNT]; CORE_CHANNEL_COUNT];
+type CrossMatrix = Vec<[Complex<f64>; CORE_CHANNEL_COUNT]>;
+type BandCoefficients = [Complex<f64>; PARAM_BAND_COUNT];
+
 /// One correlated object pair, with the per-band off-diagonal covariance entry
 /// `C[a][b]`. The opposite entry is its conjugate.
 #[derive(Debug, Clone, PartialEq)]
@@ -86,12 +90,10 @@ impl BandCovariance {
     ) -> [[Complex<f64>; CORE_CHANNEL_COUNT]; CORE_CHANNEL_COUNT] {
         assert_eq!(d.len(), self.object_count);
         let mut matrix = [[Complex::new(0.0, 0.0); CORE_CHANNEL_COUNT]; CORE_CHANNEL_COUNT];
-        for object in 0..self.object_count {
-            let power = self.diagonal[band][object];
+        for (column, &power) in d.iter().zip(&self.diagonal[band]) {
             if power == 0.0 {
                 continue;
             }
-            let column = d[object];
             for row in 0..CORE_CHANNEL_COUNT {
                 for col in 0..CORE_CHANNEL_COUNT {
                     matrix[row][col].re += power * column[row] * column[col];
@@ -131,19 +133,14 @@ impl BandCovariance {
         &self,
         band: usize,
         d: &[[f64; CORE_CHANNEL_COUNT]],
-    ) -> (
-        [[Complex<f64>; CORE_CHANNEL_COUNT]; CORE_CHANNEL_COUNT],
-        Vec<[Complex<f64>; CORE_CHANNEL_COUNT]>,
-    ) {
+    ) -> (CoreMatrix, CrossMatrix) {
         assert_eq!(d.len(), self.object_count);
         let mut core = [[Complex::new(0.0, 0.0); CORE_CHANNEL_COUNT]; CORE_CHANNEL_COUNT];
         let mut cross = vec![[Complex::new(0.0, 0.0); CORE_CHANNEL_COUNT]; self.object_count];
-        for object in 0..self.object_count {
-            let power = self.diagonal[band][object];
+        for (object, (column, &power)) in d.iter().zip(&self.diagonal[band]).enumerate() {
             if power == 0.0 {
                 continue;
             }
-            let column = d[object];
             for row in 0..CORE_CHANNEL_COUNT {
                 let scaled = power * column[row];
                 for col in 0..CORE_CHANNEL_COUNT {
@@ -194,19 +191,11 @@ impl BandCovariance {
         let first = 1.0 - t;
         let count = self.object_count.max(other.object_count);
         let mut diagonal = vec![vec![0.0; count]; PARAM_BAND_COUNT];
-        for band in 0..PARAM_BAND_COUNT {
-            for object in 0..count {
-                let a = if object < self.object_count {
-                    self.diagonal[band][object]
-                } else {
-                    0.0
-                };
-                let b = if object < other.object_count {
-                    other.diagonal[band][object]
-                } else {
-                    0.0
-                };
-                diagonal[band][object] = first * a + t * b;
+        for (band, row) in diagonal.iter_mut().enumerate() {
+            for (object, value) in row.iter_mut().enumerate() {
+                let a = self.diagonal[band].get(object).copied().unwrap_or(0.0);
+                let b = other.diagonal[band].get(object).copied().unwrap_or(0.0);
+                *value = first * a + t * b;
             }
         }
 
@@ -256,7 +245,7 @@ pub fn covariance_from_band_powers(
         }
     }
 
-    let mut merged: Vec<((usize, usize), [Complex<f64>; PARAM_BAND_COUNT])> = Vec::new();
+    let mut merged: Vec<((usize, usize), BandCoefficients)> = Vec::new();
     for pair in pairs {
         if pair.a == pair.b {
             continue;
@@ -331,9 +320,10 @@ mod tests {
 
     fn pair(a: u16, b: u16, magnitude: u8, phase: u8) -> CorrelationPair {
         let mut rho = [None; PARAM_BAND_COUNT];
-        for slot in &mut rho {
-            *slot = Some(salsa_spatial::params::CorrelationCoefficient { magnitude, phase });
-        }
+        rho.fill(Some(salsa_spatial::params::CorrelationCoefficient {
+            magnitude,
+            phase,
+        }));
         CorrelationPair { a, b, rho }
     }
 
@@ -356,11 +346,9 @@ mod tests {
     #[test]
     fn trace_is_one_for_normalized_band_powers() {
         let mut q = [[0.0; PARAM_BAND_COUNT]; 3];
-        for band in 0..PARAM_BAND_COUNT {
-            q[0][band] = 0.5;
-            q[1][band] = 0.3;
-            q[2][band] = 0.2;
-        }
+        q[0].fill(0.5);
+        q[1].fill(0.3);
+        q[2].fill(0.2);
         let covariance = covariance_from_band_powers(&q, &[pair(0, 1, 15, 7), pair(2, 0, 9, 13)]);
         for band in 0..PARAM_BAND_COUNT {
             assert!((covariance.trace(band) - 1.0).abs() < 1e-12);
@@ -370,11 +358,9 @@ mod tests {
     #[test]
     fn covariance_stays_psd_through_pair_changes() {
         let mut q = [[0.0; PARAM_BAND_COUNT]; 3];
-        for band in 0..PARAM_BAND_COUNT {
-            q[0][band] = 0.5;
-            q[1][band] = 0.3;
-            q[2][band] = 0.2;
-        }
+        q[0].fill(0.5);
+        q[1].fill(0.3);
+        q[2].fill(0.2);
         let a = covariance_from_band_powers(&q, &[pair(0, 1, 15, 0)]);
         let b = covariance_from_band_powers(&q, &[pair(0, 2, 15, 11)]);
         for step in 0..=20 {
@@ -389,10 +375,8 @@ mod tests {
     #[test]
     fn interpolation_is_convex_for_powers_and_coefficients() {
         let mut q = [[0.0; PARAM_BAND_COUNT]; 2];
-        for band in 0..PARAM_BAND_COUNT {
-            q[0][band] = 0.5;
-            q[1][band] = 0.5;
-        }
+        q[0].fill(0.5);
+        q[1].fill(0.5);
         let a = covariance_from_band_powers(&q, &[pair(0, 1, 0, 0)]);
         let b = covariance_from_band_powers(&q, &[pair(0, 1, 15, 0)]);
         let middle = a.interpolate(&b, 0.5);
@@ -407,11 +391,9 @@ mod tests {
     #[test]
     fn union_keeps_two_partners_during_transition() {
         let mut q = [[0.0; PARAM_BAND_COUNT]; 3];
-        for band in 0..PARAM_BAND_COUNT {
-            q[0][band] = 0.4;
-            q[1][band] = 0.3;
-            q[2][band] = 0.3;
-        }
+        q[0].fill(0.4);
+        q[1].fill(0.3);
+        q[2].fill(0.3);
         let a = covariance_from_band_powers(&q, &[pair(0, 1, 15, 0)]);
         let b = covariance_from_band_powers(&q, &[pair(0, 2, 15, 0)]);
         let middle = a.interpolate(&b, 0.5);

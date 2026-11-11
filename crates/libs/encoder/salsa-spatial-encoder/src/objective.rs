@@ -457,10 +457,9 @@ fn evaluate_parameters_and_pairs(
                         }
                         let mut residual = [Complex::new(0.0, 0.0); 7];
                         let mut predictive = [Complex::new(0.0, 0.0); 7];
-                        for l in 0..7 {
-                            let value = rendered[l];
-                            for k in 0..7 {
-                                predictive[k] += value * data.r_yy[l][k];
+                        for (l, &value) in rendered.iter().enumerate() {
+                            for (k, target) in predictive.iter_mut().enumerate() {
+                                *target += value * data.r_yy[l][k];
                             }
                         }
                         for k in 0..7 {
@@ -486,10 +485,9 @@ fn evaluate_parameters_and_pairs(
                 }
                 for &i in &live {
                     let mut predictive = [Complex::new(0.0, 0.0); 7];
-                    for l in 0..7 {
-                        let value = matrix[i][l];
-                        for k in 0..7 {
-                            predictive[k] += value * data.r_yy[l][k];
+                    for (l, &value) in matrix[i].iter().enumerate() {
+                        for (k, target) in predictive.iter_mut().enumerate() {
+                            *target += value * data.r_yy[l][k];
                         }
                     }
                     for k in 0..7 {

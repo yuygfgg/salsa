@@ -421,8 +421,13 @@ impl CodecBinding {
         // Auxiliary coded channels must be hidden from ordinary output. With
         // the initial two-channel group these are coded 4 and 5.
         let aux_count = self.auxiliary_channel_count();
-        for logical in CORE_LOGICAL_COUNT..CORE_LOGICAL_COUNT + aux_count {
-            let coded_index = self.logical_to_coded[logical] as usize;
+        for &coded in self
+            .logical_to_coded
+            .iter()
+            .skip(CORE_LOGICAL_COUNT)
+            .take(aux_count)
+        {
+            let coded_index = coded as usize;
             if public_seen.get(coded_index).copied().unwrap_or(false) {
                 return Err(SpatialError::InvalidValue(
                     "auxiliary coded channel appears in the public map",

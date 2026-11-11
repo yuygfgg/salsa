@@ -312,8 +312,8 @@ struct DecodedBuffer {
 impl DecodedBuffer {
     fn push(&mut self, bed: &[Vec<f32>; 8]) {
         let frames = bed.iter().map(Vec::len).min().unwrap_or(0);
-        for channel in 0..7 {
-            self.channels[channel].extend_from_slice(&bed[channel][..frames]);
+        for (target, source) in self.channels.iter_mut().zip(bed) {
+            target.extend_from_slice(&source[..frames]);
         }
     }
 

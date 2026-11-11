@@ -117,13 +117,15 @@ impl MultistreamWriter {
                 config.initial_objects.clear();
                 config.initial_trajectories.clear();
             }
-            bundle.extend(write_record(&Record::Configuration(config))?);
+            bundle.extend(write_record(&Record::Configuration(Box::new(config)))?);
             sizes.configuration_bytes += (bundle.len() - start) as u64;
             self.last_config_sample = Some(frame.start_sample);
         }
         if let Some(checkpoint) = &frame.checkpoint {
             let start = bundle.len();
-            bundle.extend(write_record(&Record::Checkpoint(checkpoint.clone()))?);
+            bundle.extend(write_record(&Record::Checkpoint(Box::new(
+                checkpoint.clone(),
+            )))?);
             sizes.checkpoint_bytes += (bundle.len() - start) as u64;
         }
         let start = bundle.len();
@@ -276,10 +278,10 @@ impl MultistreamReader {
                             ));
                         }
                     }
-                    self.config = Some(config);
+                    self.config = Some(*config);
                 }
                 Record::Tile(tile) => self.tile = Some(tile),
-                Record::Checkpoint(checkpoint) => self.checkpoint = Some(checkpoint),
+                Record::Checkpoint(checkpoint) => self.checkpoint = Some(*checkpoint),
             }
         }
         Ok(())
@@ -477,7 +479,7 @@ mod tests {
 
     fn elementary(tag: u8) -> Vec<u8> {
         // Code 0 packet with a CELT fullband 20 ms configuration.
-        let mut packet = vec![(31 << 3) | 0];
+        let mut packet = vec![31 << 3];
         packet.extend_from_slice(&[tag; 7]);
         packet
     }

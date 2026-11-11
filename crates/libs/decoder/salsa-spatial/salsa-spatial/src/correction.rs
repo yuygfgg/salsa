@@ -646,7 +646,7 @@ mod tests {
         assert_eq!(decoded.bands[3].components.len(), 1);
         let component = &decoded.bands[3].components[0];
         assert_eq!(component.support, vec![1, 7, 42]);
-        assert_eq!(component.left_scale, f64::from(0.123_456_789_f32));
+        assert_eq!(component.left_scale, f64::from(0.123_456_79_f32));
         assert_eq!(component.right_scale, 2.0);
     }
 

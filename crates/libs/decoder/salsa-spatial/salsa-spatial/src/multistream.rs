@@ -290,8 +290,8 @@ mod tests {
 
     fn opus_packet(frame_len: usize, tag: u8) -> Vec<u8> {
         // Code 0 CELT fullband mono/stereo-compatible TOC.
-        let mut packet = vec![(31 << 3) | 0];
-        packet.extend(std::iter::repeat(tag).take(frame_len));
+        let mut packet = vec![31 << 3];
+        packet.extend(std::iter::repeat_n(tag, frame_len));
         packet
     }
 

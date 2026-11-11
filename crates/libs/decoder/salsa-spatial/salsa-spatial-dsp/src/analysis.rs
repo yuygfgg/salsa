@@ -367,8 +367,8 @@ mod tests {
         decoded[1] = Complex::new(2.0, 0.0);
         let measurement = measured_core_error(&core, &decoded, 0, CORE_ERROR_EPSILON);
         assert!((measurement.nu[0] - 1.0).abs() < 1e-15);
-        for channel in 1..CORE_CHANNEL_COUNT {
-            assert!(measurement.nu[channel].abs() < 1e-15);
+        for &nu in &measurement.nu[1..] {
+            assert!(nu.abs() < 1e-15);
         }
     }
 
@@ -412,8 +412,7 @@ mod tests {
         let mut accumulator = StatisticsAccumulator::new(1);
         let decoded = deterministic_spectrum(CORE_CHANNEL_COUNT, 0.43);
         let frame = accumulator.push_hop(0, &source, &core, &decoded).clone();
-        for band in 0..PARAM_BAND_COUNT {
-            let statistics = &frame.bands[band];
+        for (band, statistics) in frame.bands.iter().enumerate().take(PARAM_BAND_COUNT) {
             for channel in 0..CORE_CHANNEL_COUNT {
                 let mut expected = Complex::new(0.0, 0.0);
                 for bin in parameter_band_range(band) {

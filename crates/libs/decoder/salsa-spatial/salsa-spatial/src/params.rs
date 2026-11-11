@@ -145,16 +145,16 @@ impl SceneParameters {
         // The decoded anchor carries one log-power vector per object. Summarise
         // it into the band-averaged relative power expected by
         // `CovarianceAnchor::q`, keeping the exact inactive-zero state.
-        for object in 0..object_count {
+        for (object, mean_log) in mean_log.iter_mut().enumerate() {
             if !anchor.active[object] {
                 continue;
             }
             let mut sum = 0.0f64;
-            for band in 0..PARAM_BAND_COUNT {
-                sum += f64::from(anchor.ell_half_db[object][band]) * HALF_DB_SCALE;
+            for &value in &anchor.ell_half_db[object] {
+                sum += f64::from(value) * HALF_DB_SCALE;
             }
             let mean = sum / PARAM_BAND_COUNT as f64;
-            mean_log[object] = mean;
+            *mean_log = mean;
             max_log = max_log.max(mean);
         }
 
@@ -250,24 +250,13 @@ impl DctBasis {
 }
 
 /// One decoded parameter anchor.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ParameterAnchor {
     pub sample: u64,
     pub active: Vec<bool>,
     /// `[object][band]` reconstructed log power, integer half-dB state grid.
     pub ell_half_db: Vec<[i32; PARAM_BAND_COUNT]>,
     pub error: CoreErrorEnvelope,
-}
-
-impl Default for ParameterAnchor {
-    fn default() -> Self {
-        Self {
-            sample: 0,
-            active: Vec::new(),
-            ell_half_db: Vec::new(),
-            error: CoreErrorEnvelope::default(),
-        }
-    }
 }
 
 /// One 100 ms (or shorter final) parameter tile supplied to the encoder.
@@ -640,8 +629,8 @@ fn encode_power(
                 continue;
             }
             let target = anchor.ell_half_db[object];
-            for band in 0..PARAM_BAND_COUNT {
-                let delta = i64::from(target[band]) - i64::from(state.ell_half_db[object][band]);
+            for (band, &target_band) in target.iter().enumerate() {
+                let delta = i64::from(target_band) - i64::from(state.ell_half_db[object][band]);
                 enc_signed(
                     encoder,
                     &mut contexts.power_delta[band],
@@ -684,17 +673,17 @@ fn decode_power(
         previous_sample = sample;
 
         let mut active = vec![false; object_count];
-        for object in 0..object_count {
+        for (object, active) in active.iter_mut().enumerate() {
             let changed = decoder.decode(&mut contexts.activity_change)? == 1;
             if changed {
                 let value = decoder.decode(&mut contexts.activity_value)?;
                 if value > 1 {
                     return Err(SpatialError::Parameter("invalid activity flag"));
                 }
-                active[object] = value == 1;
-                state.active[object] = active[object];
+                *active = value == 1;
+                state.active[object] = *active;
             } else {
-                active[object] = state.active[object];
+                *active = state.active[object];
             }
         }
 
@@ -705,11 +694,11 @@ fn decode_power(
                 continue;
             }
             let mut ell = [0i32; PARAM_BAND_COUNT];
-            for band in 0..PARAM_BAND_COUNT {
+            for (band, ell_band) in ell.iter_mut().enumerate() {
                 let delta =
                     dec_signed(decoder, &mut contexts.power_delta[band], &mut contexts.tail)?;
                 let value = i64::from(state.ell_half_db[object][band]) + delta;
-                ell[band] =
+                *ell_band =
                     i32::try_from(value).map_err(|_| SpatialError::Parameter("power overflow"))?;
             }
             state.ell_half_db[object] = ell;
@@ -798,7 +787,6 @@ fn decode_error_envelope(
             }
             let unobservable = state.error_unobservable[channel][band];
 
-
             let predicted = state.error_log[channel][band];
             let innovation = dec_signed(
                 decoder,
@@ -836,8 +824,7 @@ fn find_previous_coefficient(
 
 fn wrap_phase_delta(delta: i32) -> i32 {
     let steps = crate::constants::CORRELATION_PHASE_STEPS as i32;
-    let wrapped = (delta + steps / 2).rem_euclid(steps) - steps / 2;
-    wrapped
+    (delta + steps / 2).rem_euclid(steps) - steps / 2
 }
 
 fn encode_correlations(
@@ -941,7 +928,7 @@ fn decode_correlations(
         used[b] = true;
 
         let mut rho = [None; PARAM_BAND_COUNT];
-        for band in 0..PARAM_BAND_COUNT {
+        for (band, rho_band) in rho.iter_mut().enumerate() {
             let present = decoder.decode(&mut contexts.correlation_present)?;
             if present == 0 {
                 continue;
@@ -974,7 +961,7 @@ fn decode_correlations(
                 let steps = crate::constants::CORRELATION_PHASE_STEPS as i32;
                 phase = (previous_phase + delta as i32).rem_euclid(steps) as u8;
             }
-            rho[band] = Some(CorrelationCoefficient { magnitude, phase });
+            *rho_band = Some(CorrelationCoefficient { magnitude, phase });
         }
         pairs.push(CorrelationPair {
             a: a as u16,
@@ -1027,8 +1014,8 @@ fn encode_trajectories(
             .map_or(tile.start_sample as i64, |knot| knot.sample as i64);
         let mut previous_position = [0u16; 3];
         if let Some(last) = state.trajectories[object].last() {
-            for axis in 0..3 {
-                previous_position[axis] = quantize_position(axis, last.position[axis]);
+            for (axis, previous) in previous_position.iter_mut().enumerate() {
+                *previous = quantize_position(axis, last.position[axis]);
             }
         }
         let mut decoded = Vec::with_capacity(knots.len());
@@ -1042,16 +1029,16 @@ fn encode_trajectories(
             )?;
             previous_sample = knot.sample as i64;
             let mut position = [0.0f64; 3];
-            for axis in 0..3 {
+            for (axis, previous) in previous_position.iter_mut().enumerate() {
                 let code = quantize_position(axis, knot.position[axis]);
-                let code_delta = i64::from(code) - i64::from(previous_position[axis]);
+                let code_delta = i64::from(code) - i64::from(*previous);
                 enc_signed(
                     encoder,
                     &mut contexts.trajectory_position_delta,
                     &mut contexts.tail,
                     code_delta,
                 )?;
-                previous_position[axis] = code;
+                *previous = code;
                 position[axis] = dequantize_position(axis, code);
             }
             decoded.push(TrajectoryKnot {
@@ -1088,8 +1075,8 @@ fn decode_trajectories(
             .map_or(start_sample as i64, |knot| knot.sample as i64);
         let mut previous_position = [0u16; 3];
         if let Some(last) = state.trajectories[object].last() {
-            for axis in 0..3 {
-                previous_position[axis] = quantize_position(axis, last.position[axis]);
+            for (axis, previous) in previous_position.iter_mut().enumerate() {
+                *previous = quantize_position(axis, last.position[axis]);
             }
         }
         let mut knots = Vec::with_capacity(knot_count);
@@ -1103,15 +1090,15 @@ fn decode_trajectories(
             }
             previous_sample = sample;
             let mut position = [0.0f64; 3];
-            for axis in 0..3 {
+            for (axis, previous) in previous_position.iter_mut().enumerate() {
                 let code_delta = dec_signed(
                     decoder,
                     &mut contexts.trajectory_position_delta,
                     &mut contexts.tail,
                 )?;
-                let code = (i64::from(previous_position[axis]) + code_delta)
-                    .clamp(0, POSITION_STEPS as i64) as u16;
-                previous_position[axis] = code;
+                let code =
+                    (i64::from(*previous) + code_delta).clamp(0, POSITION_STEPS as i64) as u16;
+                *previous = code;
                 position[axis] = dequantize_position(axis, code);
             }
             knots.push(TrajectoryKnot {
@@ -1168,28 +1155,28 @@ fn encode_checkpoint_state(
                 knot.sample as i64 - previous_sample,
             )?;
             previous_sample = knot.sample as i64;
-            for axis in 0..3 {
+            for (axis, previous) in previous_position.iter_mut().enumerate() {
                 let code = quantize_position(axis, knot.position[axis]);
-                let code_delta = i64::from(code) - i64::from(previous_position[axis]);
+                let code_delta = i64::from(code) - i64::from(*previous);
                 enc_signed(
                     encoder,
                     &mut contexts.snapshot_position_delta,
                     &mut contexts.tail,
                     code_delta,
                 )?;
-                previous_position[axis] = code;
+                *previous = code;
             }
         }
     }
 
     raw_unsigned(encoder, contexts, snapshot.power.ell_half_db.len() as u64)?;
     for bands in &snapshot.power.ell_half_db {
-        for band in 0..PARAM_BAND_COUNT {
+        for &value in bands {
             enc_signed(
                 encoder,
                 &mut contexts.snapshot_ell,
                 &mut contexts.tail,
-                i64::from(bands[band]),
+                i64::from(value),
             )?;
         }
     }
@@ -1213,8 +1200,8 @@ fn encode_checkpoint_state(
     for pair in &snapshot.correlation_pairs {
         raw_unsigned(encoder, contexts, u64::from(pair.a))?;
         raw_unsigned(encoder, contexts, u64::from(pair.b))?;
-        for band in 0..PARAM_BAND_COUNT {
-            match pair.rho[band] {
+        for &coefficient in &pair.rho {
+            match coefficient {
                 Some(coefficient) => {
                     encoder.encode(&mut contexts.snapshot_flag, 1)?;
                     raw_unsigned(encoder, contexts, u64::from(coefficient.magnitude))?;
@@ -1340,7 +1327,7 @@ fn decode_checkpoint_state(
         let a = read_raw_unsigned(decoder, contexts)? as u16;
         let b = read_raw_unsigned(decoder, contexts)? as u16;
         let mut rho = [None; PARAM_BAND_COUNT];
-        for band in 0..PARAM_BAND_COUNT {
+        for rho_band in &mut rho {
             let present = decoder.decode(&mut contexts.snapshot_flag)?;
             if present == 0 {
                 continue;
@@ -1352,7 +1339,7 @@ fn decode_checkpoint_state(
             {
                 return Err(SpatialError::Parameter("invalid snapshot correlation"));
             }
-            rho[band] = Some(CorrelationCoefficient { magnitude, phase });
+            *rho_band = Some(CorrelationCoefficient { magnitude, phase });
         }
         correlation_pairs.push(CorrelationPair { a, b, rho });
     }
@@ -1422,9 +1409,9 @@ mod tests {
 
     fn make_tile(object_count: usize, start_sample: u64) -> ParameterTile {
         let mut base = [[0i32; PARAM_BAND_COUNT]; 4];
-        for object in 0..4 {
-            for band in 0..PARAM_BAND_COUNT {
-                base[object][band] = ((object as i32) * 3 - band as i32 * 2) / 2;
+        for (object, row) in base.iter_mut().enumerate() {
+            for (band, value) in row.iter_mut().enumerate() {
+                *value = ((object as i32) * 3 - band as i32 * 2) / 2;
             }
         }
         let mut anchors = Vec::new();
@@ -1462,9 +1449,9 @@ mod tests {
         }
 
         let mut rho = [None; PARAM_BAND_COUNT];
-        for band in 0..PARAM_BAND_COUNT {
+        for (band, rho_band) in rho.iter_mut().enumerate() {
             if band % 3 == 0 {
-                rho[band] = Some(CorrelationCoefficient {
+                *rho_band = Some(CorrelationCoefficient {
                     magnitude: ((band % 15) + 1) as u8,
                     phase: (band % 32) as u8,
                 });
@@ -1578,9 +1565,9 @@ mod tests {
             );
             for channel in 0..CORE_CHANNEL_COUNT {
                 for band in 0..PARAM_BAND_COUNT {
-                    if original.error.unobservable[channel][band] {
-                        assert_eq!(reconstructed.error.nu[channel][band], 0.0);
-                    } else if original.error.nu[channel][band] == 0.0 {
+                    if original.error.unobservable[channel][band]
+                        || original.error.nu[channel][band] == 0.0
+                    {
                         assert_eq!(reconstructed.error.nu[channel][band], 0.0);
                     } else {
                         let expected =
@@ -1713,11 +1700,9 @@ mod tests {
     #[test]
     fn from_anchor_produces_normalized_powers_and_zero_inactive() {
         let mut ell = vec![[0i32; PARAM_BAND_COUNT]; 3];
-        for band in 0..PARAM_BAND_COUNT {
-            ell[0][band] = 20;
-            ell[1][band] = 10;
-            ell[2][band] = 100;
-        }
+        ell[0].fill(20);
+        ell[1].fill(10);
+        ell[2].fill(100);
         let anchor = ParameterAnchor {
             sample: 0,
             active: vec![true, true, false],

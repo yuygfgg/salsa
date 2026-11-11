@@ -7,6 +7,8 @@ use salsa_spatial::{
 
 use crate::covariance::BandCovariance;
 
+type CoreMatrix = [[Complex<f64>; CORE_CHANNEL_COUNT]; CORE_CHANNEL_COUNT];
+
 pub const SILENCE_EPSILON: f64 = 1e-24;
 
 /// Error from solving one band's regularized system.
@@ -137,8 +139,8 @@ fn cholesky_factor(
     for i in 0..CORE_CHANNEL_COUNT {
         for j in 0..=i {
             let mut sum = system[i][j];
-            for k in 0..j {
-                sum -= lower[i][k] * lower[j][k].conj();
+            for (a, b) in lower[i].iter().take(j).zip(lower[j].iter().take(j)) {
+                sum -= *a * b.conj();
             }
             if i == j {
                 let diagonal = sum.re;
@@ -226,13 +228,7 @@ fn solve_inner(
     band: usize,
     nu: &[f64; CORE_CHANNEL_COUNT],
     with_inverse: bool,
-) -> Result<
-    (
-        Reconstruction,
-        Option<[[Complex<f64>; CORE_CHANNEL_COUNT]; CORE_CHANNEL_COUNT]>,
-    ),
-    SolveError,
-> {
+) -> Result<(Reconstruction, Option<CoreMatrix>), SolveError> {
     if band >= PARAM_BAND_COUNT {
         return Err(SolveError::InvalidInput(format!(
             "band {band} out of range"
@@ -276,13 +272,7 @@ pub fn solve_regularized_with_inverse(
     covariance: &BandCovariance,
     band: usize,
     nu: &[f64; CORE_CHANNEL_COUNT],
-) -> Result<
-    (
-        Reconstruction,
-        [[Complex<f64>; CORE_CHANNEL_COUNT]; CORE_CHANNEL_COUNT],
-    ),
-    SolveError,
-> {
+) -> Result<(Reconstruction, CoreMatrix), SolveError> {
     let (reconstruction, inverse) = solve_inner(d, covariance, band, nu, true)?;
     Ok((
         reconstruction,
@@ -556,8 +546,8 @@ mod tests {
         mask[0] = true;
         let masked = estimate_objects(0, &core, &d, &covariance, &nu, true, &mask).unwrap();
         for bin in parameter_band_range(0) {
-            for object in 0..2 {
-                assert!(masked[object][bin].norm() < 1e-15);
+            for row in &masked {
+                assert!(row[bin].norm() < 1e-15);
             }
         }
     }
@@ -612,8 +602,8 @@ mod tests {
         let nu = [[0.0; CORE_CHANNEL_COUNT]; PARAM_BAND_COUNT];
         let unobservable = [false; PARAM_BAND_COUNT];
         let output = estimate_objects(0, &core, &d, &covariance, &nu, true, &unobservable).unwrap();
-        for channel in 0..CORE_CHANNEL_COUNT {
-            assert!((output[channel][3].re - (channel as f64 + 1.0)).abs() < 1e-8);
+        for (channel, row) in output.iter().enumerate() {
+            assert!((row[3].re - (channel as f64 + 1.0)).abs() < 1e-8);
         }
     }
 

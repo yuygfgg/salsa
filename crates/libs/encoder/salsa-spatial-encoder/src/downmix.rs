@@ -62,10 +62,8 @@ pub fn build_transport(
     let object_count = source.object_count;
     let mut base: [Vec<f32>; 5] = std::array::from_fn(|_| vec![0.0f32; frames]);
     let mut aux: Vec<Vec<f32>> = (0..aux_count).map(|_| vec![0.0f32; frames]).collect();
-    for object in 0..object_count {
-        let columns =
-            panner.observation_columns(&core_knots[object], source.start_sample, frames, fold);
-        let pcm = &source.object_pcm[object];
+    for (knots, pcm) in core_knots.iter().zip(&source.object_pcm).take(object_count) {
+        let columns = panner.observation_columns(knots, source.start_sample, frames, fold);
         for sample in 0..frames {
             let value = pcm[sample];
             if value == 0.0 {
@@ -76,9 +74,9 @@ pub fn build_transport(
             for channel in 0..5 {
                 base[channel][sample] += (column[channel] * f64::from(value)) as f32;
             }
-            for channel in 0..aux_count {
+            for (channel, output) in aux.iter_mut().enumerate().take(aux_count) {
                 let gain = height.get(channel).copied().unwrap_or(0.0);
-                aux[channel][sample] += (gain * f64::from(value)) as f32;
+                output[sample] += (gain * f64::from(value)) as f32;
             }
         }
     }
@@ -116,9 +114,8 @@ pub fn build_core(
     let frames = source.frames;
     let object_count = source.object_count;
     let mut core: [Vec<f32>; 7] = std::array::from_fn(|_| vec![0.0f32; frames]);
-    for object in 0..object_count {
-        let columns = interpolated_core_columns(&core_knots[object], source.start_sample, frames);
-        let pcm = &source.object_pcm[object];
+    for (knots, pcm) in core_knots.iter().zip(&source.object_pcm).take(object_count) {
+        let columns = interpolated_core_columns(knots, source.start_sample, frames);
         for sample in 0..frames {
             let value = pcm[sample];
             if value == 0.0 {

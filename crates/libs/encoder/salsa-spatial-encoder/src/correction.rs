@@ -236,23 +236,26 @@ fn fit_window(
             let data = &hop.bands[band];
             for (compact, &object) in active.iter().enumerate() {
                 source_power[band][compact] += data.source_power[object];
-                for channel in 0..CORE_CHANNEL_COUNT {
-                    r_sy[band][compact][channel] += data.source_decoded[object][channel];
+                for (target, &value) in r_sy[band][compact]
+                    .iter_mut()
+                    .zip(&data.source_decoded[object])
+                {
+                    *target += value;
                 }
             }
-            for row in 0..CORE_CHANNEL_COUNT {
-                for col in 0..CORE_CHANNEL_COUNT {
-                    r_yy[band][row][col] += data.decoded_core[row][col];
+            for (row, source) in r_yy[band].iter_mut().zip(&data.decoded_core) {
+                for (target, &value) in row.iter_mut().zip(source) {
+                    *target += value;
                 }
             }
-            for compact in 0..active_count {
-                for channel in 0..CORE_CHANNEL_COUNT {
+            for (compact, row) in m0_ry[band].iter_mut().take(active_count).enumerate() {
+                for (channel, target) in row.iter_mut().enumerate() {
                     let mut value = Complex::new(0.0, 0.0);
                     for shared in 0..CORE_CHANNEL_COUNT {
                         value += reconstruction.matrix[compact][shared]
                             * data.decoded_core[shared][channel];
                     }
-                    m0_ry[band][compact][channel] += value;
+                    *target += value;
                 }
             }
             m0_hops[index][band] = reconstruction.matrix;
@@ -381,7 +384,8 @@ fn fit_window(
             // plus support-id and left-nibble symbols per supported object.
             let component_bytes = 16.0 + 1.5 * candidate.support.len() as f64;
             let reduction = before - after;
-            if !(reduction > 1e-12 * before.abs().max(1.0))
+            let threshold = 1e-12 * before.abs().max(1.0);
+            if reduction.partial_cmp(&threshold) != Some(std::cmp::Ordering::Greater)
                 || reduction <= options.rate_weight * component_bytes
             {
                 break;
@@ -506,9 +510,8 @@ fn apply_compact(
                 continue;
             }
             let left = left * component.left_scale;
-            for channel in 0..CORE_CHANNEL_COUNT {
-                delta[compact][channel] +=
-                    left * (component.right[channel] * component.right_scale);
+            for (target, &right) in delta[compact].iter_mut().zip(&component.right) {
+                *target += left * (right * component.right_scale);
             }
         }
     }

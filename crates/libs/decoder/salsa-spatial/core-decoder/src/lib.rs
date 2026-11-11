@@ -249,7 +249,7 @@ impl OpusBedDecoder {
     /// observation order. Hidden auxiliary channels are routed into the
     /// observation buffer; the shared rear-silence channel is not returned.
     pub fn decode(&mut self, packet: &CorePacket) -> Result<[Vec<f32>; 8], CoreDecodeError> {
-        if packet.len() != 0 && packet.len() != self.plan.stream_count {
+        if !packet.is_empty() && packet.len() != self.plan.stream_count {
             return Err(CoreDecodeError::InvalidConfig(format!(
                 "packet has {} substreams, expected {}",
                 packet.len(),

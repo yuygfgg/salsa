@@ -155,7 +155,9 @@ struct ProcessedTile {
 
 fn checkpoint_due(start_sample: u64, program_start: u64) -> bool {
     start_sample == program_start
-        || start_sample.saturating_sub(program_start) % CHECKPOINT_SAMPLES == 0
+        || start_sample
+            .saturating_sub(program_start)
+            .is_multiple_of(CHECKPOINT_SAMPLES)
 }
 
 fn bitrate(bytes: u64, samples: u64) -> f64 {
@@ -258,7 +260,7 @@ fn fit_tile_knots(
         let sample = source.start_sample + event.offset.max(0) as u64;
         control_samples.push(sample);
     }
-    for object in 0..object_count {
+    for (object, last_position) in last_positions.iter_mut().enumerate().take(object_count) {
         let (knots, dense, is_static) = fit_trajectory(
             source.start_sample,
             source.frames,
@@ -271,8 +273,8 @@ fn fit_tile_knots(
         let end_position = dense
             .last()
             .map(|(_, position)| *position)
-            .unwrap_or(last_positions[object]);
-        let needs_update = first_tile || !is_static || end_position != last_positions[object];
+            .unwrap_or(*last_position);
+        let needs_update = first_tile || !is_static || end_position != *last_position;
         if !knots.is_empty() {
             core.push(knots.clone());
             if needs_update {
@@ -284,7 +286,7 @@ fn fit_tile_knots(
             core.push(Vec::new());
             metadata.push(Vec::new());
         }
-        last_positions[object] = end_position;
+        *last_position = end_position;
     }
     (core, metadata)
 }
@@ -527,7 +529,7 @@ pub fn encode_with_progress(
     if options.beta < 0.0 || !options.beta.is_finite() {
         bail!("beta must be finite and non-negative");
     }
-    if options.core_bitrates.iter().any(|bitrate| *bitrate == 0) {
+    if options.core_bitrates.contains(&0) {
         bail!("core bitrates must be positive");
     }
     if options.correction_rank as usize > CORRECTION_MAX_RANK {

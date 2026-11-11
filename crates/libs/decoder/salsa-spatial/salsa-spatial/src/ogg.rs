@@ -271,10 +271,7 @@ impl OggOpusReader {
     pub fn push_bytes(&mut self, data: &[u8]) -> Result<Vec<OggPacket>> {
         self.pending.extend_from_slice(data);
         let mut packets = Vec::new();
-        loop {
-            let Some(page) = parse_page(&self.pending)? else {
-                break;
-            };
+        while let Some(page) = parse_page(&self.pending)? {
             self.pending.drain(..page.next);
             if let Some(expected) = self.serial {
                 if expected != page.serial {

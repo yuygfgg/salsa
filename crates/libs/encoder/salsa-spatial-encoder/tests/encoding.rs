@@ -159,7 +159,7 @@ fn progress_tracks_selected_samples_and_threads_preserve_the_stream() {
         decoded += tail.frames;
     }
     assert!(
-        decoded + 120 >= duration as usize,
+        decoded + 120 >= duration,
         "decoded {decoded} samples of {duration}"
     );
 

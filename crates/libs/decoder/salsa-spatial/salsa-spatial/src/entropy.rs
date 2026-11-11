@@ -110,7 +110,7 @@ impl AdaptiveModel {
         if self.total_counts >= RESCALE_THRESHOLD {
             let mut total = 0u64;
             for count in &mut self.counts {
-                *count = ((*count + 1) / 2).max(1);
+                *count = (*count).div_ceil(2).max(1);
                 total += u64::from(*count);
             }
             self.total_counts = total;
@@ -580,10 +580,9 @@ impl<'a> EntropyDecoder<'a> {
             });
         }
         let mut words = Vec::with_capacity(word_count);
-        for chunk in bytes[FRAMING_BYTES..expected].chunks_exact(4) {
-            words.push(u32::from_le_bytes(
-                chunk.try_into().map_err(|_| SpatialError::Truncated)?,
-            ));
+        let (chunks, _) = bytes[FRAMING_BYTES..expected].as_chunks::<4>();
+        for chunk in chunks {
+            words.push(u32::from_le_bytes(*chunk));
         }
         let coder =
             DefaultAnsCoder::from_compressed(words).map_err(|_| SpatialError::RansTruncated)?;
