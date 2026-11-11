@@ -36,9 +36,9 @@ Salsa is an open-source spatial audio toolkit and GStreamer plugin suite for **D
       - [4. Play with `mpv`](#4-play-with-mpv)
       - [5. Update settings, stop, or uninstall](#5-update-settings-stop-or-uninstall)
   - [3. CLI Tools: DAMF Clustering \& Encoding](#3-cli-tools-damf-clustering--encoding)
-    - [Step 1: DAMF Object Clustering (`salsa-cluster`)](#step-1-damf-object-clustering-salsa-cluster)
+    - [DAMF Object Clustering (`salsa-cluster`)](#damf-object-clustering-salsa-cluster)
       - [Clustering Options](#clustering-options)
-    - [Step 2: DAMF → E-AC-3 JOC Encoder (`salsa-eac3joc-encode`)](#step-2-damf--e-ac-3-joc-encoder-salsa-eac3joc-encode)
+    - [DAMF → E-AC-3 JOC Encoder (`salsa-eac3joc-encode`)](#damf--e-ac-3-joc-encoder-salsa-eac3joc-encode)
       - [`reac3e` Core Parameters](#reac3e-core-parameters)
       - [JOC / OAMD / EMDF Parameters](#joc--oamd--emdf-parameters)
       - [Downmix \& Signing Parameters](#downmix--signing-parameters)
@@ -383,7 +383,7 @@ Salsa provides DAMF clustering and two encoding paths:
 
 ---
 
-### Step 1: DAMF Object Clustering (`salsa-cluster`)
+### DAMF Object Clustering (`salsa-cluster`)
 
 `salsa-cluster` (`crates/apps/salsa-cluster/`) reduces a DAMF master to at most $N$ dynamic objects while preserving the rendered spatial scene.
 
@@ -420,7 +420,7 @@ salsa-cluster master.atmos --out out_dir --stem clustered --max-objects 15
 
 ---
 
-### Step 2: DAMF → E-AC-3 JOC Encoder (`salsa-eac3joc-encode`)
+### DAMF → E-AC-3 JOC Encoder (`salsa-eac3joc-encode`)
 
 `crates/libs/encoder/eac3joc-encoder/` is the encoder library and `crates/apps/salsa-eac3joc-encode/` is its CLI. It converts a compliant Dolby Atmos Master (`.atmos` + `.atmos.audio` + `.atmos.metadata`) to E-AC-3 JOC:
 
