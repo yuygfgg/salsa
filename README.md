@@ -93,8 +93,18 @@ flowchart LR
     end
 
     subgraph GST["GStreamer Pipeline (used by gst-launch-1.0, salsa-gui & salsa-audiod)"]
+        EAC3_PARSE["salsaeac3jocparse"]
+        EAC3_DEC["salsaeac3jocdec"]
+        THD_PARSE["salsatruehdparse"]
+        THD_DEC["salsatruehdatmosdec"]
+        SPATIAL_PARSE["salsaspatialparse"]
+        SPATIAL_DEC["salsaspatialdec"]
+        DAMF_SRC["salsadamfsrc"]
         OBJ["Salsa Object Audio IR\nF32LE PCM (ch0=LFE, ch1..N=Objects)\n+ meta:ObjectAudioMeta"]
         DLB["Dolby gst-home-audio Plugins\n(meta:DlbObjectAudioMeta)"]
+        OAR_PLUG["salsaoar"]
+        HRTF_PLUG["salsahrtfrender"]
+        DAMF_SINK["salsadamfsink"]
         DLB <-->|"salsaobjectaudioadapt"| OBJ
     end
 
@@ -106,14 +116,14 @@ flowchart LR
         SPATIAL_ENC["salsa-spatial (.ogg)"]
     end
 
-    EC3 -->|"salsaeac3jocparse\n+ salsaeac3jocdec"| OBJ
-    THD -->|"salsatruehdparse\n+ salsatruehdatmosdec"| OBJ
-    SPATIAL -->|"salsaspatialparse\n+ salsaspatialdec"| OBJ
-    DAMF_IN -->|"salsadamfsrc"| OBJ
+    EC3 --> EAC3_PARSE --> EAC3_DEC --> OBJ
+    THD --> THD_PARSE --> THD_DEC --> OBJ
+    SPATIAL --> SPATIAL_PARSE --> SPATIAL_DEC --> OBJ
+    DAMF_IN --> DAMF_SRC --> OBJ
 
-    OBJ -->|"salsaoar"| OAR
-    OBJ -->|"salsahrtfrender"| HRTF
-    OBJ -->|"salsadamfsink"| DAMF_OUT
+    OBJ --> OAR_PLUG --> OAR
+    OBJ --> HRTF_PLUG --> HRTF
+    OBJ --> DAMF_SINK --> DAMF_OUT
     DAMF_IN -->|"salsa-cluster\n+ salsa-eac3joc-encode (CLI)"| JOC_ENC
     DAMF_IN -->|"salsa-spatial-encode (CLI)"| SPATIAL_ENC
 ```
